@@ -1,0 +1,1954 @@
+"""多层配置加载与合并器 ── launcher 控制平面最大的单个模块。
+
+Architecture:
+    负责把多层配置源（硬件默认、引擎默认、模型专属、用户自定义、CLI 参数）
+    合并为一份统一的参数字典，提供给 engine adapter 使用。
+
+Config Merge Priority (low -> high):
+    1. 硬件默认配置 (e.g., config/vllm_default.json)
+    2. 模型专属配置 (model_deploy_config 匹配)
+    3. 用户自定义配置 (--config-file 指定的 JSON)
+    4. CLI 参数 / 环境变量覆盖
+
+Key Responsibilities:
+    - 引擎自动选择（_auto_select_engine）
+    - 参数名映射（engine_parameter_mapping.json）
+    - 张量并行度自动设置
+    - PD 分离 / LMCache / Router / Soft FP8 等高级特性注入
+    - 分布式参数注入（Ray / NIXL / HCCL）
+"""
+# Copyright (c) xFusion Digital Technologies Co., Ltd. 2025-2025. All rights reserved.
+# -*- coding: utf-8 -*-
+
+from dataclasses import dataclass
+from typing import Dict, Any, Optional, Tuple
+import argparse
+import json
+import logging
+import math
+import os
+from pathlib import Path
+
+from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd_role_env, \
+    get_config_force_env, get_soft_fp8_env, get_soft_fp4_env, get_speculative_decoding_env, \
+    get_vllm_distributed_port, get_sglang_distributed_port, get_router_env, \
+    get_router_instance_group_name_env, get_router_instance_name_env, get_router_nats_path_env, \
+    get_operator_acceleration_env, get_local_ip
+from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
+from utils.model_utils import ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8, is_qwen3_series_fp8
+from utils.device_utils import check_pcie_cards
+
+logger = logging.getLogger(__name__)
+
+
+# 解析默认配置目录路径（优先级：环境变量 > 包内自带 > 硬编码回退）
+def _resolve_default_config_dir() -> str:
+    """解析默认配置目录，放在此目录下的配置文件为引擎提供默认参数。
+
+    查找顺序：
+    1. WINGS_CONFIG_DIR 环境变量（支持部署时重定向）
+    2. 包内的 app/config/ 目录（安装部署场景）
+    3. "wings/config" 硬编码回退（兼容旧版目录结构）
+    """
+    env_dir = os.getenv("WINGS_CONFIG_DIR", "").strip()
+    if env_dir:
+        return env_dir
+    bundled_dir = Path(__file__).resolve().parents[1] / "config" / "defaults"
+    if bundled_dir.exists():
+        return str(bundled_dir)
+    return "wings/config"
+
+
+# 配置目录单例（模块加载时解析一次）
+DEFAULT_CONFIG_DIR = _resolve_default_config_dir()
+
+# 各设备类型和引擎对应的默认配置文件名映射
+DEFAULT_CONFIG_FILES = {
+    "nvidia": "vllm_default.json",
+    "ascend": "vllm_default.json",
+    "distributed": "distributed_config.json",
+    "engine_parameter_mapping": "engine_parameter_mapping.json",
+    # Engine-specific fallback defaults (used when vllm_default.json
+    # has no model-level section for the selected engine)
+    "sglang": "sglang_default.json",
+    "mindie": "mindie_default.json",
+}
+
+SUPPORTED_DEVICE_TYPES = {"nvidia", "ascend"}
+
+
+def _load_mapping(config_path: str, mapping_key: str) -> Dict[str, Any]:
+    """从 JSON 配置文件中安全加载指定 key 下的映射字典。
+
+    如果文件不存在、内容为空或格式不对，均返回空字典并打印警告。
+    用于加载参数名映射表（如 default_to_vllm_parameter_mapping）。
+    """
+    cfg = load_json_config(config_path)
+    mapping = cfg.get(mapping_key, {})
+    if not isinstance(mapping, dict):
+        logger.warning(
+            "Invalid mapping format: key=%s file=%s type=%s; fallback to empty mapping",
+            mapping_key,
+            config_path,
+            type(mapping).__name__,
+        )
+        return {}
+    if not mapping:
+        logger.warning("Missing/empty mapping key=%s in file=%s", mapping_key, config_path)
+    return mapping
+
+
+def _extract_node_ips(node_ips: str | None) -> list[str]:
+    """Normalize a node IP CSV string into a clean list."""
+    if not node_ips:
+        return []
+    return [ip.strip() for ip in node_ips.split(",") if ip.strip()]
+
+
+def _resolve_distributed_node_count(node_ips: str | None, nnodes: int | None) -> int:
+    """Prefer explicit node IP topology, then fall back to nnodes, then env."""
+    explicit_node_ips = _extract_node_ips(node_ips)
+    if explicit_node_ips:
+        return len(explicit_node_ips)
+    if nnodes and int(nnodes) > 0:
+        return int(nnodes)
+    env_node_ips = _extract_node_ips(get_node_ips())
+    if env_node_ips:
+        return len(env_node_ips)
+    return 1
+
+
+def _set_spec_decoding_config(params):
+    """配置推测解码（Speculative Decoding）相关环境变量。
+
+    根据 params 中 enable_speculative_decode 的值设置 SD_ENABLE 环境变量，
+    供引擎启动脚本和后续流程判断是否启用推测解码。
+    """
+    if params.get("enable_speculative_decode"):
+        os.environ['SD_ENABLE'] = 'true'
+        logger.info("Spec Decoding for vllm is enabled")
+    else:
+        os.environ['SD_ENABLE'] = 'false'
+
+
+def _set_sparse_config(params):
+    """配置稀疏 KV（Sparse KV Cache）相关环境变量。
+
+    根据 params 中 enable_sparse 的值设置 SPARSE_ENABLE 环境变量，
+    供引擎启动脚本和后续流程判断是否启用稀疏 KV。
+    """
+    if params.get("enable_sparse"):
+        os.environ['SPARSE_ENABLE'] = 'true'
+        logger.info("Sparse for vllm is enabled")
+    else:
+        os.environ['SPARSE_ENABLE'] = 'false'
+
+
+def _get_h20_model_hint() -> str:
+    """获取 H20 GPU 型号提示（用于 DeepSeek 模型的卡型专属配置）。
+
+    H20 GPU 有两种型号：H20-96G 和 H20-141G，显存不同导致最优参数不同。
+    通过 WINGS_H20_MODEL 环境变量显式指定，返回空串表示未指定或无效。
+    """
+    hint = os.getenv("WINGS_H20_MODEL", "").strip()
+    if not hint:
+        return ""
+    if hint in ("H20-96G", "H20-141G"):
+        return hint
+    logger.warning("Invalid WINGS_H20_MODEL=%s, expected H20-96G or H20-141G", hint)
+    return ""
+
+
+def _check_vram_requirements(weight_path: str, hardware_env: Dict[str, Any], nodes_count: int) -> None:
+    """检查总可用显存是否足以加载模型权重。
+
+    将模型目录总大小与全部节点的可用显存总和对比：
+    - 总显存 < 模型大小                → WARNING （可能 OOM）
+    - 总显存 < 模型大小 × 1.5            → WARNING （性能不佳）
+    - 总显存 ≥ 模型大小 × 1.5            → INFO   （充裕）
+
+    Args:
+        weight_path:  模型权重目录路径
+        hardware_env: 硬件环境信息（含 details 列表，每项含 free_memory）
+        nodes_count:  分布式节点总数，用于计算跨节点总显存
+    """
+    if not os.path.exists(weight_path):
+        logger.warning("Model weight path not found: %s", weight_path)
+        return
+
+    weight_size_bytes = get_directory_size(weight_path)
+    weight_size_gb = weight_size_bytes / (1024 ** 3)
+
+    if not hardware_env.get("details"):
+        logger.info("No VRAM details available (expected in sidecar mode), skipping VRAM check")
+        return
+
+    # 如果 details 中缺少 free_memory 字段（只有 name），跳过 VRAM 检查
+    if not all("free_memory" in d for d in hardware_env["details"]):
+        logger.info("VRAM details lack free_memory field, skipping VRAM check")
+        return
+
+    # VRAM
+    free_vram_per_node = sum(d["free_memory"] for d in hardware_env["details"])
+    total_free_vram = free_vram_per_node * nodes_count
+
+    if total_free_vram < weight_size_gb:
+        logger.warning(
+            f"Insufficient VRAM: Required {weight_size_gb:.2f}GB, "
+            f"but only {total_free_vram:.2f}GB available "
+            f"({nodes_count} nodes  {free_vram_per_node:.2f}GB each)"
+        )
+    elif total_free_vram < weight_size_gb * 1.5:
+        logger.warning(
+            f"Performance warning: Total VRAM ({total_free_vram:.2f}GB) is less than 1.5x "
+            f"model weight size ({weight_size_gb:.2f}GB) "
+            f"({nodes_count} nodes  {free_vram_per_node:.2f}GB each)"
+        )
+    else:
+        logger.info(
+            f"VRAM check: Total VRAM ({total_free_vram:.2f}GB) is more than 1.5x "
+            f"model weight size ({weight_size_gb:.2f}GB) "
+            f"({nodes_count} nodes  {free_vram_per_node:.2f}GB each)"
+        )
+
+
+def _build_common_context(hardware_env: Dict[str, Any],
+                          cmd_known_params: Dict[str, Any],
+                          model_info) -> Dict[str, Any]:
+    """从硬件环境和 CLI 参数构建通用上下文字典。"""
+    return {
+        "device": hardware_env.get("device"),
+        "device_details": hardware_env.get("details"),
+        "device_count": cmd_known_params.get("device_count", 1),
+        "engine": cmd_known_params.get("engine"),
+        "distributed": cmd_known_params.get("distributed"),
+        "nnodes": cmd_known_params.get("nnodes", 1),
+        "node_ips": cmd_known_params.get("node_ips", ""),
+        "model_type": model_info.identify_model_type(),
+        "gpu_usage_mode": cmd_known_params.get("gpu_usage_mode", "full"),
+    }
+
+
+def _build_engine_cmd_parameter(cmd_known_params: Dict[str, Any]) -> Dict[str, Any]:
+    """从 CLI 参数字典提取引擎级参数。"""
+    keys = [
+        "host", "port", "model_name", "model_path", "input_length", "output_length",
+        "trust_remote_code", "dtype", "kv_cache_dtype", "quantization",
+        "quantization_param_path", "gpu_memory_utilization", "enable_chunked_prefill",
+        "block_size", "max_num_seqs", "seed", "enable_expert_parallel",
+        "max_num_batched_tokens", "enable_prefix_caching", "enable_speculative_decode",
+        "speculative_decode_model_path", "speculative_token_range", "draft_confidence_threshold",
+        "enable_rag_acc", "enable_auto_tool_choice",
+        "enable_sparse", "lc_sparse_threshold", "total_budget", "local_kvstore_capacity",
+        "compilation_config",
+    ]
+    return {k: cmd_known_params.get(k) for k in keys}
+
+
+def _merge_cmd_params(hardware_env, engine_specific_defaults, cmd_known_params, model_info):
+    """将硬件上下文、引擎默认参数和用户 CLI 参数三层合并。
+
+    该函数是配置合并的核心入口：
+    1. 从 hardware_env 和 cmd_known_params 抽取通用上下文（device、分布式、模型类型等）
+    2. 从 cmd_known_params 抽取引擎级参数（host、port、dtype、quantization 等）
+    3. 根据 engine 类型分发到 _merge_vllm_params / _merge_mindie_params / _merge_sglang_params
+
+    Args:
+        hardware_env:             硬件环境信息
+        engine_specific_defaults: 从默认配置文件加载的引擎参数
+        cmd_known_params:         用户 CLI 参数
+        model_info:               模型元信息对象
+
+    Returns:
+        合并后的引擎参数字典
+    """
+    common_context = _build_common_context(hardware_env, cmd_known_params, model_info)
+    engine_cmd_parameter = _build_engine_cmd_parameter(cmd_known_params)
+
+    # 根据引擎类型分发到不同的参数合并函数
+    engine = common_context["engine"]
+    # 将嵌套 dict 型配置值序列化为 JSON 字符串，便于作为 CLI 参数传递
+    engine_specific_defaults = {
+        k: json.dumps(v) if isinstance(v, dict) else v
+        for k, v in engine_specific_defaults.items()
+    }
+    if engine in ("vllm", "vllm_ascend"):
+        return _merge_vllm_params(engine_specific_defaults, common_context, engine_cmd_parameter, model_info)
+    elif engine == "mindie":
+        return _merge_mindie_params(engine_specific_defaults, common_context, engine_cmd_parameter, model_info)
+    elif engine == "sglang":
+        return _merge_sglang_params(engine_specific_defaults, common_context, engine_cmd_parameter)
+    return engine_specific_defaults
+
+
+def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
+    """合并 vLLM / vLLM-Ascend 引擎专属参数。
+
+    调用多个 setter 函数将硬件上下文、引擎配置和模型信息合并到 params 字典。
+
+    调用链路:
+        1. _set_common_params       → 根据参数映射表翻译 CLI 参数
+        2. _set_sequence_length     → 合并 input_length + output_length
+        3. _set_parallelism_params  → 设置张量并行度
+        4. _set_kv_cache_config     → LMCache / PD 分离 KV Transfer 配置
+        5. _set_router_config       → Wings Router NATS 配置
+        6. _set_operator_acceleration → 昇腾算子加速
+        7. _set_soft_fp8            → Soft FP8 量化配置
+        8. _set_task                → embedding/rerank 任务类型
+
+    Args:
+        params:              当前引擎参数字典（会被原地修改）
+        ctx:                 通用上下文（device、device_count、distributed 等）
+        engine_cmd_parameter: 用户 CLI 传入的引擎参数
+        model_info:          模型元信息对象
+
+    Returns:
+        Dict[str, Any]: 合并后的引擎参数字典
+    """
+    # 加载引擎参数名映射表
+    engine_param_map_config_path = os.path.join(
+        DEFAULT_CONFIG_DIR,
+        DEFAULT_CONFIG_FILES.get("engine_parameter_mapping")
+    )
+
+    #
+    _set_common_params(params, engine_cmd_parameter, engine_param_map_config_path)
+    _set_function_call(params, engine_cmd_parameter)
+    _set_sequence_length(params, engine_cmd_parameter)
+    _set_parallelism_params(params, ctx)
+    _set_kv_cache_config(params, ctx)
+    _set_router_config(params)
+    _set_operator_acceleration(params, ctx)
+    _set_soft_fp8(params, ctx, model_info)
+    _set_soft_fp4(params, ctx, model_info)
+    _set_task(params, ctx)
+
+    # 对于 embedding 和 rerank 模型，强制禁用 enable_chunked_prefill 和 enable_prefix_caching
+    _validate_embedding_rerank_params(params, ctx)
+
+    # Ascend 平台: 启用 prefix_caching 时，block_size 必须为 128
+    # vllm-ascend 在 platform.py 中检查此约束并发出警告，此处自动修正避免崩溃
+    _fix_ascend_block_size(params, ctx)
+
+    return params
+
+
+def _fix_ascend_block_size(params: dict, ctx: dict) -> None:
+    """Ascend 平台启用 prefix_caching 时自动修正 block_size 为 128。
+
+    vllm-ascend 要求：如果 enable_prefix_caching=True，则 block_size 必须为 128。
+    否则会在 ACL 图捕获阶段产生 INTERNAL ASSERT FAILED 错误。
+
+    此函数在配置合并的最后阶段调用，确保不会被其他 setter 覆盖。
+
+    Args:
+        params: 引擎参数字典（原地修改）
+        ctx:    通用上下文，包含 device 信息
+    """
+    if ctx.get("device") != "ascend":
+        return
+    prefix_caching = params.get("enable_prefix_caching")
+    if prefix_caching in [None, False, "False", 0, "0"]:
+        return
+    current_block_size = params.get("block_size")
+    if current_block_size != 128:
+        logger.warning(
+            "[Ascend] prefix_caching is enabled but block_size=%s; "
+            "Ascend requires block_size=128 when prefix_caching is on. "
+            "Auto-correcting block_size to 128.",
+            current_block_size,
+        )
+        params["block_size"] = 128
+
+
+def _set_function_call(params, engine_cmd_parameter):
+    """根据用户传入的 enable_auto_tool_choice 统一启用 function call。
+
+    用户通过 enable_auto_tool_choice（单一开关）触发所有引擎的 FC 功能。
+    tool_call_parser 来自模型默认配置，不需要用户指定。
+
+    逻辑：
+      - 用户传入 enable_auto_tool_choice + 模型配置了 tool_call_parser
+        → 保留 tool_call_parser，注入 enable_auto_tool_choice
+      - 用户传入 enable_auto_tool_choice 但模型没有 tool_call_parser
+        → 移除 enable_auto_tool_choice，打印警告
+      - 用户未传 enable_auto_tool_choice
+        → 移除 tool_call_parser，FC 不生效
+    """
+    user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
+    if user_wants_fc:
+        if "tool_call_parser" in params:
+            params["enable_auto_tool_choice"] = True
+            logger.info(
+                "Function Call enabled (parser=%s)",
+                params["tool_call_parser"],
+            )
+        else:
+            params.pop("enable_auto_tool_choice", None)
+            logger.warning("enable_auto_tool_choice is set but model has no tool_call_parser configured")
+    else:
+        params.pop("tool_call_parser", None)
+        params.pop("enable_auto_tool_choice", None)
+
+
+def _resolve_gpu_total_memory(ctx: Dict[str, Any]) -> float:
+    """从运行时上下文或环境变量中解析 GPU 总显存（GB）。
+
+    优先级: device_details[0].total_memory → WINGS_DEVICE_MEMORY 环境变量 → 12 GB 硬编码。
+    """
+    if ctx["device_details"] and ctx["device_details"][0]:
+        total_memory = ctx["device_details"][0].get("total_memory", 12)
+        if total_memory is None:
+            logger.warning("total_memory is None in device details, defaulting to 12G")
+            return 12.0
+        return float(total_memory)
+    mem_env = os.getenv("WINGS_DEVICE_MEMORY", "").strip()
+    if mem_env:
+        try:
+            mem_val = float(mem_env)
+            logger.info("Using WINGS_DEVICE_MEMORY=%s GB for cuda-graph-sizes", mem_val)
+            return mem_val
+        except ValueError:
+            logger.warning("Invalid WINGS_DEVICE_MEMORY='%s', fallback to 12GB", mem_env)
+    else:
+        logger.warning("Can't get device details and WINGS_DEVICE_MEMORY not set, fallback to 12GB")
+    return 12.0
+
+
+def _set_cuda_graph_sizes(params, ctx, model_info):
+    """为 vllm/vllm_ascend 在非全量模式（gpu_usage_mode != full）下自动计算 cuda_graph_sizes。
+
+    在共享显存（MIG/虚拟 GPU）场景下，需要根据可用显存和模型层数推算最优
+    CUDA Graph 捕获批次大小上限，避免 CUDA Graph 构建过多导致显存溢出。
+    """
+    if ctx["gpu_usage_mode"] != "full" and ctx["model_type"] == "llm":
+        total_memory = _resolve_gpu_total_memory(ctx)
+        max_capture_size = int(total_memory / 64 * 2048 - 256)
+        num_layers = model_info.num_hidden_layers
+        if num_layers is None or num_layers <= 0:
+            logger.warning("num_hidden_layers is %s, defaulting to 32 for cuda-graph-sizes calculation", num_layers)
+            num_layers = 32
+        max_num_batch_sizes = math.floor(
+            max_capture_size / (num_layers + 1) / 2)
+        cudagraph_capture_sizes = [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, \
+                                72, 80, 88, 96, 104, 112, 120, 128, 136, 144, \
+                                152, 160, 168, 176, 184, 192, 200, 208, 216, \
+                                224, 232, 240, 256, 264, 272, 280, 288, 296, \
+                                304, 312, 320, 328, 336, 344, 352, 360, 368, \
+                                376, 384, 392, 400, 408, 416, 424, 432, 440, \
+                                448, 456, 464, 472, 480, 488, 496, 504, 512]
+        max_num_batch_sizes = max(min(max_num_batch_sizes, len(cudagraph_capture_sizes)), 1)
+        selected_sizes = cudagraph_capture_sizes[:max_num_batch_sizes]
+        params["cudagraph_capture_sizes"] = selected_sizes
+        _max_size = selected_sizes[-1] if selected_sizes else 0
+        logger.info("cudagraph-capture-sizes is set to %d entries (max=%s)", len(selected_sizes), _max_size)
+
+
+def _set_operator_acceleration(params, ctx):
+    """当昇腾算子加速（USE_KUNLUN_ATB）启用时，注入 use_kunlun_atb=True 到参数字典。"""
+    if get_operator_acceleration_env() and ctx["device"] == "ascend":
+        params['use_kunlun_atb'] = True
+    else:
+        return
+
+
+def _set_soft_fp8(params, ctx, model_info):
+    """FP8 特性的参数配置（支持 DeepSeek / Qwen3 系列 FP8 模型）。
+
+    自动检测模型是否为 FP8 模型，并根据模型系列设置对应的量化参数：
+      - Qwen3 系列：设置 quantization='ascend'，MOE 模型禁用专家并行
+      - DeepSeek 系列：设置 quantization='ascend'，禁用 prefix caching/EP，固定 TP=4/DP=4
+
+    如果模型不是 FP8 模型，则跳过此函数，交由 _set_soft_fp4 处理。
+    """
+    model_architecture = model_info.model_architecture
+    model_name = model_info.model_name
+    model_path = model_info.model_path
+
+    # 检查模型是否为 FP8 模型
+    is_fp8_model = is_qwen3_series_fp8(model_path, model_name) or is_deepseek_series_fp8(model_path)
+
+    # 如果模型不是 FP8，则跳过此函数，让 FP4 函数处理
+    if not is_fp8_model:
+        return
+
+    # 检查是否启用了 FP4 开关，如果是则给出警告但继续使用 FP8 配置
+    if get_soft_fp4_env():
+        logger.warning("Model %s is detected as FP8 model, but Soft FP4 switch is enabled. "
+                       "Automatically correcting to use Soft FP8 configuration.", model_name)
+
+    # 检查是否启用了 FP8 开关，如果没有启用则给出提示但继续配置
+    if not get_soft_fp8_env():
+        logger.info("Model %s is detected as FP8 model, automatically enabling Soft FP8 configuration", model_name)
+
+    if ctx['device'] != "ascend":
+        logger.warning("Soft FP8 is only supported on Ascend devices")
+        return
+    elif is_qwen3_series_fp8(model_path, model_name):
+        params['quantization'] = 'ascend'
+        # 对于 Qwen3MoeForCausalLM 模型，禁用专家并行
+        if model_architecture == "Qwen3MoeForCausalLM":
+            params['enable_expert_parallel'] = False
+            logger.info("Soft FP8 configured for Qwen3 MOE Series models")
+        else:
+            logger.info("Soft FP8 configured for Qwen3 Series models")
+    elif is_deepseek_series_fp8(model_path):
+        params['quantization'] = 'ascend'
+        params["enforce_eager"] = True
+        params['no_enable_prefix_caching'] = True
+        # 使用 DP 并行要禁用该功能
+        params['enable_expert_parallel'] = False
+        # 根据硬件配置设置张量并行大小，DeepSeek FP8 模型推荐使用 TP=4/DP=4
+        # 但必须确保 device_count 足够，否则回退为全部设备
+        try:
+            device_count_val = int(params.get('device_count', 0))
+        except (ValueError, TypeError):
+            logger.warning("Invalid device_count value, defaulting to 0")
+            device_count_val = 0
+        recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
+        recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
+        params['data_parallel_size'] = recommended_dp
+        params['tensor_parallel_size'] = recommended_tp
+        params['use_kunlun_atb'] = False
+        logger.info("Soft FP8 configured for Deekseek Series models")
+
+
+def _set_soft_fp4(params, ctx, model_info):
+    """FP4 特性的参数配置（仅支持昇腾设备上的 Qwen3-32B NVFP4 模型）。
+
+    检查模型是否为 FP4 模型，如果是则设置 quantization='ascend'。
+    如果同时启用了 FP8 开关，会给出警告但继续使用 FP4 配置。
+    """
+    model_path = model_info.model_path
+    model_name = model_info.model_name
+
+    # 检查模型是否为 FP4 模型
+    is_fp4_model = is_qwen3_32b_nvfp4(model_path)
+
+    # 如果模型不是 FP4，则跳过此函数
+    if not is_fp4_model:
+        return
+
+    # 检查是否启用了 FP8 开关，如果是则给出警告但继续使用 FP4 配置
+    if get_soft_fp8_env():
+        logger.warning("Model %s is detected as FP4 model, but Soft FP8 switch is enabled. "
+                       "Automatically correcting to use Soft FP4 configuration.", model_name)
+
+    # 检查是否启用了 FP4 开关，如果没有启用则给出提示但继续配置
+    if not get_soft_fp4_env():
+        logger.info("Model %s is detected as FP4 model, automatically enabling Soft FP4 configuration", model_name)
+
+    if ctx['device'] != "ascend":
+        logger.warning("Soft FP4 is only supported on Ascend (NPU) devices and will be ignored on current device")
+        return
+
+    logger.info("Will use Soft FP4 configuration")
+    params['quantization'] = 'ascend'
+
+
+def _validate_embedding_rerank_params(params, ctx):
+    """对于 embedding 和 rerank 模型，强制禁用 enable_chunked_prefill 和 enable_prefix_caching 参数。
+
+    如果用户传入了这些参数，会记录警告日志后再取消这些参数。
+
+    Args:
+        params: 参数字典
+        ctx: 包含模型类型等上下文信息的字典
+    """
+    model_type = ctx.get("model_type", "")
+
+    # 仅对 embedding 和 rerank 模型进行处理
+    if model_type not in ["embedding", "rerank"]:
+        return
+
+    # 检查并处理 enable_chunked_prefill 参数
+    if "enable_chunked_prefill" in params:
+        if params["enable_chunked_prefill"] not in [None, False, "False", 0, "0"]:
+            logger.warning(
+                f"Model type '{model_type}' does not support 'enable_chunked_prefill' parameter. "
+                f"This parameter will be disabled."
+            )
+        params.pop("enable_chunked_prefill", None)
+
+    # 检查并处理 enable_prefix_caching 参数
+    if "enable_prefix_caching" in params:
+        if params["enable_prefix_caching"] not in [None, False, "False", 0, "0"]:
+            logger.warning(
+                f"Model type '{model_type}' does not support 'enable_prefix_caching' parameter. "
+                f"This parameter will be disabled."
+            )
+        params.pop("enable_prefix_caching", None)
+
+
+def _set_common_params(params, engine_cmd_parameter, config_path):
+    """根据参数映射表，将用户 CLI 参数翻译为引擎实际的参数键名并写入 params。"""
+    vllm_param_map_config = _load_mapping(config_path, 'default_to_vllm_parameter_mapping')
+    for key, value in vllm_param_map_config.items():
+        if value and engine_cmd_parameter.get(key) is not None:
+            params[value] = engine_cmd_parameter.get(key)
+
+
+def _set_sequence_length(params, engine_cmd_parameter):
+    """将 input_length + output_length 合并为 max_model_len 并写入 params。"""
+    input_len = engine_cmd_parameter.get("input_length")
+    output_len = engine_cmd_parameter.get("output_length")
+
+    # Default None values to 0 before summation; cast to int to prevent string concatenation
+    input_len = int(input_len) if input_len is not None else 0
+    output_len = int(output_len) if output_len is not None else 0
+
+    max_model_len = input_len + output_len
+    if max_model_len <= 0:
+        return
+    params['max_model_len'] = max_model_len
+
+
+def _set_task(params, ctx):
+    """根据模型类型（embedding/rerank）设置 vllm task 参数。
+
+    昇腾设备上 embedding/rerank 模型需要强制启用 eager 模式并关闭 ATB 算子加速。
+    """
+    if ctx["model_type"] == "embedding":
+        params["task"] = "embedding"
+        if ctx["device"] == "ascend":
+            params["enforce_eager"] = True
+            params["use_kunlun_atb"] = False
+    elif ctx["model_type"] == "rerank":
+        params["task"] = "score"
+        if ctx["device"] == "ascend":
+            params["enforce_eager"] = True
+            params["use_kunlun_atb"] = False
+    else:
+        return
+
+
+def _set_parallelism_params(params, ctx):
+    """根据设备数和分布式模式设置张量并行度（tensor_parallel_size）。"""
+    #
+    _adjust_tensor_parallelism(
+        params,
+        ctx["device_count"],
+        TensorParallelConfig(
+            tp_key='tensor_parallel_size',
+            if_distributed=ctx['distributed'],
+            node_ips=ctx.get("node_ips"),
+            nnodes=ctx.get("nnodes"),
+        ),
+    )
+
+
+def _get_pd_config(ctx, pd_role):
+    """生成 PD（Prefill-Decode）分离部署所需的 KV Transfer 配置片段。
+
+    参数:
+        pd_role: PD 角色，"P" 表示 Prefill 节点，"D" 表示 Decode 节点
+        ctx: 运行上下文，如 {'device': 'ascend', 'device_count': 2}
+
+    返回:
+        包含 KV Transfer 配置项的字典
+    """
+    device = ctx.get('device', '')
+    config = {}
+
+    if device == "ascend":
+        # AscendPD — 使用 vllm-ascend v0.17+ 已注册的 MooncakeConnector (V1 API)
+        kv_role = "kv_producer" if pd_role == "P" else "kv_consumer"
+        config = {
+            "kv_connector": "MooncakeConnector",
+            "kv_role": kv_role,
+            "kv_connector_extra_config": {
+                "mooncake_protocol": "rdma",
+            },
+        }
+        logger.info("[PD Config] Ascend device detected, role=%s, kv_role=%s", pd_role, kv_role)
+    else:
+        # AscendPD
+        config = {
+            "kv_connector": "NixlConnector",
+            "kv_role": "kv_both"
+        }
+        logger.info("[PD Config] non-ascend device (%s) detected, role=%s", device, pd_role)
+
+    return config
+
+
+def _set_kv_cache_config(params, ctx):
+    """根据 LMCache Offload 和 PD 分离角色，生成 vllm kv_transfer_config 配置。
+
+    优先级逻辑：
+    - LMCache + PD 同时启用 → MultiConnector（同时承载 KV Offload 和 PD 传输）
+    - 仅启用 LMCache → LMCacheConnectorV1
+    - 仅启用 PD → 按设备类型选择 MooncakeConnector 或 NixlConnector
+    - 两者都未启用 → 跳过不注入
+    """
+    lmcache_offload = get_lmcache_env()
+    pd_role = get_pd_role_env()
+
+    if lmcache_offload and pd_role:
+        config = {
+            "kv_connector": 'MultiConnector',
+            "kv_role": "kv_both",
+            "kv_connector_extra_config": {
+                "connectors": [
+                    _get_pd_config(ctx, pd_role),
+                    {"kv_connector": "LMCacheConnectorV1", "kv_role": "kv_both"}
+                ]
+            }
+        }
+        logger.info("[KVCache Offload] KVCache Offload feature is enabled and PD role is %s", pd_role)
+    elif lmcache_offload:
+        config = {
+            "kv_connector": 'LMCacheConnectorV1',
+            "kv_role": "kv_both"
+        }
+        logger.info("[KVCache Offload] KVCache Offload feature is enabled")
+    elif pd_role:
+        config = _get_pd_config(ctx, pd_role)
+        logger.info("PD role is %s", pd_role)
+    else:
+        return  #
+
+    params['kv_transfer_config'] = json.dumps(config)
+
+
+def _set_router_config(params):
+    """当 Wings Router 路由功能启用时，注入 KV 事件 NATS 发布配置。
+
+    Wings Router 依赖 NATS 消息队列来感知各实例的 KV Cache 命中情况，
+    从而做智能路由。此函数将 NATS 发布配置序列化为 JSON 并写入 params。
+    """
+    router_enable = get_router_env()
+    router_instance_group_name = get_router_instance_group_name_env()
+
+    if not router_enable or not router_instance_group_name:
+        return
+
+    router_instance_name = get_router_instance_name_env()
+    router_nats_path = get_router_nats_path_env()
+
+    kv_events_config = json.dumps({
+        "enable_kv_cache_events": True,
+        "publisher": "nats",
+        "instance_id": f"{router_instance_group_name}:{router_instance_name}",
+        "nats_servers": router_nats_path
+    })
+
+    params['kv_events_config'] = kv_events_config
+    logger.info("Wings Router for vllm is enabled")
+
+
+def _detect_mtp_moe_features(engine_cmd_parameter: Dict[str, Any],
+                              params: Dict[str, Any]) -> None:
+    """检测 MTP / MOE 特性并更新 params 中的 isMTP 和 isMOE 字段。"""
+    is_mtp = False
+    is_moe = False
+    model_path = engine_cmd_parameter.get("model_path")
+    if model_path and os.path.exists(model_path):
+        mtp_file = os.path.join(model_path, "mtp.safetensors")
+        is_mtp = os.path.exists(mtp_file)
+    moe_models = ["deepseek-r1-671b"]
+    model_name = engine_cmd_parameter.get("model_name")
+    if (model_name and model_name.lower() in moe_models) or params.get("enable_ep_moe"):
+        is_moe = True
+    params.update({'isMTP': is_mtp, 'isMOE': is_moe})
+
+
+def _apply_us8_long_ctx_strategy(params: Dict[str, Any],
+                                  ctx: Dict[str, Any],
+                                  engine_cmd_parameter: Dict[str, Any],
+                                  model_info) -> None:
+    """US8: DeepSeek 满血模型分布式长上下文时注入 dp/sp/cp/tp 并行策略。"""
+    long_ctx_threshold = int(os.getenv("MINDIE_LONG_CONTEXT_THRESHOLD", "8192"))
+    model_architecture = getattr(model_info, "model_architecture", None) if model_info else None
+    total_seq_len = (
+        (int(engine_cmd_parameter.get("input_length") or 0))
+        + (int(engine_cmd_parameter.get("output_length") or 0))
+    )
+    if (ctx.get('distributed')
+            and model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
+            and total_seq_len > long_ctx_threshold):
+        def _safe_int_env(name: str, default: str) -> int:
+            val = os.getenv(name, default)
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                logger.warning("Invalid %s=%r, using default %s", name, val, default)
+                return int(default)
+        params['dp'] = _safe_int_env("MINDIE_DS_DP", "1")
+        params['sp'] = _safe_int_env("MINDIE_DS_SP", "8")
+        params['cp'] = _safe_int_env("MINDIE_DS_CP", "2")
+        params['tp'] = _safe_int_env("MINDIE_DS_TP", "2")
+        logger.info(
+            "[US8] DeepSeek long-context enabled (seq=%d > %d): "
+            "dp=%d, sp=%d, cp=%d, tp=%d",
+            total_seq_len, long_ctx_threshold,
+            params['dp'], params['sp'], params['cp'], params['tp'],
+        )
+
+
+def _merge_mindie_params(params, ctx, engine_cmd_parameter, model_info=None):
+    """将通用参数合并为 MindIE config.json 所要求的字段格式。
+
+    - 通过 mindie 参数映射表翻译 CLI 参数名；
+    - 自动检测模型目录中是否含 mtp.safetensors（MTP 特性）；
+    - 自动识别 MOE 模型（如 DeepSeek-R1-671B）；
+    - 计算 maxSeqLen / maxPrefillTokens；
+    - 分布式场景下设置 worldSize / npuDeviceIds，并禁用 multiNodesInferEnabled；
+    - US8: DeepSeek 满血模型 2×8 分布式长上下文时注入 dp/sp/cp/tp 策略。
+    """
+    #
+    engine_param_map_config_path = os.path.join(DEFAULT_CONFIG_DIR,
+                                            DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
+    mindie_param_map_config = _load_mapping(engine_param_map_config_path, 'default_to_mindie_parameter_mapping')
+    for key, value in mindie_param_map_config.items():
+        if not value or engine_cmd_parameter.get(key) is None:
+            continue
+        else:
+            params[value] = engine_cmd_parameter.get(key)
+
+    _detect_mtp_moe_features(engine_cmd_parameter, params)
+
+    if engine_cmd_parameter["input_length"] and engine_cmd_parameter["output_length"]:
+        params.update({
+            'maxSeqLen': int(engine_cmd_parameter["input_length"]) + int(engine_cmd_parameter["output_length"]),
+            'maxPrefillTokens': max(8192, int(engine_cmd_parameter["input_length"]))
+        })
+
+    # ── US8: DeepSeek 满血模型 2×8 分布式长上下文 dp/sp/cp/tp 策略 ─────────
+    _apply_us8_long_ctx_strategy(params, ctx, engine_cmd_parameter, model_info)
+
+    # ── distributed / single-node worldSize + npuDeviceIds ──────────────────
+    if ctx.get('distributed'):
+        node_ips = ctx.get("node_ips") or get_node_ips()
+        node_ips_list = _extract_node_ips(node_ips)
+        nnodes_actual = _resolve_distributed_node_count(node_ips, ctx.get("nnodes"))
+
+        if nnodes_actual <= 1:
+            logger.warning(
+                "MindIE distributed mode requires nnodes > 1, got %d. "
+                "HCCL multi-node initialization may fail.",
+                nnodes_actual,
+            )
+
+        # MindIE multi-node TP: worldSize = total devices across ALL nodes.
+        # rank table 含所有节点（Fix P-CD-1），server_count = nnodes_actual，
+        # ConfigManager 校验 worldSize(total) % n_nodes == 0 → 通过。
+        # npuDeviceIds 只列本节点本地设备 ID。
+        params['worldSize'] = int(ctx["device_count"]) * nnodes_actual
+        # multiNodesInferEnabled=True 开启 HCCL 跨节点通信。
+        # 前提：worldSize 已设为全局总 rank 数，ConfigManager 不会再错误覆盖。
+        params['multiNodesInferEnabled'] = nnodes_actual > 1
+        params['node_ips'] = ",".join(node_ips_list) if node_ips_list else (node_ips or "")
+        params['npuDeviceIds'] = [[i for i in range(ctx["device_count"])]]
+    else:
+        _adjust_tensor_parallelism(params, ctx["device_count"], TensorParallelConfig(tp_key='worldSize'))
+        params['npuDeviceIds'] = [[i for i in range(ctx["device_count"])]]
+
+    # ── Function Call 开关 ──────────────────────────────────────────────────
+    # 用户通过 enable_auto_tool_choice 统一触发，映射到 MindIE 的
+    # mindie_tool_call_parser / mindie_model_type（由 mindie_adapter 注入）
+    user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
+    if user_wants_fc:
+        if "mindie_tool_call_parser" in params:
+            logger.info(
+                "Function Call enabled for MindIE (parser=%s, model_type=%s)",
+                params.get("mindie_tool_call_parser"),
+                params.get("mindie_model_type"),
+            )
+        else:
+            logger.warning("enable_auto_tool_choice is set but MindIE model has no mindie_tool_call_parser configured")
+    else:
+        params.pop("mindie_tool_call_parser", None)
+        params.pop("mindie_model_type", None)
+        params.pop("mindie_chat_template", None)
+
+    return params
+
+
+def _merge_sglang_params(params, ctx, engine_cmd_parameter):
+    """将通用参数合并为 SGLang 启动参数格式。
+
+    - 通过 sglang 参数映射表翻译 CLI 参数名；
+    - 注意：sglang 的 enable_prefix_caching 语义与 vllm 相反，因此需要取反；
+    - 合并 input_length + output_length 为 context_length；
+    - 设置张量并行度（tp_size）；
+    - sglang 4.10.0+ 中 --enable-ep-moe 已废弃，改为 ep_size = tp_size。
+    """
+    #
+    engine_param_map_config_path = os.path.join(DEFAULT_CONFIG_DIR,
+                                            DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
+    sglang_param_map_config = _load_mapping(engine_param_map_config_path, 'default_to_sglang_parameter_mapping')
+    for key, value in sglang_param_map_config.items():
+        if not value or engine_cmd_parameter.get(key) is None:
+            continue
+        else:
+            params[value] = engine_cmd_parameter.get(key)
+            # sglangvllm
+            if key == "enable_prefix_caching":
+                params[value] = not engine_cmd_parameter.get(key)
+
+    #
+    if engine_cmd_parameter["input_length"] and engine_cmd_parameter["output_length"]:
+        input_len = int(engine_cmd_parameter["input_length"])
+        output_len = int(engine_cmd_parameter["output_length"])
+        params['context_length'] = input_len + output_len
+
+    #
+    _adjust_tensor_parallelism(
+        params,
+        ctx["device_count"],
+        TensorParallelConfig(
+            tp_key='tp_size',
+            if_distributed=ctx['distributed'],
+            node_ips=ctx.get("node_ips"),
+            nnodes=ctx.get("nnodes"),
+        ),
+    )
+
+    # sglang 4.10.0--enable-ep-moe is deprecated
+    if "enable_ep_moe" in params:
+        params.pop("enable_ep_moe")
+        params['ep_size'] = params['tp_size']
+
+    # 处理 tool parser 参数（function call 支持）
+    # 用户通过 enable_auto_tool_choice 统一触发，映射到 SGLang 的 tool_call_parser
+    params.pop("enable_tool_choice", None)  # 清理旧参数名
+    user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
+    if user_wants_fc:
+        if "tool_call_parser" in params:
+            logger.info(
+                "Function Call enabled for SGLang (parser=%s)",
+                params["tool_call_parser"],
+            )
+        else:
+            logger.warning("enable_auto_tool_choice is set but SGLang model has no tool_call_parser configured")
+    else:
+        params.pop("tool_call_parser", None)
+        logger.info("Function Call not enabled for SGLang")
+
+    return params
+
+
+@dataclass
+class TensorParallelConfig:
+    """张量并行相关配置，用于封装 _adjust_tensor_parallelism 的多个参数。"""
+    tp_key: str
+    if_distributed: bool = False
+    node_ips: str | None = None
+    nnodes: int | None = None
+
+
+def _adjust_tensor_parallelism(
+    params,
+    device_count,
+    tp_config: TensorParallelConfig,
+):
+    """设置张量并行度（TP）参数。
+
+    - 非分布式模式：TP = 当前节点设备数
+    - 分布式模式（非 PD）：TP = 设备数 × 节点数，实现全局 TP
+    - 若已有用户设置则不覆盖
+    """
+    tp_key = tp_config.tp_key
+    if_distributed = tp_config.if_distributed
+    node_ips = tp_config.node_ips
+    nnodes = tp_config.nnodes
+    default_tp = params.get(tp_key)
+    if default_tp is not None:
+        if not if_distributed and default_tp != int(device_count):
+            logger.warning(
+                "Detected %s devices in current environment, "
+                "while default recommended TP is %s, "
+                "keeping explicitly configured TP value",
+                device_count, default_tp,
+            )
+        return
+    if not if_distributed:
+        # 300I A2 标卡为 4 张或 8 张时，强制 TP=4（PCIe 拓扑限制）
+        try:
+            is_pcie_300i, _ = check_pcie_cards("d802", "4000")
+            if is_pcie_300i and int(device_count) in [4, 8]:
+                params[tp_key] = 4
+                logger.info("Detected 300I A2 PCIe card with %s devices, set TP=4", device_count)
+                return
+        except Exception as e:
+            logger.debug("PCIe card detection skipped in sidecar: %s", e)  # Sidecar 环境可能无法访问 PCIe
+        params[tp_key] = int(device_count)
+    else:
+        n_nodes = _resolve_distributed_node_count(node_ips, nnodes)
+        # PD+
+        if get_pd_role_env():
+            params[tp_key] = int(device_count)
+        else:
+            params[tp_key] = int(device_count) * n_nodes
+
+
+# 额外的通用参数名 → 引擎原生参数名映射（engine_parameter_mapping.json 中未覆盖的常见参数）
+_EXTRA_KEY_TRANSLATION: Dict[str, Dict[str, str]] = {
+    "sglang": {
+        "max_model_len": "context_length",
+    },
+    "mindie": {
+        "max_model_len": "maxInputTokenLen",
+    },
+}
+
+
+def _translate_user_config_for_engine(user_config: Dict[str, Any],
+                                      engine: str) -> Dict[str, Any]:
+    """将用户配置文件中的通用参数名翻译为引擎原生参数名。
+
+    用户可能在 config-file 中使用 vLLM 风格的参数名（如 gpu_memory_utilization、
+    max_model_len）。对于 SGLang / MindIE 等引擎，需要先将这些键翻译为引擎原生
+    参数名（如 mem_fraction_static、context_length），再参与配置合并。
+
+    这确保 user_config 中的值会正确覆盖 engine_specific_defaults 中的同名键，
+    而不是作为多余的未知键被引擎拒绝。
+
+    Args:
+        user_config: 用户配置文件解析后的字典
+        engine:      引擎标识 (vllm / sglang / mindie / vllm-ascend)
+
+    Returns:
+        Dict[str, Any]: 翻译后的配置字典
+    """
+    if not user_config or engine in ("vllm", "vllm-ascend"):
+        return user_config
+
+    mapping_name = {
+        "sglang": "default_to_sglang_parameter_mapping",
+        "mindie": "default_to_mindie_parameter_mapping",
+    }.get(engine)
+    if not mapping_name:
+        return user_config
+
+    config_path = os.path.join(DEFAULT_CONFIG_DIR,
+                               DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
+    param_map = _load_mapping(config_path, mapping_name)
+
+    extra_map = _EXTRA_KEY_TRANSLATION.get(engine, {})
+
+    translated: Dict[str, Any] = {}
+    for key, value in user_config.items():
+        if key in param_map and param_map[key]:
+            translated[param_map[key]] = value
+        elif key in extra_map:
+            translated[extra_map[key]] = value
+        else:
+            translated[key] = value
+
+    if translated != user_config:
+        logger.info("Translated user config keys for engine '%s': %s → %s",
+                     engine, list(user_config.keys()), list(translated.keys()))
+    return translated
+
+
+def _merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:
+    """深度合并多个配置字典（后者覆盖前者，嵌套 dict 递归合并）。
+
+    合并规则：
+    - 若同一个 key 在多个字典中都是 dict，则递归合并；
+    - 否则后续字典的值直接覆盖之前的值。
+
+    Args:
+        *configs: 任意数量的字典，按顺序从低优先级到高优先级传入
+
+    Returns:
+        Dict[str, Any]: 深度合并后的字典
+    """
+    merged = {}
+    for config in configs:
+        if not isinstance(config, dict):
+            continue #
+
+        for key, value in config.items():
+            if isinstance(value, dict) and key in merged and isinstance(merged[key], dict):
+                #
+                merged[key] = _merge_configs(merged[key], value)
+            else:
+                #
+                merged[key] = value
+    return merged
+
+
+def _load_default_config(hardware_env: Dict[str, Any]) -> Dict[str, Any]:
+    """根据硬件类型（nvidia/ascend）加载对应的默认引擎配置文件。
+
+    加载策略：
+      1. 优先加载 vllm_default.json（新版统一配置）
+      2. 若 vllm_default.json 不存在 → 回退到 <device>_default.json（旧版布局）
+      3. 若 vllm_default.json 存在但缺少 model_deploy_config →
+         尝试从旧版 <device>_default.json 中补充 model_deploy_config（兼容旧配置）
+
+    兼容说明：
+      旧版使用 nvidia_default.json / ascend_default.json，其中包含按模型细分的
+      model_deploy_config 段落。新版统一使用 vllm_default.json，但如果部署环境
+      中同时存在旧版配置文件，会自动合并其中的 model_deploy_config 到新版配置中。
+    """
+    device_key = 'device'
+    device_type = hardware_env.get(device_key, "nvidia")
+    if device_type not in SUPPORTED_DEVICE_TYPES:
+        logger.warning("Unsupported device type '%s', fallback to 'nvidia'", device_type)
+        device_type = "nvidia"
+    default_file = DEFAULT_CONFIG_FILES.get(device_type)
+    default_config_path = os.path.join(DEFAULT_CONFIG_DIR, default_file)
+    if not os.path.exists(default_config_path) and default_file == "vllm_default.json":
+        legacy_file = f"{device_type}_default.json"
+        legacy_path = os.path.join(DEFAULT_CONFIG_DIR, legacy_file)
+        if os.path.exists(legacy_path):
+            logger.warning("Fallback to legacy default config: %s", legacy_path)
+            default_config_path = legacy_path
+    logger.info("Determined default config file for hardware environment '%s': %s", device_type, default_config_path)
+    config = load_json_config(default_config_path)
+
+    # 兼容旧版：若主配置缺少 model_deploy_config，尝试从旧版设备配置文件中补充
+    if "model_deploy_config" not in config and default_file == "vllm_default.json":
+        legacy_file = f"{device_type}_default.json"
+        legacy_path = os.path.join(DEFAULT_CONFIG_DIR, legacy_file)
+        if os.path.exists(legacy_path):
+            legacy_config = load_json_config(legacy_path)
+            if "model_deploy_config" in legacy_config:
+                config["model_deploy_config"] = legacy_config["model_deploy_config"]
+                logger.info(
+                    "Supplemented model_deploy_config from legacy config: %s",
+                    legacy_path,
+                )
+    return config
+
+
+def _load_engine_fallback_defaults(engine: str) -> Dict[str, Any]:
+    """加载特定引擎的兜底默认配置（sglang_default.json / mindie_default.json）。
+
+    当 vllm_default.json 或 model_deploy_config 中没有该引擎的专属配置项时，
+    从引擎专属默认文件加载参数。vllm/vllm_ascend 复用公共默认配置，无需此步骤。
+    """
+    fallback_file = DEFAULT_CONFIG_FILES.get(engine)
+    if not fallback_file:
+        logger.debug("No engine-level fallback config for engine='%s'", engine)
+        return {}
+    path = os.path.join(DEFAULT_CONFIG_DIR, fallback_file)
+    if not os.path.exists(path):
+        logger.warning(
+            "Engine fallback config '%s' not found at '%s'; using empty defaults",
+            fallback_file, path,
+        )
+        return {}
+    cfg = load_json_config(path)
+    logger.info("Loaded engine-level fallback defaults from '%s'", path)
+    return cfg
+
+
+def _load_user_config(config) -> Dict[str, Any]:
+    """加载用户自定义 JSON 配置文件，合并到默认配置之上。
+
+    Args:
+        config: 配置来源，支持两种格式：
+            - 文件路径字符串（指向 JSON 文件）
+            - 已反序列化的 JSON 字典对象
+    """
+    user_config = {}
+    if not config:
+        return user_config
+
+    # 支持已反序列化的 dict 对象
+    if isinstance(config, dict):
+        logger.info("Config is already a dict, keys: %s", list(config.keys()))
+        return config
+
+    if config.strip().startswith('{') and config.strip().endswith('}'):
+        # JSON
+        try:
+            user_config = json.loads(config)
+            logger.info("Successfully parsed config from JSON string, keys: %s", list(user_config.keys()))
+            return user_config
+        except json.JSONDecodeError:
+            logger.info("The config-file is not JSON string, will load it as a file")
+    elif os.path.exists(config):
+        # 路径规范化：解析符号链接，防止路径遍历攻击
+        resolved = os.path.realpath(config)
+        if not os.path.isfile(resolved):
+            logger.warning("Config path is not a regular file: %s -> %s", config, resolved)
+        else:
+            logger.info("Loading user-specified config file: %s (resolved: %s)", config, resolved)
+            user_config = load_json_config(resolved)
+            if user_config:
+                logger.info("User config loaded, keys: %s", list(user_config.keys()))
+    else:
+        logger.warning("User-specified config not found or invalid: %s", config)
+
+    return user_config
+
+
+def _process_cmd_args(known_args: argparse.Namespace) -> Dict[str, Any]:
+    """将 argparse.Namespace 转为字典，过滤掉 None 值和 config_file 键。
+
+    config_file 由 _load_user_config 单独处理，不参与引擎参数合并。
+    """
+    cmd_known_params = {k: v for k, v in vars(known_args).items() if v is not None and k not in ["config_file"]}
+    return cmd_known_params
+
+
+# CLI/ENV 参数与其对应环境变量的映射表。
+# 用于 _detect_explicit_cli_keys() 判断哪些参数是用户显式指定的。
+_CLI_ENV_MAP: Dict[str, str] = {
+    "gpu_memory_utilization": "GPU_MEMORY_UTILIZATION",
+    "max_num_seqs": "MAX_NUM_SEQS",
+    "block_size": "BLOCK_SIZE",
+    "seed": "SEED",
+    "dtype": "DTYPE",
+    "kv_cache_dtype": "KV_CACHE_DTYPE",
+    "quantization": "QUANTIZATION",
+    "host": "HOST",
+    "port": "PORT",
+    "max_num_batched_tokens": "MAX_NUM_BATCHED_TOKENS",
+    "trust_remote_code": "TRUST_REMOTE_CODE",
+    "enable_chunked_prefill": "ENABLE_CHUNKED_PREFILL",
+    "enable_prefix_caching": "ENABLE_PREFIX_CACHING",
+    "enable_expert_parallel": "ENABLE_EXPERT_PARALLEL",
+}
+
+
+def _detect_explicit_cli_keys() -> set:
+    """检测用户通过 CLI 参数或环境变量显式设定的参数键集合。
+
+    识别规则：
+    1. 检查 sys.argv 中的 --xxx 参数名 → 转为 snake_case 加入集合
+    2. 检查 _CLI_ENV_MAP 中对应的环境变量是否被设置
+
+    Returns:
+        set: 用户显式设定的参数键名集合 (snake_case)
+    """
+    import sys as _sys
+    explicit = set()
+
+    for arg in _sys.argv:
+        if arg.startswith("--"):
+            key = arg.lstrip("-").split("=")[0].replace("-", "_")
+            explicit.add(key)
+
+    for param_key, env_var in _CLI_ENV_MAP.items():
+        if os.environ.get(env_var) is not None:
+            explicit.add(param_key)
+
+    return explicit
+
+
+def _cast_env_value(env_val: str, cfg_type: type) -> Any:
+    """将环境变量字符串值按目标类型做类型转换。"""
+    try:
+        if cfg_type == float:
+            return float(env_val)
+        if cfg_type == int:
+            return int(env_val)
+        if cfg_type == bool:
+            return env_val.lower() in ('true', '1', 'yes')
+        return env_val
+    except (ValueError, TypeError):
+        return env_val
+
+
+def _apply_cli_overrides(engine_config: Dict[str, Any],
+                         cmd_known_params: Dict[str, Any]) -> Dict[str, Any]:
+    """将用户显式指定的 CLI/ENV 参数覆盖到 engine_config 中。
+
+    遵循优先级规则：CLI/ENV > config-file > model_default > hardware_default。
+    仅覆盖用户显式设定的参数（通过 _detect_explicit_cli_keys 检测），
+    不会用 argparse 的默认值错误覆盖 config-file 中的有效值。
+
+    Args:
+        engine_config:    已合并 defaults + user_config 的引擎参数字典
+        cmd_known_params: CLI 解析后的完整参数字典
+
+    Returns:
+        Dict[str, Any]: 应用 CLI 覆盖后的 engine_config（原地修改并返回）
+    """
+    explicit_keys = _detect_explicit_cli_keys()
+
+    for key in list(engine_config.keys()):
+        if key not in explicit_keys:
+            continue
+
+        # 优先从 argparse 解析结果取值，若无则从环境变量回退读取
+        if key in cmd_known_params:
+            cli_val = cmd_known_params[key]
+        elif key in _CLI_ENV_MAP:
+            env_val = os.environ.get(_CLI_ENV_MAP[key])
+            if env_val is None:
+                continue
+            # 按 engine_config 中已有值的类型做类型转换
+            cfg_type = type(engine_config.get(key))
+            cli_val = _cast_env_value(env_val, cfg_type)
+        else:
+            continue
+
+        cfg_val = engine_config[key]
+        if str(cli_val) != str(cfg_val):
+            logger.info(
+                "CLI/ENV override: engine_config[%s] = %s (was %s from config-file/defaults)",
+                key, cli_val, cfg_val,
+            )
+            engine_config[key] = cli_val
+
+    return engine_config
+
+
+def _write_engine_second_line(path: str, engine: str) -> None:
+    """将引擎名称写入标记文件的第 2 行。
+
+    标记文件（如 /var/log/wings/wings.txt）用于进程间通信和运维排查。
+    第 1 行预留给 PID，第 2 行记录当前使用的引擎名称。
+    文件不存在时自动创建。
+    """
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+        lines = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+
+        if len(lines) == 0:
+            lines = ["", engine]
+        elif len(lines) == 1:
+            lines.append(engine)
+        else:
+            lines[1] = engine
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception as e:
+        logger.warning("Write engine marker file failed (%s): %s", path, e)
+
+
+
+def _auto_select_engine(hardware_env: Dict[str, Any],
+                       cmd_known_params: Dict[str, Any],
+                       model_info) -> Dict[str, Any]:
+    """根据硬件环境和模型特征自动选择推理引擎，并完成引擎相关的全局初始化。
+
+    核心职责：
+    1. 若用户未指定 engine → 调用 _select_engine_automatically 自动选择
+    2. 若用户已指定 engine → 调用 _validate_user_engine 校验兼容性（可能降级）
+    3. MindIE 引擎需确保 config.json 权限为 640
+    4. 将最终引擎名写入标记文件和 WINGS_ENGINE 环境变量
+    5. 在 Ascend 设备上将 vllm 自动升级为 vllm_ascend
+    6. 根据 gpu_usage_mode 确定最终 device_count
+
+    Args:
+        hardware_env:     硬件探测结果（device, count, details）
+        cmd_known_params: 用户 CLI 参数字典（会被原地修改）
+        model_info:       模型元信息对象
+
+    Returns:
+        修改后的 cmd_known_params（加入 engine, model_type, device_count）
+    """
+    device_type = hardware_env['device']
+    if hardware_env.get('details'):
+        device_name = hardware_env.get('details')[0]['name']
+    else:
+        device_name = 'unknown'
+    gpu_usage_mode = cmd_known_params.get("gpu_usage_mode", "full")
+
+    # 引擎选择：用户未指定时自动选择，已指定时校验兼容性
+    if not cmd_known_params.get("engine"):
+        engine = _select_engine_automatically(device_type, device_name,
+                                              gpu_usage_mode, model_info)
+    else:
+        engine = _validate_user_engine(cmd_known_params.get("engine"),
+                                       device_name, gpu_usage_mode, model_info)
+
+    # MindIE 引擎要求 config.json 权限为 640；Ascend310 还需检查 torch_dtype
+    if engine == 'mindie':
+        config_json_file = os.path.join(cmd_known_params.get('model_path'), 'config.json')
+        if not check_permission_640(config_json_file):
+            try:
+                os.chmod(config_json_file, 0o640)
+                logger.info("The permission setting for model config.json is not set to 640. " \
+                "Since MindIE only supports the 640 permission configuration, we will adjust it to 640.")
+            except Exception as e:
+                logger.warning("Failed to set permission for model config.json to 640: %s.", e)
+        if "310" in device_name:
+            check_torch_dtype(config_json_file)
+
+    # 回写模型类型到参数字典，供下游引擎适配器判断
+    cmd_known_params["model_type"] = model_info.identify_model_type()
+
+    # 回写最终选定的引擎名称
+    cmd_known_params["engine"] = engine
+
+    # 配置推测解码和稀疏 KV 环境变量
+    _set_spec_decoding_config(cmd_known_params)
+    _set_sparse_config(cmd_known_params)
+
+    # 在昇腾设备上将 vllm 自动升级为 vllm_ascend
+    if engine == "vllm":
+        _handle_ascend_vllm(device_type, cmd_known_params)
+
+    # 取升级后的最终引擎名称（可能已被 _handle_ascend_vllm 修改为 vllm_ascend）
+    final_engine = cmd_known_params.get("engine", engine)
+
+    # 写入标记文件和全局环境变量 — 必须在 _handle_ascend_vllm 之后，
+    # 确保记录的是最终实际使用的引擎名称
+    _write_engine_second_line(os.getenv("BACKEND_PID_FILE", "/var/log/wings/wings.txt"), final_engine)
+    os.environ['WINGS_ENGINE'] = final_engine
+    logger.info("Set global environment variable WINGS_ENGINE=%s", final_engine)
+
+    # 分布式参数注入（distributed_executor_backend, ray/nixl/dist_port 等）
+    if cmd_known_params.get("distributed"):
+        _handle_distributed(engine, cmd_known_params, model_info)
+
+    # 确定最终设备数量：full 模式使用硬件探测值，其他模式使用用户指定值
+    # device_count
+    if cmd_known_params.get("gpu_usage_mode") == "full":
+        device_count = hardware_env.get("count", 1)
+    else:
+        device_count = cmd_known_params.get("device_count", 1)
+    # 设备数量合法性校验
+    if device_count <= 0:
+        raise ValueError(f"device_count must be an integer greater than 0. Current value: {device_count}")
+    cmd_known_params['device_count'] = device_count
+
+    return cmd_known_params
+
+
+def _select_engine_automatically(device_type: str,
+                                 device_name: str,
+                                 gpu_usage_mode: str,
+                                 model_info) -> str:
+    """根据设备类型、模型特征自动选择最合适的推理引擎。"""
+    if device_type == "nvidia":
+        return _select_nvidia_engine(gpu_usage_mode, model_info)
+    elif device_type == "ascend":
+        return _select_ascend_engine(device_name, model_info)
+    else:
+        logger.info("No engine specified, automatically selected engine: vllm")
+        return 'vllm'
+
+
+def _select_nvidia_engine(gpu_usage_mode: str, model_info) -> str:
+    """NVIDIA GPU 场景下的引擎自动选择逻辑。
+
+    优先级（由高到低）：
+    1. 启用 KVCache Offload → vllm
+    2. 启用 PD 分离 → vllm
+    3. 启用 Wings Router → vllm
+    4. MIG 模式 → vllm
+    5. embedding/rerank 模型 → vllm
+    6. wings 已验证模型 → sglang（推荐高性能路径）
+    7. 其他未验证架构 → vllm（兜底）
+    """
+    model_architecture = model_info.model_architecture
+    model_type = model_info.identify_model_type()
+    is_wings_supported = model_info.is_wings_supported()
+    vllm = 'vllm'
+    if get_lmcache_env():
+        logger.info("[KVCache Offload] KVCache Offload enabled, automatically switched to VLLM engine")
+        return vllm
+    elif get_pd_role_env():
+        logger.info("PD enabled, automatically switched to VLLM engine")
+        return vllm
+    elif get_router_env():
+        logger.info("Wings router enabled, automatically switched to VLLM engine")
+        return vllm
+    elif gpu_usage_mode == "mig":
+        logger.info("Device is Mig, automatically switched to VLLM engine")
+        return vllm
+    elif model_type in ["embedding", "rerank"]:
+        logger.info("model type is %s, automatically switched to VLLM engine", model_type)
+        return vllm
+    elif is_wings_supported:
+        logger.info("No engine specified, automatically selected engine: sglang")
+        return 'sglang'
+    else:
+        logger.warning("This model architecture %s has not been validated on Wings. "
+                       "automatically switched to VLLM engine", model_architecture)
+        return vllm
+
+
+def _select_ascend_engine(device_name: str, model_info) -> str:
+    """华为昇腾 NPU 场景下的引擎自动选择逻辑。
+
+    优先级（由高到低）：
+    1. Ascend310 → 强制 mindie（vllm_ascend 不支持 310 系列）
+    2. embedding / rerank 模型 → vllm_ascend
+    3. 算子加速（USE_KUNLUN_ATB）启用 → vllm_ascend
+    4. LMCache KV Offload 启用 → vllm_ascend
+    5. Wings Router 启用 → vllm_ascend
+    6. Soft FP8 量化启用 → vllm_ascend
+    7. Wings 已验证模型 → mindie（Ascend 上的推荐引擎）
+    8. 未验证架构 → vllm_ascend（兜底）
+
+    Args:
+        device_name: 设备型号名称，含 '310' 表示昇腾 310 系列
+        model_info:  模型元信息对象
+
+    Returns:
+        str: 选定的引擎名称 'mindie' 或 'vllm_ascend'
+
+    Raises:
+        ValueError: 昇腾 310 不支持 embedding/rerank 模型
+    """
+    model_architecture = model_info.model_architecture
+    model_type = model_info.identify_model_type()
+    is_wings_supported = model_info.is_wings_supported()
+    if "310" in device_name:
+        if model_type in ["embedding", "rerank"]:
+            raise ValueError(f"Ascend310 not support {model_type} model currenly")
+        logger.info("Ascend310 not support vllm ascend, automatically selected engine: mindie")
+        return 'mindie'
+    elif model_type in ["embedding", "rerank"]:
+        logger.info("model type is %s, automatically switched to VLLM engine", model_type)
+        return "vllm_ascend"
+    elif get_operator_acceleration_env():
+        logger.warning("operator_acceleration is enabled, "
+                       "automatically switched to VLLM_Ascend engine")
+        return "vllm_ascend"
+    elif get_lmcache_env():
+        logger.info("[KVCache Offload] KVCache Offload enabled, automatically switched to VLLM_Ascend engine")
+        return "vllm_ascend"
+    elif get_router_env():
+        logger.info("Wings router enabled, automatically switched to VLLM engine")
+        return "vllm_ascend"
+    elif get_soft_fp8_env():
+        logger.warning("soft fp8 is enabled, "
+                       "automatically switched to VLLM_Ascend engine")
+        return "vllm_ascend"
+    elif model_architecture in ["DeepseekV32ForCausalLM", "Qwen3NextForCausalLM",
+                                  "Glm4MoeForCausalLM",
+                                  "Qwen3_5ForConditionalGeneration",
+                                  "Qwen3_5MoeForConditionalGeneration",
+                                  "MiniMaxM2ForCausalLM"]:
+        logger.info("Model architecture %s requires vllm_ascend, automatically selected", model_architecture)
+        return "vllm_ascend"
+    elif is_wings_supported:
+        logger.info("No engine specified, automatically selected engine: mindie")
+        return 'mindie'
+    else:
+        logger.warning("This model architecture %s has not been validated on Wings. "
+                       "automatically switched to VLLM_Ascend engine", model_architecture)
+        return "vllm_ascend"
+
+
+def _validate_user_engine(engine: str, device_name: str, gpu_usage_mode: str, model_info) -> str:
+    """校验用户指定的引擎并在不兼容时自动降级到兼容引擎。
+
+    参数:
+        engine (str): 用户指定引擎，支持 'mindie', 'vllm', 'vllm_ascend', 'sglang'
+        device_name (str): 设备型号名称（含 '310' 时为昇腾 310 系列）
+        gpu_usage_mode (str): GPU 使用模式（'mig' 等）
+        model_info: 模型信息对象
+
+    返回:
+        str: 实际使用的引擎名（可能因兼容性降级而与输入不同）
+
+    异常:
+        ValueError: 引擎名不在支持列表中时抛出
+    """
+    #
+    if engine not in ['mindie', 'vllm', 'vllm_ascend', 'sglang']:
+        raise ValueError(
+            f"The engine {engine} is not supported yet! "
+            "Please change to 'mindie', 'vllm', 'vllm_ascend' or 'sglang'"
+        )
+
+    vllm = 'vllm'
+    model_type = model_info.identify_model_type()
+    #
+    if engine == 'mindie':
+        # 310mindie
+        if "310" in device_name:
+            return 'mindie'
+        # LMCachevllm_ascend
+        elif get_lmcache_env():
+            logger.warning("[KVCache Offload] KVCache Offload enabled, automatically switched to VLLM_Ascend engine")
+            return "vllm_ascend"
+        # embeddingrerankvllm_ascend
+        elif model_type in ["embedding", "rerank"]:
+            logger.warning("model type is %s, automatically switched to VLLM_Ascend engine", model_type)
+            return "vllm_ascend"
+        elif get_router_env():
+            logger.warning("Wings router enabled, automatically switched to VLLM engine")
+            return vllm
+        # QwenQwQvllm_ascend
+        elif get_operator_acceleration_env():
+            logger.warning("operator_acceleration is enabled, "
+                           "automatically switched to VLLM_Ascend engine")
+            return "vllm_ascend"
+    elif engine == 'sglang':
+        if get_lmcache_env():
+            logger.warning("[KVCache Offload] KVCache Offload enabled, automatically switched to VLLM engine")
+            return vllm
+        elif get_pd_role_env():
+            logger.warning("PD enabled, automatically switched to VLLM engine")
+            return vllm
+        elif get_router_env():
+            logger.warning("Wings router enabled, automatically switched to VLLM engine")
+            return vllm
+        elif gpu_usage_mode == "mig":
+            logger.warning("Device is Mig, automatically switched to VLLM engine")
+            return vllm
+        elif model_type in ["embedding", "rerank"]:
+            logger.warning("model type is %s, automatically switched to VLLM engine", model_type)
+            return vllm
+    return engine
+
+
+def _handle_mindie_distributed(distributed_config: Dict[str, Any], cmd_params: Dict[str, Any]):
+    """注入 MindIE 多节点分布式所需的 MASTER_ADDR / MASTER_PORT。
+
+    从分布式配置文件读取 master 通信端口，并通过 get_master_ip() 获取当前节点 IP，
+    将结果写入 cmd_params，供 mindie_adapter 构建启动脚本时使用。
+    """
+    mindie_cfg = distributed_config.get('mindie_distributed', {})
+    master_port = mindie_cfg.get('master_port', 27070)
+    cmd_params.update({
+        'mindie_master_addr': get_master_ip(),
+        'mindie_master_port': master_port,
+    })
+
+
+def _handle_distributed(engine: str, cmd_params: Dict[str, Any], model_info):
+    """根据引擎类型将分布式参数注入 cmd_params。
+
+    从默认配置目录加载 distributed.json，并根据 engine 分发到对应的处理函数：
+    - vllm / vllm_ascend → _handle_vllm_distributed（Ray 或 PD 模式）
+    - sglang             → _handle_sglang_distributed（dist_port）
+    - mindie             → _handle_mindie_distributed（MASTER_ADDR/PORT）
+    """
+    distributed_config_path = os.path.join(
+        DEFAULT_CONFIG_DIR,
+        DEFAULT_CONFIG_FILES.get("distributed")
+    )
+    distributed_config = load_json_config(distributed_config_path)
+
+    # vllmvllm_ascend
+    if engine in ['vllm', 'vllm_ascend']:
+        _handle_vllm_distributed(distributed_config, cmd_params, model_info)
+
+    # sglang
+    elif engine == 'sglang':
+        _handle_sglang_distributed(distributed_config, cmd_params)
+
+    # mindie
+    elif engine == 'mindie':
+        _handle_mindie_distributed(distributed_config, cmd_params)
+
+
+def _handle_vllm_distributed(distributed_config: Dict[str, Any], cmd_params: Dict[str, Any], model_info):
+    """为 vLLM / vLLM-Ascend 配置分布式推理参数。
+
+    部署策略:
+    - Ascend PD (Prefill/Decode 分离): 使用 MooncakeConnector，各实例独立运行，
+      不使用 dp_deployment / NIXL。KV 传输由 MooncakeConnector + RDMA 处理。
+    - NVIDIA PD 或 Ascend DeepSeek DP: 使用 NIXL 协议 (dp_deployment)。
+    - 其他: 使用 Ray 作为分布式执行后端。
+
+    端口优先来自环境变量 VLLM_DISTRIBUTED_PORT，若未设置则回退到配置文件默认值。
+    """
+    vllm_distributed_port = get_vllm_distributed_port()
+    pd_role = get_pd_role_env()
+    model_architecture = model_info.model_architecture
+    is_ascend = cmd_params.get("engine") == 'vllm_ascend'
+    is_ascend_deepseek = (model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
+                          and is_ascend)
+
+    if pd_role in ['P', 'D'] and is_ascend:
+        # Ascend PD: 使用 MooncakeConnector，各 P/D 实例作为独立 vllm 进程运行。
+        # KV 传输由 MooncakeConnector + RDMA TransferEngine 自动处理，
+        # 不需要 dp_deployment / NIXL 参数（那些是 NVIDIA PD 路径）。
+        logger.info("[PD] Ascend PD mode: standalone instances with MooncakeConnector (role=%s)", pd_role)
+        return
+
+    if (pd_role in ['P', 'D'] and not is_ascend) or is_ascend_deepseek:
+        # NVIDIA PD (NIXL) 或 Ascend DeepSeek DP: 使用 dp_deployment
+        if not vllm_distributed_port:
+            vllm_distributed_port = distributed_config.get('vllm_distributed', {}).get('nixl_port', 27070)
+
+        rpc_port = distributed_config.get('vllm_distributed', {}).get('rpc_port', 27071)
+        cmd_params.update({
+            'distributed_executor_backend': 'dp_deployment',
+            'nixl_ip': get_local_ip(),
+            'nixl_port': vllm_distributed_port,
+            'rpc_port': rpc_port
+        })
+    else:
+        #
+        if not vllm_distributed_port:
+            vllm_distributed_port = distributed_config.get('vllm_distributed', {}).get('ray_head_port', 27070)
+
+        cmd_params.update({
+            'distributed_executor_backend': 'ray',
+            'ray_head_ip': get_master_ip(),
+            'ray_head_port': vllm_distributed_port
+        })
+
+
+def _handle_sglang_distributed(distributed_config: Dict[str, Any], cmd_params: Dict[str, Any]):
+    """为 SGLang 配置分布式通信端口 dist_port。
+
+    端口优先来自环境变量 SGLANG_DISTRIBUTED_PORT，
+    若未设置则回退到 distributed.json 中 sglang_distributed.dist_port 的默认值。
+    """
+    dist_port = get_sglang_distributed_port()
+    if not dist_port:
+        dist_port = distributed_config.get('sglang_distributed', {}).get('dist_port', 25565)
+
+    cmd_params.update({
+        'dist_port': dist_port
+    })
+
+
+def _handle_ascend_vllm(device_type: str, cmd_params: Dict[str, Any]):
+    """在 Ascend 设备上将引擎名称从 vllm 升级为 vllm_ascend。
+
+    当硬件为昇腾 NPU 且用户指定引擎为 vllm 时，
+    自动将 cmd_params['engine'] 替换为 vllm_ascend，
+    以便后续使用昇腾专用的适配器和参数表。
+    """
+    if device_type == "ascend" and cmd_params.get("engine") == "vllm":
+        cmd_params["engine"] = "vllm_ascend"
+
+
+def _match_model_engine_config(
+    arch_dict: Dict[str, Any],
+    model_name_lower: str,
+    engine_key: str,
+    is_deepseek_sglang_nvidia: bool,
+) -> Dict[str, Any]:
+    """在架构配置字典中按模型名查找引擎参数，支持 H20 卡型适配。
+
+    遍历 arch_dict 中的模型条目，找到名称匹配项后返回对应的引擎参数。
+    DeepSeek+SGLang+NVIDIA 场景下额外检测 H20 GPU 型号以选用专属配置。
+
+    Args:
+        arch_dict:                 架构级配置（model_name → {engine_key: config}）
+        model_name_lower:          待匹配的模型名（已小写化）
+        engine_key:                引擎键名（如 'vllm'、'sglang_distributed'）
+        is_deepseek_sglang_nvidia: 是否为 DeepSeek+SGLang+NVIDIA 特殊场景
+
+    Returns:
+        匹配到的引擎参数字典；未匹配则返回空字典
+    """
+    h20_model = _get_h20_model_hint()
+
+    for model, config in arch_dict.items():
+        if model_name_lower != model.lower():
+            continue
+
+        if is_deepseek_sglang_nvidia and h20_model in ("H20-96G", "H20-141G"):
+            logger.info("Using dedicated config for model '%s' on %s", model, h20_model)
+            return config.get(engine_key, {}).get(h20_model, {})
+
+        if is_deepseek_sglang_nvidia:
+            logger.info(
+                "DeepSeek+SGLang+NVIDIA (non-H20): using engine-level config for '%s'",
+                model,
+            )
+            return config.get(engine_key, {})
+
+        logger.info("Using engine config for model '%s' (engine_key=%s)", model, engine_key)
+        return config.get(engine_key, {})
+
+    return {}
+
+
+def _load_and_validate_models_dict(
+    hardware_env: Dict[str, Any],
+    model_type: str,
+    engine: str,
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """加载并校验 model_deploy_config 中对应 model_type 的配置字典。
+
+    若结构异常则记录警告并降级为空字典。若 models_dict 最终为空，
+    返回兜底 engine 默认配置供调用方直接使用。
+
+    Args:
+        hardware_env: 硬件环境信息（传递给 _load_default_config）。
+        model_type:   模型类型键（如 'llm'）。
+        engine:       引擎名称，用于兜底日志与查找。
+
+    Returns:
+        (models_dict, fallback)：fallback 非 None 时应直接作为引擎默认值使用。
+    """
+    config_model_key = "model_deploy_config"
+    default_config = _load_default_config(hardware_env)
+    model_deploy_config = default_config.get(config_model_key, {})
+    if not isinstance(model_deploy_config, dict):
+        logger.warning("Invalid default config structure: %s is not a dict", config_model_key)
+        model_deploy_config = {}
+    models_dict = model_deploy_config.get(model_type, {})
+    if not isinstance(models_dict, dict):
+        logger.warning("Invalid model config structure: model_type=%s is not a dict", model_type)
+        models_dict = {}
+    if not models_dict:
+        logger.warning(
+            "No model_deploy_config found for model_type=%s (engine=%s),"
+            " try engine-level fallback defaults",
+            model_type,
+            engine,
+        )
+        return {}, _load_engine_fallback_defaults(engine)
+    return models_dict, None
+
+
+def _resolve_model_lookup_keys(cmd_known_params: Dict[str, Any]) -> Tuple[str, str, str]:
+    """从 CLI 参数中提取模型查找所需的三元键：(model_name_lower, engine, engine_key)。"""
+    model_name = cmd_known_params.get("model_name")
+    if not model_name:
+        logger.warning("model_name is None or empty, using empty string for config matching")
+        model_name_lower = ""
+    else:
+        model_name_lower = model_name.lower()
+    engine: str = cmd_known_params.get("engine", "")
+    engine_key = f"{engine}_distributed" if cmd_known_params.get("distributed") else engine
+    return model_name_lower, engine, engine_key
+
+
+def _get_model_specific_config(hardware_env: Dict[str, Any],
+                             cmd_known_params: Dict[str, Any],
+                             model_info) -> Dict[str, Any]:
+    """获取并合并模型专属的默认部署配置（按查找链路逐级回退）。
+
+    查找链路: 精确模型名 → 架构级默认 → 模型类型默认 → 引擎兜底默认。
+    DeepSeek+SGLang+NVIDIA 场景支持按 H20 卡型选配（H20-96G / H20-141G）。
+
+    Args:
+        hardware_env:     硬件环境信息（device, gpu_memory 等）。
+        cmd_known_params: 用户 CLI 已知参数（model_name, engine, distributed 等）。
+        model_info:       模型元信息对象，提供 identify_model_architecture / type 方法。
+
+    Returns:
+        合并后的最终参数字典，可直接传递给各引擎适配器。
+    """
+    default_key = "default"
+    model_name_lower, engine, engine_key = _resolve_model_lookup_keys(cmd_known_params)
+
+    model_architecture = model_info.identify_model_architecture()
+    model_type = model_info.identify_model_type()
+
+    models_dict, fallback = _load_and_validate_models_dict(hardware_env, model_type, engine)
+    if fallback is not None:
+        return _merge_cmd_params(hardware_env, fallback, cmd_known_params, model_info)
+
+    if model_architecture in models_dict:
+        model_architecture_dict = models_dict[model_architecture]
+
+        is_deepseek_sglang_nvidia = (
+            model_architecture == "DeepseekV3ForCausalLM"
+            and hardware_env.get("device") == "nvidia"
+            and engine == "sglang"
+            and not cmd_known_params.get("distributed")
+        )
+
+        engine_specific_defaults = _match_model_engine_config(
+            model_architecture_dict, model_name_lower, engine_key,
+            is_deepseek_sglang_nvidia,
+        )
+        if not engine_specific_defaults:
+            logger.info("The default deploy configuration of the "
+                        "model architecture %s will be used.", model_architecture)
+            engine_specific_defaults = model_architecture_dict.get(default_key, {}).get(engine_key, {})
+    else:
+        engine_specific_defaults = models_dict.get(default_key, {}).get(engine_key, {})
+        logger.info("The default deploy configuration of the model type %s will be used.", model_type)
+
+    return _merge_cmd_params(hardware_env, engine_specific_defaults, cmd_known_params, model_info)
+
+
+def _merge_final_config(engine_config: Dict[str, Any],
+                       cmd_known_params: Dict[str, Any]) -> Dict[str, Any]:
+    """将引擎专属配置包装进最终参数字典并返回。
+
+    把 engine_config（引擎参数子集）挂载到 cmd_known_params['engine_config'] 键下，
+    作为后续引擎适配器（vllm_adapter / sglang_adapter 等）的输入。
+
+    Args:
+        engine_config:    引擎专属参数字典（由 _get_model_specific_config 生成）。
+        cmd_known_params: 用户 CLI 已知参数字典（将原地修改并返回）。
+
+    Returns:
+        追加了 engine_config 字段的 cmd_known_params 字典。
+    """
+    cmd_known_params['engine_config'] = engine_config
+
+    return cmd_known_params
+
+
+def load_and_merge_configs(
+    hardware_env: Dict[str, Any],
+    known_args: argparse.Namespace
+) -> Dict[str, Any]:
+    """配置加载与合并的主入口函数。
+
+    将多层配置源从低优先级到高优先级合并：
+        1. 硬件默认配置 (e.g., config/nvidia_default.json)
+        2. 用户指定的配置文件 (--config-file)
+        3. 用户 CLI 参数 (e.g., --model-path, --port)
+        4. 引擎专属额外参数 (e.g., --tensor-parallel-size 2)
+
+    处理流程:
+        1. 提取 CLI 参数并检查 VRAM 需求
+        2. 初始化 ModelIdentifier 对象获取模型元信息
+        3. 自动选择/校验引擎，并处理 Ascend 专属逻辑
+        4. 加载用户配置文件 (若指定)
+        5. 通过 _get_model_specific_config 查找链获取引擎默认配置
+        6. 合并所有配置层并返回最终参数字典
+
+    Args:
+        hardware_env: 硬件探测结果（device, count, details 等）
+        known_args:   argparse.parse_known_args() 返回的已知参数
+
+    Returns:
+        Dict[str, Any]: 合并后的最终参数字典，包含 engine_config 子字典
+
+    Raises:
+        ValueError: 当 VRAM 不足、权重路径无效或引擎不兼容时抛出
+    """
+    logger.info("Starting config loading and merging...")
+    # 1.
+    # VRAM
+    cmd_known_params = _process_cmd_args(known_args)
+    if cmd_known_params.get("model_path"):
+        if cmd_known_params.get("nnodes"):
+            nodes_count = cmd_known_params.get("nnodes")
+        else:
+            nodes_count = 1
+        _check_vram_requirements(cmd_known_params["model_path"], hardware_env, nodes_count)
+    #
+    model_info = ModelIdentifier(cmd_known_params.get("model_name"),
+                                 cmd_known_params.get("model_path"),
+                                 cmd_known_params.get("model_type"))
+
+
+
+    # 2. 引擎自动选择/校验
+    cmd_known_params = _auto_select_engine(hardware_env, cmd_known_params, model_info)
+
+    # 3. 加载用户配置
+    config = known_args.config_file
+    user_config = _load_user_config(config)
+
+    # 3.5 将 user_config 中的通用参数名翻译为引擎原生参数名
+    #     (如 SGLang: gpu_memory_utilization → mem_fraction_static)
+    engine_name = cmd_known_params.get("engine", "vllm")
+    if user_config:
+        user_config = _translate_user_config_for_engine(user_config, engine_name)
+
+    if user_config and get_config_force_env():
+        engine_config = user_config
+        logger.info("CONFIG_FORCE=true: using user config exclusively, keys: %s", list(engine_config.keys()))
+    else:
+        engine_specific_defaults = _get_model_specific_config(hardware_env, cmd_known_params, model_info)
+        engine_config = _merge_configs(engine_specific_defaults, user_config)
+
+    # 4. CLI/ENV 参数覆盖 config-file（保证 CLI > config-file 优先级）
+    engine_config = _apply_cli_overrides(engine_config, cmd_known_params)
+
+    # 5.
+    final_engine_params = _merge_final_config(engine_config, cmd_known_params)
+
+    logger.info("Final engine_config keys: %s", list(engine_config.keys()))
+    logger.info("Config merging completed.")
+    return final_engine_params

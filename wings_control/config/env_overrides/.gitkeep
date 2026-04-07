@@ -1,0 +1,3 @@
+# 此文件为占位文件，确保 env_overrides 目录被 Git 追踪。
+# 用户可通过 K8s ConfigMap 将自定义环境变量文件挂载到此目录。
+# 参见 README.md 了解使用方式。

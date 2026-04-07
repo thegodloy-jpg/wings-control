@@ -1,0 +1,26 @@
+ARG BASE_IMG
+FROM ${BASE_IMG}
+
+# 将wings-accel 编译完成的文件放置到指定目录 /opt/wings-accel-packages
+ARG WINGS_ACCEL_PACKAGE
+
+ENV WINGS_ACCEL_DIR="/opt/packages"
+RUN mkdir -p ${WINGS_ACCEL_DIR}
+COPY ${WINGS_ACCEL_PACKAGE} ${WINGS_ACCEL_DIR}/
+
+# 解压wings accel文件
+RUN cd ${WINGS_ACCEL_DIR}/ && \
+    tar -xvf ${WINGS_ACCEL_PACKAGE} && \
+    rm -rf ${WINGS_ACCEL_DIR}/${WINGS_ACCEL_PACKAGE} && \
+    ls -al ${WINGS_ACCEL_DIR}/
+
+ARG WINGS_VERSION
+ARG WINGS_ACCEL_BUILD_DATE
+
+ENV WINGS_VERSION=${WINGS_VERSION}
+ENV WINGS_ACCEL_BUILD_DATE=${WINGS_ACCEL_BUILD_DATE}
+
+# 设置标签
+LABEL description="Wings accel package" \
+      version="${WINGS_VERSION}" \
+      WINGS_ACCEL_BUILD_DATE=${WINGS_ACCEL_BUILD_DATE}

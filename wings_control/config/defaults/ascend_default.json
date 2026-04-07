@@ -1,0 +1,460 @@
+{
+  "model_deploy_config": {
+    "llm": {
+      "default": {
+        "vllm_ascend": {
+          "trust_remote_code": true,
+          "max_model_len": 4096
+        },
+        "vllm_ascend_distributed": {
+          "trust_remote_code": true,
+          "max_model_len": 4096
+        },
+        "mindie": {
+          "maxSeqLen": 4096,
+          "maxInputTokenLen": 2048,
+          "maxIterTimes": 2048
+        },
+        "mindie_distributed": {
+          "maxSeqLen": 4096,
+          "maxInputTokenLen": 2048,
+          "maxIterTimes": 2048
+        }
+      },
+      "DeepseekV3ForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3",
+            "reasoning_parser": "deepseek_r1"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3",
+            "reasoning_parser": "deepseek_r1"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseekv3"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseekv3"
+          }
+        },
+        "DeepSeek-R1-w8a8": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3",
+            "reasoning_parser": "deepseek_r1"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3",
+            "reasoning_parser": "deepseek_r1"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseekv3"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 16384,
+            "maxInputTokenLen": 8192,
+            "maxPrefillBatchSize": 10,
+            "maxPrefillTokens": 8192,
+            "maxBatchSize": 130,
+            "maxIterTimes": 8192,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseekv3"
+          }
+        },
+        "DeepSeek-V3.1": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v31",
+            "reasoning_parser": "deepseek_r1"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v31",
+            "reasoning_parser": "deepseek_r1"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseek_v31"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseek_v31"
+          }
+        }
+      },
+      "Qwen3MoeForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3"
+          }
+        },
+        "Qwen3-235B-A22B": {
+          "vllm_ascend": {
+            "max_model_len": 4096,
+            "trust_remote_code": true,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_ascend_distributed": {
+            "max_model_len": 4096,
+            "trust_remote_code": true,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 16384,
+            "maxInputTokenLen": 8192,
+            "maxPrefillBatchSize": 10,
+            "maxPrefillTokens": 8192,
+            "maxBatchSize": 130,
+            "maxIterTimes": 8192,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3"
+          }
+        }
+      },
+      "Qwen3ForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3"
+          }
+        }
+      },
+      "Qwen2ForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "hermes"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "hermes"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "qwen2_5",
+            "mindie_tool_call_parser": "qwen2_5"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "qwen2_5",
+            "mindie_tool_call_parser": "qwen2_5"
+          }
+        }
+      },
+      "DeepseekV32ForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseekv32"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseekv32"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4
+          }
+        }
+      },
+      "Glm4MoeForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "glm47",
+            "reasoning_parser": "glm45"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "glm47",
+            "reasoning_parser": "glm45"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4
+          }
+        }
+      },
+      "Qwen3_5ForConditionalGeneration": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "task": "generate",
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "task": "generate",
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048
+          }
+        }
+      },
+      "Qwen3_5MoeForConditionalGeneration": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "task": "generate",
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "task": "generate",
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4
+          }
+        }
+      },
+      "MiniMaxM2ForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "minimax_m2",
+            "reasoning_parser": "minimax_m2_reasoning"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "minimax_m2",
+            "reasoning_parser": "minimax_m2_reasoning"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "tp": 4,
+            "dp": 4,
+            "moe_ep": 4,
+            "moe_tp": 4
+          }
+        }
+      }
+    },
+    "embedding": {
+      "default": {
+        "vllm_ascend": {
+          "trust_remote_code": true
+        },
+        "vllm_ascend_distributed": {
+          "trust_remote_code": true
+        }
+      }
+    },
+    "rerank": {
+      "default": {
+        "vllm_ascend": {
+          "trust_remote_code": true
+        },
+        "vllm_ascend_distributed": {
+          "trust_remote_code": true
+        }
+      }
+    }
+  }
+}
