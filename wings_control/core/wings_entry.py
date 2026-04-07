@@ -192,26 +192,14 @@ def _build_accel_user_override_snippet(safe_value: str) -> str:
 
 def _collect_enabled_features() -> list[str]:
     """Return the list of accel feature names whose environment switches are enabled.
-    
-    特殊规则：
-    - adaptive_draft_model 特性需要同时满足：
-      1. ENABLE_SPECULATIVE_DECODE=true
-      2. 存在草稿模型路径（SPECULATIVE_DECODE_MODEL_PATH 非空）
+
+    ENABLE_SPECULATIVE_DECODE=true 时统一安装 adaptive_draft_model 补丁，
+    不区分 MTP/Suffix/Draft Model 方案——补丁内部自行判断是否需要生效。
     """
     features = []
     for env_key, feat_name in _FEATURE_SWITCH_MAP.items():
         if os.getenv(env_key, "").strip().lower() != "true":
             continue
-        # 对 adaptive_draft_model 特性增加草稿模型路径检查
-        if feat_name == "adaptive_draft_model":
-            draft_model_path = os.getenv("SPECULATIVE_DECODE_MODEL_PATH", "").strip()
-            if not draft_model_path:
-                logger.info(
-                    "[wings-accel] Skipping '%s': ENABLE_SPECULATIVE_DECODE=true but "
-                    "SPECULATIVE_DECODE_MODEL_PATH is empty (no draft model provided)",
-                    feat_name
-                )
-                continue
         features.append(feat_name)
     return features
 
