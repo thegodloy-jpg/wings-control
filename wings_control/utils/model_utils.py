@@ -41,21 +41,27 @@ _LLM_MODELS = {
         "DeepSeek-V3",
         "DeepSeek-V3-0324",
         "DeepSeek-V3.1",
+        "DeepSeek-V4",
         "DeepSeek-Coder-V2-Instruct",
         "DeepSeek-R1-w8a8",
         "DeepSeek-R1-0528-w8a8",
         "DeepSeek-V3-w8a8",
         "DeepSeek-V3-0324-w8a8",
-        "DeepSeek-V3.1-w8a8"
+        "DeepSeek-V3.1-w8a8",
+        "DeepSeek-V4-w8a8",
+        "DeepSeek-Coder-V2-Instruct-w8a8"
         ],
     "DeepseekV32ForCausalLM": [
-        "DeepSeek-V3.2-Exp"
+        "DeepSeek-V3.2",
+        "DeepSeek-V3.2-Exp",
+        "DeepSeek-V3.2-0715"
         ],
     "Glm4ForCausalLM": [
         "GLM-4-9B-0414"
         ],
     "Glm4MoeForCausalLM": [
-        "GLM-4.7"
+        "GLM-4.7",
+        "GLM-4.7-w8a8"
         ],
     "Qwen2ForCausalLM": [
         "DeepSeek-R1-Distill-Qwen-1.5B",
@@ -76,17 +82,22 @@ _LLM_MODELS = {
         "Qwen3-Next-80B-A3B-Instruct"
         ],
     "Qwen3_5ForConditionalGeneration": [
+        "Qwen3.5-27B",
         "Qwen3.5-27B-Instruct"
         ],
     "Qwen3_5MoeForConditionalGeneration": [
-        "Qwen3.5-397-A17B"
+        "Qwen3.5-397-A17B",
+        "Qwen3.5-397-A17B-w8a8"
         ],
     "MiniMaxM2ForCausalLM": [
-        "MiniMax-M2.5"
+        "MiniMax-M2.5",
+        "MiniMax-M2.5-w8a8"
         ],
     "LlamaForCausalLM": [
         "LLaMA3-8B",
+        "LLaMA3.1-70B",
         "LLaMA3.1-70B-Instruct",
+        "Meta-Llama-3.1-70B-Instruct",
         "DeepSeek-R1-Distill-Llama-8B",
         "DeepSeek-R1-Distill-Llama-70B"
         ]
