@@ -434,6 +434,90 @@
             "moe_tp": 4
           }
         }
+      },
+      "LlamaForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "llama3_json"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "llama3_json"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "llama3_1",
+            "mindie_tool_call_parser": "llama3_1"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "llama3_1",
+            "mindie_tool_call_parser": "llama3_1"
+          }
+        }
+      },
+      "Glm4ForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "hermes"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "hermes"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048
+          }
+        }
+      },
+      "Qwen3NextForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3"
+          }
+        }
       }
     },
     "embedding": {

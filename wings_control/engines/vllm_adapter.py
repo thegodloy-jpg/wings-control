@@ -678,6 +678,17 @@ def _build_deepseekv32_ascend_env(arch: str) -> List[str]:
     ]
 
 
+def _build_llama_ascend_env(arch: str) -> List[str]:
+    """构建 LLaMA3.1 (LlamaForCausalLM) Ascend 环境变量命令。"""
+    logger.info("[LLaMA3.1] Set Ascend environment variables for %s", arch)
+    return [
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export HCCL_BUFFSIZE=512",
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=1",
+    ]
+
+
 def _build_model_ascend_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     """构建新增模型在 Ascend NPU 上所需的环境变量命令。
 
@@ -690,6 +701,7 @@ def _build_model_ascend_env_commands(params: Dict[str, Any], engine: str) -> Lis
     - Qwen3_5MoeForConditionalGeneration (Qwen3.5-397B): TASK_QUEUE_ENABLE
     - MiniMaxM2ForCausalLM (MiniMax-M2.5): FlashComm
     - DeepseekV32ForCausalLM (DeepSeek V3.2): MLAPO, FlashComm, VLLM_USE_V1
+    - LlamaForCausalLM (LLaMA3.1-70B): 基础 NPU 内存/线程优化
 
     注意: DeepseekV3 FP8 和 Ascend910_9362 的 env 由各自专属函数处理，
     此处仅处理不与已有函数重叠的新模型变量。
@@ -721,6 +733,7 @@ def _build_model_ascend_env_commands(params: Dict[str, Any], engine: str) -> Lis
         "Qwen3_5MoeForConditionalGeneration": _build_qwen35moe_ascend_env,
         "MiniMaxM2ForCausalLM": _build_minimaxm2_ascend_env,
         "DeepseekV32ForCausalLM": _build_deepseekv32_ascend_env,
+        "LlamaForCausalLM": _build_llama_ascend_env,
     }
     builder = _arch_env_builders.get(arch)
     return builder(arch) if builder else []

@@ -41,6 +41,7 @@ _LLM_MODELS = {
         "DeepSeek-V3",
         "DeepSeek-V3-0324",
         "DeepSeek-V3.1",
+        "DeepSeek-Coder-V2-Instruct",
         "DeepSeek-R1-w8a8",
         "DeepSeek-R1-0528-w8a8",
         "DeepSeek-V3-w8a8",
@@ -85,6 +86,7 @@ _LLM_MODELS = {
         ],
     "LlamaForCausalLM": [
         "LLaMA3-8B",
+        "LLaMA3.1-70B-Instruct",
         "DeepSeek-R1-Distill-Llama-8B",
         "DeepSeek-R1-Distill-Llama-70B"
         ]

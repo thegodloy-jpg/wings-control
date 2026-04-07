@@ -432,6 +432,82 @@
             "enable_ep_moe": true
           }
         }
+      },
+      "LlamaForCausalLM": {
+        "default": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "llama3_json"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "llama3_json"
+          },
+          "sglang": {
+            "trust_remote_code": true,
+            "context_length": 4096,
+            "tool_call_parser": "llama3"
+          },
+          "sglang_distributed": {
+            "trust_remote_code": true,
+            "context_length": 4096,
+            "tool_call_parser": "llama3"
+          }
+        }
+      },
+      "Glm4ForCausalLM": {
+        "default": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "hermes"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "hermes"
+          },
+          "sglang": {
+            "trust_remote_code": true,
+            "context_length": 4096
+          },
+          "sglang_distributed": {
+            "trust_remote_code": true,
+            "context_length": 4096
+          }
+        }
+      },
+      "Qwen3NextForCausalLM": {
+        "default": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "hermes",
+            "reasoning_parser": "qwen3"
+          },
+          "sglang": {
+            "trust_remote_code": true,
+            "context_length": 4096,
+            "enable_ep_moe": true,
+            "tool_call_parser": "qwen25"
+          },
+          "sglang_distributed": {
+            "trust_remote_code": true,
+            "context_length": 4096,
+            "enable_ep_moe": true,
+            "tool_call_parser": "qwen25"
+          }
+        }
       }
     },
     "embedding": {
