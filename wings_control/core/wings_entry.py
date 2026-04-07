@@ -542,10 +542,10 @@ mkdir -p /shared-volume
         return analyzer_preamble
 
 
-# ── 高级特性快速失败检测阈值（秒）──
-# 引擎在此时间内退出，视为启动阶段失败，触发禁用高级特性的回退
-# 覆盖：投机解码（--speculative-config）、KV 稀疏（--sparse-config）、KV 卸载（LMCache）
-_ADV_FEATURE_FAST_FAIL_THRESHOLD_SEC = 120
+# ── 高级特性回退策略 ──
+# 启用高级特性（投机解码/KV稀疏/KV卸载）时，若引擎崩溃则无条件禁用所有高级特性重试一次。
+# 采用一刀切策略：不区分启动阶段或运行阶段，崩溃即回退。
+# 后续打补丁机制会通过特性状态码实现更精细的回退控制。
 
 
 def _has_advanced_features(merged: dict) -> bool:
@@ -588,7 +588,6 @@ def _build_monitor_script(
     Returns:
         str: 进程监控脚本片段
     """
-    threshold = _ADV_FEATURE_FAST_FAIL_THRESHOLD_SEC
     progress_file = settings.PROGRESS_FILE
 
     # ── 公共片段：清理 analyzer + 写失败进度 ──
@@ -680,14 +679,14 @@ fi
         "    " + line if line.strip() else line
         for line in fallback_cmd.rstrip("\n").split("\n")
     )
-    # 同样缩进 cleanup 和 progress 到回退 if/else 内部
-    cleanup_4 = cleanup_analyzer.replace("  ", "      ")  # 6-space indent
-    write_progress_4 = write_progress.replace("  ", "      ")
+    # 缩进 cleanup 和 progress 到回退 if/else 内部
+    cleanup_4 = cleanup_analyzer.replace("  ", "    ")  # 4-space indent (回退逻辑减少了一层if嵌套)
+    write_progress_4 = write_progress.replace("  ", "    ")
     feat_label = active_features or "advanced_features"
 
     return f"""
 # --- Engine process wait and exception handling (with advanced feature fallback) ---
-echo "[AdvFeature] Engine process monitor started, PID=$ENGINE_PID, fast-fail threshold={threshold}s"
+echo "[AdvFeature] Engine process monitor started, PID=$ENGINE_PID"
 echo "[AdvFeature] Active advanced features: {feat_label}"
 if wait "$ENGINE_PID"; then
   echo "[Engine] Engine process exited normally"
@@ -697,41 +696,30 @@ else
   ENGINE_DURATION=$(( $(date +%s) - ENGINE_START_EPOCH ))
   echo "[Engine] Engine process exited abnormally, exit_code=$EXIT_CODE, runtime=${{ENGINE_DURATION}}s"
 
-  if [ "$ENGINE_DURATION" -lt {threshold} ]; then
-    echo "[AdvFeature] ┌── Advanced Feature Fallback Triggered ──"
-    echo "[AdvFeature] │ Reason: Engine crashed within ${{ENGINE_DURATION}}s (threshold {threshold}s)"
-    echo "[AdvFeature] │ Features disabled: {feat_label}"
-    echo "[AdvFeature] │ Action: Restarting engine without advanced features"
-    echo "[AdvFeature] └── Fallback command about to execute..."
-    echo "[Engine] Fast-fail detected, advanced features likely caused startup failure"
-    echo "[Engine] Falling back to basic mode (disabled: {feat_label})..."
-    echo "[Engine] Waiting 5s for port release before restart..."
-    sleep 5
-    ENGINE_START_EPOCH=$(date +%s)
+  # 一刀切策略：高级特性启用时崩溃 → 无条件禁用所有高级特性重试一次
+  echo "[AdvFeature] ┌── Advanced Feature Fallback Triggered ──"
+  echo "[AdvFeature] │ Reason: Engine crashed (exit_code=$EXIT_CODE, runtime=${{ENGINE_DURATION}}s)"
+  echo "[AdvFeature] │ Features disabled: {feat_label}"
+  echo "[AdvFeature] │ Action: Restarting engine without advanced features"
+  echo "[AdvFeature] └── Fallback command about to execute..."
+  echo "[Engine] Falling back to basic mode (disabled: {feat_label})..."
+  echo "[Engine] Waiting 5s for port release before restart..."
+  sleep 5
+  ENGINE_START_EPOCH=$(date +%s)
 {indented_fallback}
-    echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."
-    if wait "$ENGINE_PID"; then
-      echo "[Engine] Engine process exited normally (fallback mode)"
-      echo "[AdvFeature] Fallback-mode engine exited normally"
+  echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."
+  if wait "$ENGINE_PID"; then
+    echo "[Engine] Engine process exited normally (fallback mode)"
+    echo "[AdvFeature] Fallback-mode engine exited normally"
 {cleanup_4}
-    else
-      EXIT_CODE=$?
-      echo "[Engine] Fallback mode also exited abnormally, exit_code=$EXIT_CODE"
-      echo "[AdvFeature] ✗ Fallback mode also failed, exit_code=$EXIT_CODE — unrecoverable"
+  else
+    EXIT_CODE=$?
+    echo "[Engine] Fallback mode also exited abnormally, exit_code=$EXIT_CODE"
+    echo "[AdvFeature] ✗ Fallback mode also failed, exit_code=$EXIT_CODE — unrecoverable"
 
 {write_progress_4}
 
 {cleanup_4}
-
-      exit "$EXIT_CODE"
-    fi
-  else
-    echo "[Engine] Crashed after running >{threshold}s, not a startup-phase failure, no fallback triggered"
-    echo "[AdvFeature] Engine ran ${{ENGINE_DURATION}}s, exceeds {threshold}s, not advanced-feature issue"
-
-{write_progress}
-
-{cleanup_analyzer}
 
     exit "$EXIT_CODE"
   fi
@@ -794,8 +782,7 @@ def _log_advanced_feature_config(
         logger.info("[AdvFeature] │ [lmcache_offload]")
         logger.info("[AdvFeature] │   kv_transfer_config = %s",
                     merged.get("kv_transfer_config", "(not set)"))
-    logger.info("[AdvFeature] │ fast-fail threshold = %ds",
-                _ADV_FEATURE_FAST_FAIL_THRESHOLD_SEC)
+    logger.info("[AdvFeature] │ 回退策略 = 一刀切 (崩溃即回退)")
     logger.info("[AdvFeature] └── Advanced features injected into engine start command")
 
 
