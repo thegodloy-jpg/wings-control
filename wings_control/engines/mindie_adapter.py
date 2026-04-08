@@ -48,6 +48,7 @@ MINDIE_CONFIG_PATH: str = os.getenv(
 # 默认端口配置
 DEFAULT_SERVER_PORT = 18000              # MindIE HTTP API 端口
 DEFAULT_MINDIE_MASTER_PORT = int(os.getenv("MINDIE_MASTER_PORT", "27070"))  # 分布式主节点端口
+DEFAULT_HCCL_IP_EXCHANGE_PORT = int(os.getenv("HCCL_IP_EXCHANGE_PORT", "27071"))  # hccnX IP 交换端口
 
 
 # =============================================================================
@@ -459,10 +460,18 @@ def _build_server_list(
                 device_ip = node_device_ips[hccl_node_idx][dev_id]
             else:
                 device_ip = ip
-                logger.warning(
-                    "[mindie] No HCCL device IP for node=%d dev=%d, fallback to host IP %s",
-                    hccl_node_idx, dev_id, ip,
-                )
+                if len(node_ips) > 1:
+                    logger.error(
+                        "[mindie] CRITICAL: No HCCL device IP for node=%d dev=%d, "
+                        "falling back to host IP %s. Multi-node HCCL will likely fail! "
+                        "Set HCCL_DEVICE_IPS=<rdma_ip_node0>;<rdma_ip_node1>",
+                        hccl_node_idx, dev_id, ip,
+                    )
+                else:
+                    logger.warning(
+                        "[mindie] No HCCL device IP for node=%d dev=%d, fallback to host IP %s",
+                        hccl_node_idx, dev_id, ip,
+                    )
             devices.append({"device_id": str(dev_id), "device_ip": device_ip, "rank_id": str(global_rank)})
             global_rank += 1
         server_list.append({"server_id": ip, "device": devices, "container_ip": ip, "host_nic_ip": ip})
@@ -513,24 +522,148 @@ def _build_rank_table_commands(
         ]
 
     # ── 运行时路径: 通过 Python 脚本在 engine 容器中动态生成 rank table ──
-    # 这样可以读取 engine 容器的 HCCL_DEVICE_IPS 环境变量
-    logger.info(
-        "[mindie] HCCL_DEVICE_IPS not available in sidecar, "
-        "generating runtime rank table script for engine container"
-    )
+    # 三级回退: HCCL_DEVICE_IPS 环境变量 → hccnX 网卡自动探测 → Pod IP（仅单节点可靠）
+    is_multinode = len(node_ips) > 1
+    if is_multinode:
+        logger.warning(
+            "[mindie] HCCL_DEVICE_IPS not available in sidecar for multi-node (%d nodes). "
+            "Runtime rank table will attempt hccnX interface auto-detection + TCP exchange "
+            "in engine container. For reliable multi-node HCCL, "
+            "set HCCL_DEVICE_IPS=<rdma_ips_node0>;<rdma_ips_node1>",
+            len(node_ips),
+        )
+    else:
+        logger.info(
+            "[mindie] HCCL_DEVICE_IPS not available in sidecar, "
+            "generating runtime rank table script for engine container"
+        )
     node_ips_json = json.dumps(node_ips)
-    safe_output_path = shlex.quote(output_path)
+    exchange_port = DEFAULT_HCCL_IP_EXCHANGE_PORT
 
     runtime_script = f"""# ── HCCL rank table ({len(node_ips)} nodes, {device_count} devices/node, runtime) ──
 python3 << 'RANK_TABLE_GEN_EOF'
-import json, os, sys
+import json, os, sys, subprocess, socket, time
 
 node_ips = {node_ips_json}
 device_count = {device_count}
 node_offset = {node_offset}
 output_path = {json.dumps(output_path)}
+nnodes = len(node_ips)
+exchange_port = {exchange_port}
+node_rank = int(os.environ.get("RANK", "0"))
 
-# 在 engine 容器中读取 HCCL_DEVICE_IPS
+# ---------------------------------------------------------------------------
+# hccnX 网卡自动探测：昇腾 NPU 设备插件通常会在容器中创建 hccn0/hccn1/...
+# 这些网卡绑定 RoCE RDMA IP，是 HCCL 跨节点通信的正确 device_ip。
+# ---------------------------------------------------------------------------
+def detect_hccn_device_ips(dev_count):
+    ips = []
+    for dev_id in range(dev_count):
+        iface = f"hccn{{dev_id}}"
+        try:
+            result = subprocess.run(
+                ["ip", "-4", "-o", "addr", "show", iface],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.strip().split("\\n"):
+                if "inet " in line:
+                    parts = line.split()
+                    idx = parts.index("inet")
+                    addr = parts[idx + 1].split("/")[0]
+                    ips.append(addr)
+                    break
+        except Exception as e:
+            print(f"[mindie] hccn{{dev_id}} detection failed: {{e}}")
+    if len(ips) == dev_count:
+        return ips
+    print(f"[mindie] hccnX auto-detection incomplete: found {{ips}} for {{dev_count}} devices")
+    return []
+
+# ---------------------------------------------------------------------------
+# 多节点 TCP IP 交换：各节点探测到本地 hccnX IP 后，通过 Rank 0 汇聚再下发，
+# 确保所有节点生成一致的 rank table。
+# 协议: Worker → Master: JSON line  {{"rank": N, "ips": [...]}}
+#        Master → Worker: JSON line  {{"0": [...], "1": [...]}}
+# ---------------------------------------------------------------------------
+def exchange_device_ips_tcp(rank, total_nodes, master_addr, port, local_ips, timeout=120):
+    if total_nodes <= 1:
+        return {{0: local_ips}}
+
+    all_ips = {{}}
+    if rank == 0:
+        all_ips[0] = local_ips
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.settimeout(timeout)
+        try:
+            srv.bind(("0.0.0.0", port))
+            srv.listen(total_nodes)
+            print(f"[mindie] Rank 0: waiting for {{total_nodes - 1}} worker(s) on port {{port}}...")
+            conns = []
+            for _ in range(total_nodes - 1):
+                conn, addr = srv.accept()
+                conn.settimeout(timeout)
+                data = b""
+                while True:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                    if b"\\n" in data:
+                        break
+                msg = json.loads(data.decode().strip())
+                all_ips[msg["rank"]] = msg["ips"]
+                conns.append(conn)
+                print(f"[mindie] Rank 0: received device IPs from rank {{msg['rank']}}: {{msg['ips']}}")
+            response = json.dumps(all_ips) + "\\n"
+            for conn in conns:
+                try:
+                    conn.sendall(response.encode())
+                except Exception as e:
+                    print(f"[mindie] Rank 0: send aggregated IPs failed: {{e}}")
+                finally:
+                    conn.close()
+        except Exception as e:
+            print(f"[mindie] Rank 0: IP exchange server error: {{e}}")
+            return None
+        finally:
+            srv.close()
+    else:
+        deadline = time.time() + timeout
+        sock = None
+        while time.time() < deadline:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(min(10, max(1, deadline - time.time())))
+                sock.connect((master_addr, port))
+                break
+            except (ConnectionRefusedError, OSError):
+                if sock:
+                    sock.close()
+                    sock = None
+                time.sleep(2)
+        if not sock:
+            print(f"[mindie] Rank {{rank}}: failed to connect to master {{master_addr}}:{{port}} for IP exchange")
+            return None
+        try:
+            sock.sendall((json.dumps({{"rank": rank, "ips": local_ips}}) + "\\n").encode())
+            sock.shutdown(socket.SHUT_WR)
+            data = b""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            all_ips = json.loads(data.decode().strip())
+            all_ips = {{int(k): v for k, v in all_ips.items()}}
+        except Exception as e:
+            print(f"[mindie] Rank {{rank}}: IP exchange failed: {{e}}")
+            return None
+        finally:
+            sock.close()
+    return all_ips
+
+# ── Step 1: 读取 HCCL_DEVICE_IPS 环境变量（优先级最高）──
 raw_device_ips = os.environ.get("HCCL_DEVICE_IPS", "")
 node_device_ips = []
 if raw_device_ips:
@@ -539,10 +672,36 @@ if raw_device_ips:
         if ips:
             node_device_ips.append(ips)
     print(f"[mindie] HCCL_DEVICE_IPS from engine env: {{node_device_ips}}")
-else:
-    print("[mindie] HCCL_DEVICE_IPS not set in engine container, using host IPs as device IPs")
 
-# 构建 server_list
+# ── Step 2: hccnX 网卡自动探测 + 多节点 TCP 交换 ──
+if not node_device_ips:
+    local_detected = detect_hccn_device_ips(device_count)
+    if local_detected:
+        print(f"[mindie] Auto-detected local hccnX device IPs: {{local_detected}}")
+        if nnodes > 1:
+            master_addr = os.environ.get("MASTER_ADDR", node_ips[0])
+            all_detected = exchange_device_ips_tcp(
+                node_rank, nnodes, master_addr, exchange_port, local_detected,
+            )
+            if all_detected and len(all_detected) >= nnodes:
+                node_device_ips = [all_detected.get(i, []) for i in range(nnodes)]
+                print(f"[mindie] Aggregated device IPs from all nodes: {{node_device_ips}}")
+            else:
+                print("[mindie] ERROR: hccnX IP exchange between nodes failed. "
+                      "Falling back to host IPs — HCCL will likely fail!")
+                print("[mindie] FIX: Set HCCL_DEVICE_IPS=<rdma_ip_node0>;<rdma_ip_node1>")
+        else:
+            node_device_ips = [local_detected]
+    else:
+        if nnodes > 1:
+            print("[mindie] ERROR: HCCL_DEVICE_IPS not set and hccnX auto-detection failed!")
+            print("[mindie] Multi-node HCCL communication will almost certainly fail.")
+            print("[mindie] FIX: Set HCCL_DEVICE_IPS=<rdma_ip_node0>;<rdma_ip_node1> "
+                  "in the engine container environment.")
+        else:
+            print("[mindie] HCCL_DEVICE_IPS not set, using host IPs (single-node OK)")
+
+# ── Step 3: 构建 server_list ──
 server_list = []
 global_rank = 0
 for local_idx, ip in enumerate(node_ips):
@@ -553,8 +712,12 @@ for local_idx, ip in enumerate(node_ips):
             device_ip = node_device_ips[hccl_node_idx][dev_id]
         else:
             device_ip = ip
-            print(f"[mindie] WARN: No HCCL device IP for node={{hccl_node_idx}} dev={{dev_id}}, "
-                  f"fallback to host IP {{ip}}")
+            if nnodes > 1:
+                print(f"[mindie] ERROR: No HCCL device IP for node={{hccl_node_idx}} dev={{dev_id}}, "
+                      f"fallback to host IP {{ip}} — multi-node HCCL will likely fail!")
+            else:
+                print(f"[mindie] WARN: No HCCL device IP for node={{hccl_node_idx}} dev={{dev_id}}, "
+                      f"fallback to host IP {{ip}}")
         devices.append({{"device_id": str(dev_id), "device_ip": device_ip, "rank_id": str(global_rank)}})
         global_rank += 1
     server_list.append({{"server_id": ip, "device": devices, "container_ip": ip, "host_nic_ip": ip}})
