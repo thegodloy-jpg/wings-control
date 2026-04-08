@@ -313,6 +313,10 @@ def _restart_if_needed(proc: ManagedProc) -> None:
         _start(proc)
 
 
+# Prometheus multi-process metrics 共享目录，放在日志共享卷下
+_PROMETHEUS_MULTIPROC_DIR = "/var/log/wings/prometheus_multiproc"
+
+
 def _build_child_env(port_plan: PortPlan) -> dict[str, str]:
     """为 proxy/health/monitor_proxy 子进程准备环境变量。"""
     env = os.environ.copy()
@@ -331,7 +335,28 @@ def _build_child_env(port_plan: PortPlan) -> dict[str, str]:
     env["HEALTH_PORT"] = str(port_plan.health_port)
     env["HEALTH_SERVICE_PORT"] = str(port_plan.health_port)
     env["MONITOR_PROXY_PORT"] = str(port_plan.monitor_proxy_port)
+
+    # Prometheus 多进程指标汇总目录。
+    # 当 proxy 以多 worker 模式运行时(--workers > 1)，prometheus_client
+    # 需要此目录来汇总各 worker 进程的 Gauge/Counter 指标，否则 /metrics
+    # 只能返回当前响应进程的部分数据。
+    # 目录位于日志共享卷 /var/log/wings 下，engine 容器也使用同一路径。
+    _ensure_prometheus_multiproc_dir()
+    env["PROMETHEUS_MULTIPROC_DIR"] = _PROMETHEUS_MULTIPROC_DIR
+
     return env
+
+
+def _ensure_prometheus_multiproc_dir() -> None:
+    """确保 Prometheus 多进程目录存在且为空（清除上次残留的 .db 文件）。"""
+    import shutil
+    try:
+        if os.path.isdir(_PROMETHEUS_MULTIPROC_DIR):
+            shutil.rmtree(_PROMETHEUS_MULTIPROC_DIR)
+        os.makedirs(_PROMETHEUS_MULTIPROC_DIR, exist_ok=True)
+    except OSError as e:
+        logger.warning("Failed to prepare PROMETHEUS_MULTIPROC_DIR=%s: %s",
+                       _PROMETHEUS_MULTIPROC_DIR, e)
 
 
 def _build_proxy_proc(

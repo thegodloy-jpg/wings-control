@@ -901,6 +901,13 @@ def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> Launche
     command = (
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         "mkdir -p /var/log/wings\n"
+        # Prometheus multi-process metrics directory: ensure a clean dir
+        # on every engine restart so stale worker .db files don't pollute
+        # /metrics output.  Located under the shared log volume so that
+        # both the engine container and the sidecar proxy can reach it.
+        "rm -rf /var/log/wings/prometheus_multiproc\n"
+        "mkdir -p /var/log/wings/prometheus_multiproc\n"
+        "export PROMETHEUS_MULTIPROC_DIR=/var/log/wings/prometheus_multiproc\n"
         + analyzer_preamble
         # Disable Python stdout full-buffering so that engine ready
         # messages (e.g. "Starting vLLM server on") reach engine.log
