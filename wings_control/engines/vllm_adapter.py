@@ -657,9 +657,24 @@ def _build_qwen35moe_ascend_env(arch: str) -> List[str]:
 
 
 def _build_minimaxm2_ascend_env(arch: str) -> List[str]:
-    """构建 MiniMax-M2.5 (MiniMaxM2ForCausalLM) Ascend 环境变量命令。"""
+    """构建 MiniMax-M2.5 (MiniMaxM2ForCausalLM) Ascend 环境变量命令。
+
+    注入 MiniMax-M2.5 在 Ascend 910B 上所需的环境变量：
+    - VLLM_USE_GRAPH:                  启用 NPU Graph 加速
+    - VLLM_USE_V1:                     启用 vLLM V1 多进程架构
+    - VLLM_ASCEND_ENABLE_FLASHCOMM1:   启用 FlashComm 通信优化（EP 密集通信场景）
+    - VLLM_TORCH_COMPILE:              关闭 torch.compile（Ascend 910B 兼容性）
+
+    注意: HCCL_OP_EXPANSION_MODE=AIV 已由 set_vllm_ascend_env.sh 全局设置，
+    此处不重复注入。
+    """
     logger.info("[MiniMax-M2.5] Set Ascend environment variables for %s", arch)
-    return ["export VLLM_ASCEND_ENABLE_FLASHCOMM1=1"]
+    return [
+        "export VLLM_USE_GRAPH=1",
+        "export VLLM_USE_V1=1",
+        "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
+        "export VLLM_TORCH_COMPILE=0",
+    ]
 
 
 def _build_deepseekv32_ascend_env(arch: str) -> List[str]:
@@ -1402,6 +1417,55 @@ def _build_triton_npu_patch_block() -> List[str]:
         "    print(f'[triton-patch] Skip: {e}')",
         "TRITON_PATCH_EOF",
     ]
+
+
+def build_modelslim_quarot_patch_preamble(engine: str) -> str:
+    """为 QuaRot 等非 modelslim 量化格式注入 modelslim_config.py 兼容性补丁。
+
+    vllm-ascend 的 ``modelslim_config.ModelSlimConfig.is_layer_skipped_ascend``
+    使用 ``self.quant_description[key]`` 直接访问字典，当模型使用 QuaRot 等
+    非华为 AMCT 量化方案时，quant_description 中缺少各层独立权重 key
+    (如 ``model.layers.0.self_attn.q_proj.weight``)，导致 KeyError 崩溃。
+
+    本补丁将所有 ``self.quant_description[...]`` 替换为
+    ``self.quant_description.get(...)``，缺失 key 时返回 None（非 "FLOAT"），
+    即该层不被跳过、按量化处理——这是 W8A8 模型的安全默认行为。
+
+    仅对 vllm_ascend 引擎生效。
+
+    Args:
+        engine: 引擎类型
+
+    Returns:
+        str: shell 脚本片段；非 vllm_ascend 时返回空字符串。
+    """
+    if engine != "vllm_ascend":
+        return ""
+    return (
+        "# --- wings: modelslim_config.py QuaRot compatibility patch ---\n"
+        "python3 << 'MODELSLIM_PATCH_EOF'\n"
+        "try:\n"
+        "    import importlib.util, pathlib\n"
+        "    spec = importlib.util.find_spec("
+        "'vllm_ascend.quantization.modelslim_config')\n"
+        "    if spec and spec.origin:\n"
+        "        p = pathlib.Path(spec.origin)\n"
+        "        txt = p.read_text()\n"
+        "        old = 'self.quant_description[shard_prefix + ' + '\"' + '.weight' + '\"' + ']'\n"
+        "        new = 'self.quant_description.get(shard_prefix + ' + '\"' + '.weight' + '\"' + ')'\n"
+        "        if old in txt:\n"
+        "            p.write_text(txt.replace(old, new))\n"
+        "            print('[modelslim-patch] Patched modelslim_config.py: "
+        "dict[] -> dict.get() for QuaRot compatibility')\n"
+        "        else:\n"
+        "            print('[modelslim-patch] Already patched or pattern not found')\n"
+        "    else:\n"
+        "        print('[modelslim-patch] modelslim_config module not found, skipping')\n"
+        "except Exception as e:\n"
+        "    print(f'[modelslim-patch] Skip: {e}')\n"
+        "MODELSLIM_PATCH_EOF\n"
+        "# --- end modelslim patch ---\n"
+    )
 
 
 def _build_comm_env_commands(is_ascend: bool) -> List[str]:
