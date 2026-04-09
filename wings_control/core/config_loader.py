@@ -365,32 +365,30 @@ def _set_function_call(params, engine_cmd_parameter):
     """根据用户传入的 enable_auto_tool_choice 统一启用 function call。
 
     用户通过 enable_auto_tool_choice（单一开关）触发所有引擎的 FC 功能。
-    tool_call_parser / reasoning_parser 来自模型默认配置，不需要用户指定。
+    tool_call_parser 来自模型默认配置，不需要用户指定。
+    reasoning_parser 独立于 FC 开关，始终透传（若模型默认配置中存在）。
 
     逻辑：
       - 用户传入 enable_auto_tool_choice + 模型配置了 tool_call_parser
-        → 保留 tool_call_parser 和 reasoning_parser，注入 enable_auto_tool_choice
+        → 保留 tool_call_parser，注入 enable_auto_tool_choice
       - 用户传入 enable_auto_tool_choice 但模型没有 tool_call_parser
         → 移除 enable_auto_tool_choice，打印警告
       - 用户未传 enable_auto_tool_choice
-        → 移除 tool_call_parser 和 reasoning_parser，FC 不生效
+        → 移除 tool_call_parser，FC 不生效
     """
     user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
     if user_wants_fc:
         if "tool_call_parser" in params:
             params["enable_auto_tool_choice"] = True
             logger.info(
-                "Function Call enabled (parser=%s, reasoning_parser=%s)",
+                "Function Call enabled (parser=%s)",
                 params["tool_call_parser"],
-                params.get("reasoning_parser", "N/A"),
             )
         else:
             params.pop("enable_auto_tool_choice", None)
-            params.pop("reasoning_parser", None)
             logger.warning("enable_auto_tool_choice is set but model has no tool_call_parser configured")
     else:
         params.pop("tool_call_parser", None)
-        params.pop("reasoning_parser", None)
         params.pop("enable_auto_tool_choice", None)
 
 
@@ -914,22 +912,20 @@ def _merge_sglang_params(params, ctx, engine_cmd_parameter):
         params['ep_size'] = params['tp_size']
 
     # 处理 tool parser 参数（function call 支持）
-    # 用户通过 enable_auto_tool_choice 统一触发，映射到 SGLang 的 tool_call_parser / reasoning_parser
+    # 用户通过 enable_auto_tool_choice 统一触发，映射到 SGLang 的 tool_call_parser
+    # reasoning_parser 独立于 FC 开关，始终透传
     params.pop("enable_tool_choice", None)  # 清理旧参数名
     user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
     if user_wants_fc:
         if "tool_call_parser" in params:
             logger.info(
-                "Function Call enabled for SGLang (parser=%s, reasoning_parser=%s)",
+                "Function Call enabled for SGLang (parser=%s)",
                 params["tool_call_parser"],
-                params.get("reasoning_parser", "N/A"),
             )
         else:
-            params.pop("reasoning_parser", None)
             logger.warning("enable_auto_tool_choice is set but SGLang model has no tool_call_parser configured")
     else:
         params.pop("tool_call_parser", None)
-        params.pop("reasoning_parser", None)
         logger.info("Function Call not enabled for SGLang")
 
     return params
