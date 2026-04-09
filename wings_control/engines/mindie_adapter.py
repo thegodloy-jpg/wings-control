@@ -556,10 +556,25 @@ node_rank = int(os.environ.get("RANK", "0"))
 # hccnX 网卡自动探测：昇腾 NPU 设备插件通常会在容器中创建 hccn0/hccn1/...
 # 这些网卡绑定 RoCE RDMA IP，是 HCCL 跨节点通信的正确 device_ip。
 # ---------------------------------------------------------------------------
+def _get_iface_ip_ioctl(ifname):
+    \"\"\"Pure-Python fallback: get IPv4 address of an interface via ioctl (no external commands).\"\"\"
+    import struct, fcntl
+    SIOCGIFADDR = 0x8915
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        info = fcntl.ioctl(s.fileno(), SIOCGIFADDR, struct.pack('256s', ifname[:15].encode('utf-8')))
+        return socket.inet_ntoa(info[20:24])
+    except (OSError, IOError):
+        return None
+    finally:
+        s.close()
+
 def detect_hccn_device_ips(dev_count):
     ips = []
     for dev_id in range(dev_count):
         iface = f"hccn{{dev_id}}"
+        addr = None
+        # Method 1: try 'ip' command
         try:
             result = subprocess.run(
                 ["ip", "-4", "-o", "addr", "show", iface],
@@ -570,10 +585,23 @@ def detect_hccn_device_ips(dev_count):
                     parts = line.split()
                     idx = parts.index("inet")
                     addr = parts[idx + 1].split("/")[0]
-                    ips.append(addr)
                     break
+        except FileNotFoundError:
+            print(f"[mindie] 'ip' command not found, using ioctl fallback for {{iface}}")
         except Exception as e:
-            print(f"[mindie] hccn{{dev_id}} detection failed: {{e}}")
+            print(f"[mindie] hccn{{dev_id}} 'ip' detection failed: {{e}}")
+        # Method 2: pure-Python ioctl fallback (no external commands needed)
+        if not addr:
+            try:
+                addr = _get_iface_ip_ioctl(iface)
+                if addr:
+                    print(f"[mindie] Detected {{iface}} IP via ioctl: {{addr}}")
+            except Exception as e:
+                print(f"[mindie] hccn{{dev_id}} ioctl detection also failed: {{e}}")
+        if addr:
+            ips.append(addr)
+        else:
+            print(f"[mindie] hccn{{dev_id}} detection failed: no IP found via ip cmd or ioctl")
     if len(ips) == dev_count:
         return ips
     print(f"[mindie] hccnX auto-detection incomplete: found {{ips}} for {{dev_count}} devices")
