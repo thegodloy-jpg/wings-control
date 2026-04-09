@@ -336,6 +336,11 @@ def _build_child_env(port_plan: PortPlan) -> dict[str, str]:
     env["HEALTH_SERVICE_PORT"] = str(port_plan.health_port)
     env["MONITOR_PROXY_PORT"] = str(port_plan.monitor_proxy_port)
 
+    # 引擎类型：K8s 部署通过 ENGINE 环境变量传入（如 mindie/vllm/sglang），
+    # 子进程（health_router/proxy/health_service）统一通过 ENGINE 读取。
+    engine = os.getenv("ENGINE", "vllm")
+    env["ENGINE"] = engine.strip().lower()
+
     # Prometheus 多进程指标汇总目录。
     # 当 proxy 以多 worker 模式运行时(--workers > 1)，prometheus_client
     # 需要此目录来汇总各 worker 进程的 Gauge/Counter 指标，否则 /metrics

@@ -13,7 +13,7 @@ from engines.vllm_adapter import _build_base_env_commands  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-os.environ.setdefault('ENGINE_TYPE', 'vllm')
+os.environ.setdefault('ENGINE', 'vllm')
 os.environ.setdefault('MODEL_NAME', 'test')
 
 params = {'model_name': 'test', 'model_path': '/m', 'model_type': 'chat'}

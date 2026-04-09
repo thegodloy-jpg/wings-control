@@ -66,7 +66,7 @@ class Settings(BaseSettings):
         return data
 
     # 引擎基础配置。ENGINE_PORT 是 backend 真实监听端口，不是对外代理端口。
-    ENGINE_TYPE: str = "vllm"
+    ENGINE: str = "vllm"
     ENGINE_HOST: str = "127.0.0.1"
     ENGINE_PORT: int = 17000
     ENABLE_REASON_PROXY: bool = True

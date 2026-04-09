@@ -11,7 +11,7 @@ sidecar 架构说明：
   engine 运行在同 Pod 的独立容器内，与 control 容器共享网络命名空间。
   因此通过 TCP 连接 127.0.0.1:ENGINE_PORT 即可判断引擎容器是否存活。
   engine_alive 字段语义为"引擎容器端口可达"，仅做诊断参考，不参与状态机判定。
-  引擎类型通过 ENGINE_TYPE 环境变量识别（不再依赖 PID 文件）。
+  引擎类型通过 ENGINE 环境变量识别（不再依赖 PID 文件）。
 """
 
 from __future__ import annotations
@@ -44,7 +44,8 @@ JITTER_PCT = float(os.getenv("HEALTH_JITTER_PCT", getattr(C, "HEALTH_JITTER_PCT"
 # 引擎容器连接参数（sidecar 同 Pod，共享网络命名空间）。
 ENGINE_HOST = os.getenv("ENGINE_HOST", getattr(C, "ENGINE_HOST", "127.0.0.1"))
 ENGINE_PORT = int(os.getenv("ENGINE_PORT", getattr(C, "ENGINE_PORT", "17000")))
-ENGINE_TYPE = os.getenv("ENGINE_TYPE", getattr(C, "ENGINE_TYPE", "vllm")).strip().lower()
+# 引擎类型：统一使用 ENGINE 环境变量（K8s Deployment 注入）
+_ENGINE = os.getenv("ENGINE", getattr(C, "ENGINE", "vllm")).strip().lower()
 ENGINE_TCP_TIMEOUT = float(os.getenv("ENGINE_TCP_TIMEOUT", "2.0"))
 
 # sglang 专用阈值。
@@ -83,13 +84,13 @@ def _is_engine_container_alive() -> bool:
 
 
 def _is_mindie() -> bool:
-    """根据 ENGINE_TYPE 环境变量判断当前 backend 是否为 MindIE。"""
-    return ENGINE_TYPE == "mindie"
+    """根据 ENGINE 环境变量判断当前 backend 是否为 MindIE。"""
+    return _ENGINE == "mindie"
 
 
 def _is_sglang() -> bool:
-    """根据 ENGINE_TYPE 环境变量判断当前 backend 是否为 sglang。"""
-    return ENGINE_TYPE == "sglang"
+    """根据 ENGINE 环境变量判断当前 backend 是否为 sglang。"""
+    return _ENGINE == "sglang"
 
 
 def _force_port(url: str, host: str, port: int) -> str:
