@@ -56,8 +56,9 @@ _ENGINE_PATCH_KEY_MAP = {
 }
 
 # 高级特性环境变量 → features 名称映射（与 supported_features.json 中的 feature key 对齐）
+# 注意：投机推理（ENABLE_SPECULATIVE_DECODE）已从此映射中移除，
+# 改为通过 --install-runtime-deps 独立安装，不再走 --features 路径。
 _FEATURE_SWITCH_MAP = {
-    "ENABLE_SPECULATIVE_DECODE": "adaptive_draft_model",
     "ENABLE_SPARSE": "sparse_kv",
     "LMCACHE_OFFLOAD": "lmcache_offload",
     "ENABLE_SOFT_FP8": "soft_fp8",
@@ -193,8 +194,9 @@ def _build_accel_user_override_snippet(safe_value: str) -> str:
 def _collect_enabled_features() -> list[str]:
     """Return the list of accel feature names whose environment switches are enabled.
 
-    ENABLE_SPECULATIVE_DECODE=true 时统一安装 adaptive_draft_model 补丁，
-    不区分 MTP/Suffix/Draft Model 方案——补丁内部自行判断是否需要生效。
+    注意：投机推理（ENABLE_SPECULATIVE_DECODE）已不在 _FEATURE_SWITCH_MAP 中，
+    改为通过 _build_speculative_runtime_deps_snippet() 独立走
+    --install-runtime-deps 路径安装，此处仅收集其他高级特性。
     """
     features = []
     for env_key, feat_name in _FEATURE_SWITCH_MAP.items():
@@ -202,6 +204,46 @@ def _collect_enabled_features() -> list[str]:
             continue
         features.append(feat_name)
     return features
+
+
+def _is_speculative_decode_enabled() -> bool:
+    """判断投机推理是否已启用。"""
+    return os.getenv("ENABLE_SPECULATIVE_DECODE", "").strip().lower() == "true"
+
+
+def _build_speculative_runtime_deps_snippet() -> str:
+    """为投机推理生成 --install-runtime-deps 的容错 shell 片段。
+
+    当 ENABLE_SPECULATIVE_DECODE=true 时，不再通过 --features 传递
+    adaptive_draft_model，而是使用 --install-runtime-deps 让 install.py
+    安装投机推理所需的运行时依赖。
+
+    Returns:
+        str: shell 脚本片段；投机推理未启用时返回空字符串。
+    """
+    if not _is_speculative_decode_enabled():
+        return ""
+
+    accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
+    return (
+        "# --- wings-accel: install speculative decoding runtime deps (fault-tolerant) ---\n"
+        f"if [ -f \"{accel_dir}/install.py\" ]; then\n"
+        "    echo '[wings-accel] Installing speculative decoding runtime deps...'\n"
+        "    set +e\n"
+        f"    python3 {accel_dir}/install.py --install-runtime-deps\n"
+        "    SPEC_RC=$?\n"
+        "    set -e\n"
+        "    if [ $SPEC_RC -ne 0 ]; then\n"
+        "        echo \"[wings-accel] WARNING: Speculative decoding runtime deps install failed"
+        " (exit=$SPEC_RC), skipping. Service will continue without patches.\"\n"
+        "    else\n"
+        "        echo '[wings-accel] Speculative decoding runtime deps installed successfully.'\n"
+        "    fi\n"
+        "else\n"
+        f"    echo '[wings-accel] WARNING: {accel_dir}/install.py not found, "
+        "skipping speculative decoding runtime deps.'\n"
+        "fi\n"
+    )
 
 
 def _build_per_feature_fallback_code(patch_key: str, engine_version: str, features: list[str]) -> str:
@@ -262,37 +304,53 @@ def _build_accel_preamble(engine: str) -> str:
     """若 Accel 加速功能已开启，生成容错的 shell 安装片段；否则返回空字符串。
 
     安装策略（容错）：
-      1. 先尝试批量安装所有特性
-      2. 若批量安装失败（install.py exit 非零），回退到逐特性安装
-      3. 单个特性安装失败时记录警告并跳过，继续安装其余特性
-      4. 无论安装结果如何，始终继续拉起引擎服务
+      1. 投机推理（ENABLE_SPECULATIVE_DECODE）使用 --install-runtime-deps 独立安装
+      2. 其他高级特性（sparse_kv/lmcache_offload/soft_fp8/soft_fp4）继续走 --features 路径
+      3. 先尝试批量安装所有特性
+      4. 若批量安装失败（install.py exit 非零），回退到逐特性安装
+      5. 单个特性安装失败时记录警告并跳过，继续安装其余特性
+      6. 无论安装结果如何，始终继续拉起引擎服务
     """
     if not settings.ENABLE_ACCEL:
         logger.debug("Accel disabled: skipping WINGS_ENGINE_PATCH_OPTIONS injection")
         return ""
 
-    # ── 路径 A：用户直接通过环境变量覆盖 ──
+    preamble_parts: list[str] = []
+
+    # ── 投机推理：独立使用 --install-runtime-deps ──
+    spec_snippet = _build_speculative_runtime_deps_snippet()
+    if spec_snippet:
+        logger.info("Accel: injecting speculative decoding runtime deps (--install-runtime-deps)")
+        preamble_parts.append(spec_snippet)
+
+    # ── 路径 A：用户直接通过环境变量覆盖（仅影响非投机推理特性） ──
     user_override = _validate_accel_user_override()
     if user_override:
         logger.info("Accel: using user-provided WINGS_ENGINE_PATCH_OPTIONS (fault-tolerant)")
-        return _build_accel_user_override_snippet(_shell_escape_single_quote(user_override))
+        preamble_parts.append(
+            _build_accel_user_override_snippet(_shell_escape_single_quote(user_override))
+        )
+        return "\n".join(preamble_parts) if preamble_parts else ""
 
-    # ── 路径 B：根据特性开关自动构建 ──
+    # ── 路径 B：根据特性开关自动构建（不含投机推理） ──
     patch_key = _ENGINE_PATCH_KEY_MAP.get(engine)
     if not patch_key:
-        logger.warning("Engine '%s' has no known accel patch mapping; skipping.", engine)
-        return ""
+        if not preamble_parts:
+            logger.warning("Engine '%s' has no known accel patch mapping; skipping.", engine)
+        return "\n".join(preamble_parts) if preamble_parts else ""
 
     features = _collect_enabled_features()
     if not features:
-        logger.info("Accel enabled but no advanced features active; skipping patch injection")
-        return ""
+        if not preamble_parts:
+            logger.info("Accel enabled but no advanced features active; skipping patch injection")
+        return "\n".join(preamble_parts) if preamble_parts else ""
 
     logger.info(
         "Accel enabled (fault-tolerant): injecting %d features for engine '%s'",
         len(features), engine,
     )
-    return _build_accel_auto_snippet(patch_key, features)
+    preamble_parts.append(_build_accel_auto_snippet(patch_key, features))
+    return "\n".join(preamble_parts)
 
 
 def _is_env_override_file(path: Path) -> bool:
@@ -473,8 +531,9 @@ ANALYZER_CONFIG='{_shell_escape_single_quote(json.dumps(analyzer_config))}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
-# 使用模块方式运行，Python会自动使用pyc文件（生产环境）
-cd {settings.SHARED_VOLUME_PATH} && python3 -m log_analyzer.log_analyzer \\
+# 清除旧 __pycache__，防止跨 Python 版本的 pyc magic number 不匹配
+find {settings.SHARED_VOLUME_PATH}/log_analyzer -name '__pycache__' -type d -exec rm -rf {{}} + 2>/dev/null || true
+cd {settings.SHARED_VOLUME_PATH} && python3 -B -m log_analyzer.log_analyzer \\
     --config "$ANALYZER_CONFIG" \\
     --log-file /var/log/wings/engine.log \\
     --progress-file {settings.PROGRESS_FILE} \\

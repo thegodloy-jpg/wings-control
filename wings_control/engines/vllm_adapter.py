@@ -632,6 +632,14 @@ def _build_glm4moe_ascend_env(arch: str) -> List[str]:
     ]
 
 
+def _build_qwen35_nvidia_env(arch: str) -> List[str]:
+    """构建 Qwen3.5 (Qwen3_5ForConditionalGeneration) NVIDIA 环境变量命令。"""
+    logger.info("[Qwen3.5] Set NVIDIA environment variables for %s", arch)
+    return [
+        "export VLLM_USE_MODELSCOPE=true",
+    ]
+
+
 def _build_qwen35_ascend_env(arch: str) -> List[str]:
     """构建 Qwen3.5 (Qwen3_5ForConditionalGeneration) Ascend 环境变量命令。"""
     logger.info("[Qwen3.5] Set Ascend environment variables for %s", arch)
@@ -705,13 +713,12 @@ def _build_llama_ascend_env(arch: str) -> List[str]:
     ]
 
 
-def _build_model_ascend_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
-    """构建新增模型在 Ascend NPU 上所需的环境变量命令。
+def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
+    """构建模型架构特定的环境变量命令（支持 NVIDIA 和 Ascend）。
 
-    根据模型架构注入 vLLM-Ascend 官方文档推荐的环境变量。
-    这些变量是模型正常启动和性能优化所必须的。
+    根据模型架构注入引擎官方文档推荐的环境变量。
 
-    已覆盖的架构:
+    已覆盖的 Ascend 架构:
     - Glm4MoeForCausalLM (GLM-4.7): TOPK 优化, FlashComm, Fused MC2
     - Qwen3_5ForConditionalGeneration (Qwen3.5-27B): TASK_QUEUE_ENABLE
     - Qwen3_5MoeForConditionalGeneration (Qwen3.5-397B): TASK_QUEUE_ENABLE
@@ -719,8 +726,8 @@ def _build_model_ascend_env_commands(params: Dict[str, Any], engine: str) -> Lis
     - DeepseekV32ForCausalLM (DeepSeek V3.2): MLAPO, FlashComm, VLLM_USE_V1
     - LlamaForCausalLM (LLaMA3.1-70B): 基础 NPU 内存/线程优化
 
-    注意: DeepseekV3 FP8 和 Ascend910_9362 的 env 由各自专属函数处理，
-    此处仅处理不与已有函数重叠的新模型变量。
+    已覆盖的 NVIDIA 架构:
+    - Qwen3_5ForConditionalGeneration (Qwen3.5-27B): VLLM_USE_MODELSCOPE
 
     Args:
         params: 参数字典
@@ -729,7 +736,7 @@ def _build_model_ascend_env_commands(params: Dict[str, Any], engine: str) -> Lis
     Returns:
         List[str]: 环境变量导出命令列表
     """
-    if engine != "vllm_ascend":
+    if engine not in ("vllm", "vllm_ascend"):
         return []
 
     model_path = params.get("model_path")
@@ -743,14 +750,20 @@ def _build_model_ascend_env_commands(params: Dict[str, Any], engine: str) -> Lis
     )
     arch = model_info.model_architecture
 
-    _arch_env_builders = {
-        "Glm4MoeForCausalLM": _build_glm4moe_ascend_env,
-        "Qwen3_5ForConditionalGeneration": _build_qwen35_ascend_env,
-        "Qwen3_5MoeForConditionalGeneration": _build_qwen35moe_ascend_env,
-        "MiniMaxM2ForCausalLM": _build_minimaxm2_ascend_env,
-        "DeepseekV32ForCausalLM": _build_deepseekv32_ascend_env,
-        "LlamaForCausalLM": _build_llama_ascend_env,
-    }
+    if engine == "vllm_ascend":
+        _arch_env_builders = {
+            "Glm4MoeForCausalLM": _build_glm4moe_ascend_env,
+            "Qwen3_5ForConditionalGeneration": _build_qwen35_ascend_env,
+            "Qwen3_5MoeForConditionalGeneration": _build_qwen35moe_ascend_env,
+            "MiniMaxM2ForCausalLM": _build_minimaxm2_ascend_env,
+            "DeepseekV32ForCausalLM": _build_deepseekv32_ascend_env,
+            "LlamaForCausalLM": _build_llama_ascend_env,
+        }
+    else:
+        _arch_env_builders = {
+            "Qwen3_5ForConditionalGeneration": _build_qwen35_nvidia_env,
+        }
+
     builder = _arch_env_builders.get(arch)
     return builder(arch) if builder else []
 
@@ -784,7 +797,7 @@ def _build_env_commands(params: Dict[str, Any], current_ip: str, network_interfa
     env_commands.extend(_build_distributed_env_commands(params, current_ip, network_interface, engine))
     env_commands.extend(_build_deepseek_fp8_env_commands(params, engine))
     env_commands.extend(_build_ascend910_9362_env_commands(params, engine))
-    env_commands.extend(_build_model_ascend_env_commands(params, engine))
+    env_commands.extend(_build_model_env_commands(params, engine))
 
     return env_commands
 

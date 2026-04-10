@@ -431,6 +431,43 @@ def _parse_hccl_device_ips() -> List[List[str]]:
     return result
 
 
+def _resolve_device_ip(
+    host_ip: str,
+    hccl_node_idx: int,
+    dev_id: int,
+    node_device_ips: List[List[str]],
+    is_multinode: bool,
+) -> str:
+    """解析单个设备的 HCCL IP，找不到时回退到主机 IP。
+
+    Args:
+        host_ip:         该节点的主机 IP
+        hccl_node_idx:   节点在全局 HCCL 设备列表中的索引
+        dev_id:          设备在该节点内的序号
+        node_device_ips: 解析后的 HCCL 设备 IP 二维列表
+        is_multinode:    是否为多节点部署
+
+    Returns:
+        str: 设备 IP 地址
+    """
+    if hccl_node_idx < len(node_device_ips) and dev_id < len(node_device_ips[hccl_node_idx]):
+        return node_device_ips[hccl_node_idx][dev_id]
+
+    if is_multinode:
+        logger.error(
+            "[mindie] CRITICAL: No HCCL device IP for node=%d dev=%d, "
+            "falling back to host IP %s. Multi-node HCCL will likely fail! "
+            "Set HCCL_DEVICE_IPS=<rdma_ip_node0>;<rdma_ip_node1>",
+            hccl_node_idx, dev_id, host_ip,
+        )
+    else:
+        logger.warning(
+            "[mindie] No HCCL device IP for node=%d dev=%d, fallback to host IP %s",
+            hccl_node_idx, dev_id, host_ip,
+        )
+    return host_ip
+
+
 def _build_server_list(
     node_ips: List[str],
     device_count: int,
@@ -452,26 +489,12 @@ def _build_server_list(
     """
     server_list = []
     global_rank = 0
+    is_multinode = len(node_ips) > 1
     for local_idx, ip in enumerate(node_ips):
         hccl_node_idx = node_offset + local_idx
         devices = []
         for dev_id in range(device_count):
-            if hccl_node_idx < len(node_device_ips) and dev_id < len(node_device_ips[hccl_node_idx]):
-                device_ip = node_device_ips[hccl_node_idx][dev_id]
-            else:
-                device_ip = ip
-                if len(node_ips) > 1:
-                    logger.error(
-                        "[mindie] CRITICAL: No HCCL device IP for node=%d dev=%d, "
-                        "falling back to host IP %s. Multi-node HCCL will likely fail! "
-                        "Set HCCL_DEVICE_IPS=<rdma_ip_node0>;<rdma_ip_node1>",
-                        hccl_node_idx, dev_id, ip,
-                    )
-                else:
-                    logger.warning(
-                        "[mindie] No HCCL device IP for node=%d dev=%d, fallback to host IP %s",
-                        hccl_node_idx, dev_id, ip,
-                    )
+            device_ip = _resolve_device_ip(ip, hccl_node_idx, dev_id, node_device_ips, is_multinode)
             devices.append({"device_id": str(dev_id), "device_ip": device_ip, "rank_id": str(global_rank)})
             global_rank += 1
         server_list.append({"server_id": ip, "device": devices, "container_ip": ip, "host_nic_ip": ip})

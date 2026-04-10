@@ -340,15 +340,41 @@ def _fix_ascend_block_size(params: dict, ctx: dict) -> None:
 
     此函数在配置合并的最后阶段调用，确保不会被其他 setter 覆盖。
 
+    Bug fix: 当默认配置使用 no_enable_prefix_caching=true 但用户通过
+    ENABLE_PREFIX_CACHING=true 环境变量覆盖时，engine_config 中可能不存在
+    enable_prefix_caching 键（只有 no_enable_prefix_caching）。此时需要额外
+    检查环境变量来判断 prefix caching 的最终状态。同时需要移除冲突的
+    no_enable_prefix_caching 键，避免 vLLM 同时收到互斥参数。
+
     Args:
         params: 引擎参数字典（原地修改）
         ctx:    通用上下文，包含 device 信息
     """
     if ctx.get("device") != "ascend":
         return
+
+    # 判断 prefix caching 最终状态：
+    # 1. 显式设置 enable_prefix_caching
+    # 2. 默认 no_enable_prefix_caching 被 ENV 覆盖
     prefix_caching = params.get("enable_prefix_caching")
     if prefix_caching in [None, False, "False", 0, "0"]:
-        return
+        # 检查是否存在 ENV 覆盖：defaults 中 no_enable_prefix_caching=true
+        # 但用户通过 ENABLE_PREFIX_CACHING=true 环境变量启用了 prefix caching
+        env_val = os.environ.get("ENABLE_PREFIX_CACHING", "").strip().lower()
+        if env_val in ("true", "1", "yes"):
+            logger.warning(
+                "[Ascend] Detected ENABLE_PREFIX_CACHING=%s env override "
+                "while no_enable_prefix_caching is in defaults. "
+                "Resolving conflict: enabling prefix_caching and removing "
+                "no_enable_prefix_caching.",
+                env_val,
+            )
+            params["enable_prefix_caching"] = True
+            params.pop("no_enable_prefix_caching", None)
+            prefix_caching = True
+        else:
+            return
+
     current_block_size = params.get("block_size")
     if current_block_size != 128:
         logger.warning(

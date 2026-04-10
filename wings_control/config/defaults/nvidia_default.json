@@ -351,24 +351,14 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "no_enable_prefix_caching": true,
-            "async_scheduling": true,
-            "compilation_config": "{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}",
-            "additional_config": "{\"enable_cpu_binding\":true}",
-            "speculative_config": "{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":3,\"enforce_eager\":true}",
-            "tool_call_parser": "hermes",
+            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "reasoning_parser": "qwen3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "no_enable_prefix_caching": true,
-            "async_scheduling": true,
-            "compilation_config": "{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}",
-            "additional_config": "{\"enable_cpu_binding\":true}",
-            "speculative_config": "{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":3,\"enforce_eager\":true}",
-            "tool_call_parser": "hermes",
+            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "reasoning_parser": "qwen3"
           },
           "sglang": {
@@ -390,6 +380,7 @@
             "max_model_len": 4096,
             "task": "generate",
             "enable_expert_parallel": true,
+            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -398,6 +389,7 @@
             "max_model_len": 4096,
             "task": "generate",
             "enable_expert_parallel": true,
+            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -495,6 +487,7 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "enable_expert_parallel": true,
+            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -502,6 +495,7 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "enable_expert_parallel": true,
+            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
