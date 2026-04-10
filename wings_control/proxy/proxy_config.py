@@ -88,7 +88,9 @@ WARMUP_TIMEOUT = float(os.getenv("WARMUP_TIMEOUT", "10"))
 GLOBAL_PASS_THROUGH_LIMIT = int(os.getenv("GLOBAL_PASS_THROUGH_LIMIT", "1024"))
 GLOBAL_QUEUE_MAXSIZE = int(os.getenv("GLOBAL_QUEUE_MAXSIZE", "1024"))
 
-WORKERS = int(os.getenv("PROXY_WORKERS", str(os.cpu_count() or 1)))
+# 上限 16：高核数服务器（如鲲鹏 920 的 640 核）上过多 worker 会导致容器 OOM
+_MAX_PROXY_WORKERS = 16
+WORKERS = min(int(os.getenv("PROXY_WORKERS", str(os.cpu_count() or 1))), _MAX_PROXY_WORKERS)
 WORKER_INDEX = int(os.getenv("WORKER_INDEX", "-1"))
 RAG_ACC_ENABLED = os.getenv("RAG_ACC_ENABLED", "false").lower() != "false"
 

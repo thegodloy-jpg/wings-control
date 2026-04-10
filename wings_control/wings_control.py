@@ -421,7 +421,10 @@ def _build_processes(port_plan: PortPlan) -> list[ManagedProc]:
 
     # 确定 proxy worker 数量：优先使用 PROXY_WORKERS 环境变量，
     # 否则默认为当前 CPU 核心数（与 proxy_config.py 保持一致）。
-    proxy_workers = int(os.getenv("PROXY_WORKERS", str(os.cpu_count() or 1)))
+    # 上限为 16：高核数服务器（如鲲鹏 920 的 640 核）上过多 worker 会导致容器 OOM，
+    # proxy 仅做转发，16 个 worker 足以支撑高并发。
+    _MAX_PROXY_WORKERS = 16
+    proxy_workers = min(int(os.getenv("PROXY_WORKERS", str(os.cpu_count() or 1))), _MAX_PROXY_WORKERS)
     env["PROXY_WORKERS"] = str(proxy_workers)
 
     return [

@@ -326,9 +326,8 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     # 对于 embedding 和 rerank 模型，强制禁用 enable_chunked_prefill 和 enable_prefix_caching
     _validate_embedding_rerank_params(params, ctx)
 
-    # Ascend 平台: 启用 prefix_caching 时，block_size 必须为 128
-    # vllm-ascend 在 platform.py 中检查此约束并发出警告，此处自动修正避免崩溃
-    _fix_ascend_block_size(params, ctx)
+    # NOTE: _fix_ascend_block_size 已移至 load_and_merge_configs 末尾，
+    # 在 _apply_cli_overrides 之后执行，防止 CLI 覆盖硬件硬约束。
 
     return params
 
@@ -1953,6 +1952,10 @@ def load_and_merge_configs(
 
     # 4. CLI/ENV 参数覆盖 config-file（保证 CLI > config-file 优先级）
     engine_config = _apply_cli_overrides(engine_config, cmd_known_params)
+
+    # 4.5 Ascend 硬约束：prefix_caching 开启时 block_size 必须为 128
+    #     放在 CLI 覆盖之后，确保硬件约束优先于用户 CLI 参数
+    _fix_ascend_block_size(engine_config, {"device": hardware_env.get("device")})
 
     # 5.
     final_engine_params = _merge_final_config(engine_config, cmd_known_params)
