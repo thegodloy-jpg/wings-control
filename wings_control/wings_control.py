@@ -419,12 +419,12 @@ def _build_processes(port_plan: PortPlan) -> list[ManagedProc]:
     python_bin = settings.PYTHON_BIN
     uvicorn_mod = settings.UVICORN_MODULE
 
-    # 确定 proxy worker 数量：优先使用 PROXY_WORKERS 环境变量，
-    # 否则默认为当前 CPU 核心数（与 proxy_config.py 保持一致）。
-    # 上限为 16：高核数服务器（如鲲鹏 920 的 640 核）上过多 worker 会导致容器 OOM，
-    # proxy 仅做转发，16 个 worker 足以支撑高并发。
-    max_proxy_workers = 16
-    proxy_workers = min(int(os.getenv("PROXY_WORKERS", str(os.cpu_count() or 1))), max_proxy_workers)
+    # 确定 proxy worker 数量：优先使用 PROXY_WORKERS 环境变量。
+    # 默认 4 个 worker：FastAPI 是异步框架，单 worker 即可处理数千并发，
+    # proxy 仅做请求转发（I/O 密集），4 workers ≈ 260MB 内存，足够应对生产负载。
+    # 上限 128：如需更高并发可通过 PROXY_WORKERS 环境变量调大，每个 worker 约 65MB RAM。
+    max_proxy_workers = 128
+    proxy_workers = min(int(os.getenv("PROXY_WORKERS", "4")), max_proxy_workers)
     env["PROXY_WORKERS"] = str(proxy_workers)
 
     return [

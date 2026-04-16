@@ -12,6 +12,7 @@ requests>=2.32.0
 
 # 序列化
 orjson>=3.9.0
+PyYAML>=6.0
 
 # 配置
 python-dotenv==1.0.0

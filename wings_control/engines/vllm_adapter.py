@@ -20,13 +20,17 @@ import logging
 import os
 import re
 import shlex
+import stat
 from dataclasses import dataclass
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+
+import yaml
 
 from utils.model_utils import ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
-    get_pd_role_env, get_qat_env
+    get_pd_role_env, get_qat_env, get_cold_start_env
+from utils.file_utils import safe_write_file, WriteOptions
 
 try:
     from wings_control.core.version_util import parse_engine_version_tuple
@@ -99,18 +103,41 @@ def _get_ray_resource_flag(engine: str, params: dict) -> str:
         return f"--num-gpus={tp_size}"
 
 
-def _need_triton_patch_and_eager(engine: str) -> bool:
-    """判断是否需要 Triton NPU 补丁和 --enforce-eager 标志。
+def _need_triton_patch(engine: str) -> bool:
+    """判断是否需要 Triton NPU 驱动补丁。
 
-    仅 vllm_ascend >= 0.14 需要：
-      - Triton NPU 驱动补丁（解决 "0 active drivers" 崩溃）
-      - --enforce-eager（绕过 Triton 编译）
-    低版本无此问题，不需要补丁。
+    仅 vllm_ascend >= 0.14 需要 Triton NPU 驱动补丁（解决 "0 active drivers" 崩溃）。
+    此补丁是安全的一次性文件修改，不影响性能。
     """
     if engine != "vllm_ascend":
         return False
     ver = _parse_engine_version()
     return ver >= _ASCEND_NPU_RESOURCE_MIN_VERSION
+
+
+def _need_enforce_eager(engine: str) -> bool:
+    """判断是否需要 --enforce-eager 标志（跳过图编译）。
+
+    A+X 环境（Ascend + NVIDIA GPU 混合部署）中，triton 和 triton-ascend
+    版本冲突会导致 qkv_rmsnorm_rope 等算子无法正确注册
+    (参见 vllm-ascend issue #6737, #6578)，需要通过 --enforce-eager 绕过。
+
+    通过环境变量 ASCEND_ENFORCE_EAGER 控制：
+      - true:  强制添加 --enforce-eager（用于 A+X 环境或遇到 triton 冲突时）
+      - false: 不添加 --enforce-eager（默认，用于纯 Ascend 环境，可享受图编译性能优化）
+    """
+    if engine != "vllm_ascend":
+        return False
+    return os.getenv("ASCEND_ENFORCE_EAGER", "").lower() in ("true", "1", "yes")
+
+
+def _need_triton_patch_and_eager(engine: str) -> bool:
+    """兼容旧接口：判断是否需要 Triton 补丁或 enforce-eager。
+
+    此函数已拆分为 _need_triton_patch() 和 _need_enforce_eager()，
+    保留此函数仅用于向后兼容。
+    """
+    return _need_triton_patch(engine) or _need_enforce_eager(engine)
 
 # 模块根目录：用于定位配置文件和环境脚本
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -264,26 +291,149 @@ def _build_base_env_commands(params, engine: str, root: str) -> List[str]:
     return env_commands
 
 
-def _build_cache_env_commands(engine: str) -> List[str]:
-    """构建 KVCache Offload 特性的环境变量设置命令。
+# ── LMCache YAML 配置文件 ─────────────────────────────────────────────
+# 当 cold_start 或 QAT 特性启用时，需要生成 YAML 配置文件供 LMCache 读取。
+# 纯内存卸载场景不需要 YAML 文件（环境变量即可控制）。
+_LMCACHE_CONFIG_FILENAME = "lmcache_config.yaml"
+_LMCACHE_SHARED_VOLUME = os.getenv("SHARED_VOLUME_PATH", "/shared-volume")
 
-    KVCache Offload 允许将 KV 缓存卸载到主机内存或远端存储，
-    这一特性需要额外的共享库支持，通过 LD_LIBRARY_PATH 注入。
 
-    支持的引擎和库路径:
-        - vllm:        kv_agent 库 (/opt/vllm_env/.../kv_agent/lib)
-        - vllm_ascend: lmcache 库 (/opt/ascend_env/.../lmcache)
+def _build_lmcache_yaml_dict(engine: str) -> dict:
+    """根据环境变量构建 LMCache 的 YAML 配置字典。
+
+    配置结构参考 LMCache 官方 YAML schema，包含以下可选段：
+    - chunk_size: KV 缓存分块大小（默认 256）
+    - local_cpu:  CPU 内存缓存配置
+    - local_disk: 本地磁盘缓存配置
+    - pre_caching: 冷启动预热配置（仅 cold_start 启用）
+    - qat:         QAT 硬件压缩配置（仅 QAT 启用）
+
+    Args:
+        engine: 引擎类型（vllm / vllm_ascend）
+
+    Returns:
+        dict: 可被 yaml.dump() 序列化的配置字典
+    """
+    config: dict = {}
+
+    # ── chunk_size ──
+    chunk_size_str = os.getenv("LMCACHE_CHUNK_SIZE", "256")
+    try:
+        config["chunk_size"] = int(chunk_size_str)
+    except (ValueError, TypeError):
+        config["chunk_size"] = 256
+
+    # ── local_cpu ──
+    local_cpu_enabled = os.getenv("LMCACHE_LOCAL_CPU", "").lower() == "true"
+    max_cpu_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "")
+    if local_cpu_enabled or max_cpu_size:
+        cpu_section: dict = {}
+        if max_cpu_size:
+            cpu_section["max_size"] = max_cpu_size
+        config["local_cpu"] = cpu_section
+
+    # ── local_disk ──
+    local_disk_path = os.getenv("LMCACHE_LOCAL_DISK", "")
+    max_disk_size = os.getenv("LMCACHE_MAX_LOCAL_DISK_SIZE", "")
+    if local_disk_path:
+        disk_section: dict = {"path": local_disk_path}
+        if max_disk_size:
+            disk_section["max_size"] = max_disk_size
+        config["local_disk"] = disk_section
+
+    # ── pre_caching（冷启动预热）──
+    if get_cold_start_env():
+        pre_caching: dict = {
+            "hash_algorithm": os.getenv("LMCACHE_PRE_CACHING_HASH", "sha256_cbor"),
+            "manifest_write_interval": int(os.getenv("LMCACHE_MANIFEST_WRITE_INTERVAL", "1")),
+            "maintenance": {"enabled": False},
+            "full_sync": {"enabled": False},
+        }
+        config["pre_caching"] = pre_caching
+        logger.info("[LMCache YAML] Cold-start pre_caching section enabled")
+
+    # ── qat（QAT 硬件压缩）──
+    if get_qat_env():
+        qat_module = "kv_agent" if engine == "vllm" else os.getenv("LMCACHE_QAT_MODULE", "kv_agent")
+        qat_section: dict = {
+            "module_name": qat_module,
+            "instance_num": int(os.getenv("LMCACHE_QAT_INSTANCE_NUM", "2")),
+            "loss_level": int(os.getenv("LMCACHE_QAT_LOSS_LEVEL", "0")),
+            "log_enabled": int(os.getenv("LMCACHE_QAT_LOG_ENABLED", "0")),
+        }
+        config["qat"] = qat_section
+        logger.info("[LMCache YAML] QAT section enabled (module=%s)", qat_module)
+
+    return config
+
+
+def _need_lmcache_config_yaml() -> bool:
+    """判断是否需要生成 LMCache YAML 配置文件。
+
+    仅在 cold_start 或 QAT 特性启用时才需要 YAML 文件。
+    纯内存/磁盘卸载场景由环境变量控制，不需要 YAML。
+
+    Returns:
+        bool: 需要生成返回 True
+    """
+    return get_cold_start_env() or get_qat_env()
+
+
+def _write_lmcache_config_yaml(engine: str) -> Optional[str]:
+    """生成并写入 LMCache YAML 配置文件到共享卷。
+
+    条件：仅在 cold_start 或 QAT 启用时触发。
+    写入路径：/shared-volume/lmcache_config.yaml
 
     Args:
         engine: 引擎类型
 
     Returns:
-        List[str]: LD_LIBRARY_PATH 设置命令列表，未启用时返回空列表
+        str | None: 写入成功返回文件路径，无需写入或失败返回 None
+    """
+    if not _need_lmcache_config_yaml():
+        return None
+
+    config = _build_lmcache_yaml_dict(engine)
+    yaml_content = yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    file_path = os.path.join(_LMCACHE_SHARED_VOLUME, _LMCACHE_CONFIG_FILENAME)
+    os.makedirs(_LMCACHE_SHARED_VOLUME, exist_ok=True)
+
+    ok = safe_write_file(
+        file_path, yaml_content, is_json=False,
+        options=WriteOptions(
+            modes=stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
+            atomic=True,
+        ),
+    )
+    if ok:
+        logger.info("[LMCache YAML] Config written to %s", file_path)
+        return file_path
+    else:
+        logger.error("[LMCache YAML] Failed to write config to %s", file_path)
+        return None
+
+
+def _build_cache_env_commands(engine: str) -> List[str]:
+    """构建 KVCache Offload 特性的环境变量设置命令。
+
+    KVCache Offload 允许将 KV 缓存卸载到主机内存或远端存储。
+    LMCache 所需的共享库已在 accel-volume 安装阶段通过
+    ``install.py --lmcache-target`` 注入，无需再手动设置 LD_LIBRARY_PATH。
+
+    当 cold_start 或 QAT 特性启用时，还会生成 LMCache YAML 配置文件
+    并通过 ``LMCACHE_CONFIG_FILE`` 环境变量告知 LMCache 配置路径。
+
+    Args:
+        engine: 引擎类型
+
+    Returns:
+        List[str]: 环境变量设置命令列表，未启用时返回空列表
 
     环境变量:
         - LMCACHE_OFFLOAD: 是否启用 KVCache Offload (true/false)
-        - KV_AGENT_LIB_PATH: vLLM kv_agent 库路径
-        - LMCACHE_LIB_PATH:  vLLM-Ascend lmcache 库路径
+        - LMCACHE_CONFIG_FILE: LMCache YAML 配置文件路径（自动生成）
     """
     env_commands = []
     if not get_lmcache_env():
@@ -292,38 +442,10 @@ def _build_cache_env_commands(engine: str) -> List[str]:
     # 跨实例Hash一致
     env_commands.append('export PYTHONHASHSEED=0')
 
-    if engine == "vllm":
-        # Prepend kv_agent lib path to LD_LIBRARY_PATH
-        kv_agent_lib_env = os.getenv("KV_AGENT_LIB_PATH", "")
-        if kv_agent_lib_env:
-            lib_path = _sanitize_shell_path(kv_agent_lib_env)
-            env_commands.append(f'_KV_LIB_PATH={lib_path}')
-            logger.info("[KVCache Offload] Added LD_LIBRARY_PATH for vllm: %s", lib_path)
-        else:
-            # 动态探测 Python site-packages 路径，避免硬编码 Python 版本号
-            env_commands.append(
-                '_KV_LIB_PATH=$('
-                'python3 -c "import site; print(site.getsitepackages()[0])" '
-                '2>/dev/null)/kv_agent/lib'
-            )
-            logger.info("[KVCache Offload] Added LD_LIBRARY_PATH for vllm (dynamic detection)")
-        env_commands.append('export LD_LIBRARY_PATH="${_KV_LIB_PATH}:${LD_LIBRARY_PATH:-}"')
-    elif engine == "vllm_ascend":
-        # Prepend lmcache native lib path to LD_LIBRARY_PATH
-        lmcache_lib_env = os.getenv("LMCACHE_LIB_PATH", "")
-        if lmcache_lib_env:
-            lib_path = _sanitize_shell_path(lmcache_lib_env)
-            env_commands.append(f'_LMCACHE_LIB_PATH={lib_path}')
-            logger.info("[KVCache Offload] Added LD_LIBRARY_PATH for vllm_ascend: %s", lib_path)
-        else:
-            # 动态探测 Python site-packages 路径，避免硬编码 Python 版本号
-            env_commands.append(
-                '_LMCACHE_LIB_PATH=$('
-                'python3 -c "import site; print(site.getsitepackages()[0])" '
-                '2>/dev/null)/lmcache'
-            )
-            logger.info("[KVCache Offload] Added LD_LIBRARY_PATH for vllm_ascend (dynamic detection)")
-        env_commands.append('export LD_LIBRARY_PATH="${_LMCACHE_LIB_PATH}:${LD_LIBRARY_PATH:-}"')
+    # 当 cold_start 或 QAT 启用时，生成 YAML 配置文件并导出路径
+    yaml_path = _write_lmcache_config_yaml(engine)
+    if yaml_path:
+        env_commands.append(f'export LMCACHE_CONFIG_FILE={shlex.quote(yaml_path)}')
 
     return env_commands
 
@@ -334,9 +456,6 @@ def _build_sparse_lib_env_commands(params: Dict[str, Any], engine: str) -> List[
     Sparse KV 依赖 vsparse/native 下的 C++ 动态库，需要通过
     LD_LIBRARY_PATH 注入。此函数独立于 KVCache Offload，
     仅在 enable_sparse=true 且 engine=vllm 时生效。
-
-    注意：如果 KVCache Offload 也已启用，sparse lib 路径已由
-    _build_cache_env_commands 注入（避免重复）。
 
     Args:
         params: 参数字典，需包含 enable_sparse
@@ -350,8 +469,7 @@ def _build_sparse_lib_env_commands(params: Dict[str, Any], engine: str) -> List[
         return env_commands
     if engine != "vllm":
         return env_commands
-    # 如果 LMCache Offload 已启用，kv_agent lib 路径已在 _build_cache_env_commands 中注入，
-    # 但 sparse lib 路径需要补充
+    # Sparse lib 路径注入
     sparse_lib_path_env = os.getenv("SPARSE_LIB_PATH", "")
     if sparse_lib_path_env:
         # 用户通过环境变量显式指定路径
@@ -451,7 +569,10 @@ def _build_pd_role_env_commands(engine: str, current_ip: str, network_interface:
                 "export CLOSE_MATMUL_K_SHIFT=1",
                 f"export VLLM_LLMDD_RPC_PORT={rpc_port}",
                 f"export VLLM_MOONCAKE_BOOTSTRAP_PORT={mooncake_bootstrap_port}",
-                f"export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:{os.getenv('NPU_MAX_SPLIT_SIZE_MB', '256')}"
+                f"export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:{os.getenv('NPU_MAX_SPLIT_SIZE_MB', '256')}",
+                # mooncake-transfer-engine 的 Ascend 传输后端 (ascend_transport.so)
+                # 安装在 /usr/local/lib，需追加到 LD_LIBRARY_PATH 以便运行时加载
+                'export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"',
             ])
     return env_commands
 
@@ -632,19 +753,10 @@ def _build_glm4moe_ascend_env(arch: str) -> List[str]:
     ]
 
 
-def _build_qwen35_nvidia_env(arch: str) -> List[str]:
-    """构建 Qwen3.5 (Qwen3_5ForConditionalGeneration) NVIDIA 环境变量命令。"""
-    logger.info("[Qwen3.5] Set NVIDIA environment variables for %s", arch)
-    return [
-        "export VLLM_USE_MODELSCOPE=true",
-    ]
-
-
 def _build_qwen35_ascend_env(arch: str) -> List[str]:
     """构建 Qwen3.5 (Qwen3_5ForConditionalGeneration) Ascend 环境变量命令。"""
     logger.info("[Qwen3.5] Set Ascend environment variables for %s", arch)
     return [
-        "export VLLM_USE_MODELSCOPE=true",
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         "export HCCL_BUFFSIZE=512",
         "export OMP_PROC_BIND=false",
@@ -726,9 +838,6 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     - DeepseekV32ForCausalLM (DeepSeek V3.2): MLAPO, FlashComm, VLLM_USE_V1
     - LlamaForCausalLM (LLaMA3.1-70B): 基础 NPU 内存/线程优化
 
-    已覆盖的 NVIDIA 架构:
-    - Qwen3_5ForConditionalGeneration (Qwen3.5-27B): VLLM_USE_MODELSCOPE
-
     Args:
         params: 参数字典
         engine: 引擎类型
@@ -760,9 +869,7 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
             "LlamaForCausalLM": _build_llama_ascend_env,
         }
     else:
-        _arch_env_builders = {
-            "Qwen3_5ForConditionalGeneration": _build_qwen35_nvidia_env,
-        }
+        _arch_env_builders = {}
 
     builder = _arch_env_builders.get(arch)
     return builder(arch) if builder else []
@@ -891,80 +998,6 @@ def _build_vllm_cmd_parts(params: Dict[str, Any]) -> str:
 # ── 推测解码 (Speculative Decoding) ──────────────────────────────────────
 
 
-def _should_inject_adaptive_draft_fields(params: Dict[str, Any]) -> bool:
-    """判断是否应向 speculative-config 注入 wings-accel 自适应草稿长度字段。
-
-    条件：ENABLE_ACCEL=true 且存在 speculative_token_range 或 draft_confidence_threshold。
-    wings-accel 的 adaptive_draft_model_patch 会从 speculative-config JSON 中读取这些字段
-    （在传给 vLLM 原生解析器之前剥离），无需 vLLM 本身支持这些字段。
-    """
-    from config.settings import settings
-    if not settings.ENABLE_ACCEL:
-        return False
-    token_range = params.get("speculative_token_range", "")
-    confidence = params.get("draft_confidence_threshold", 0.0)
-    return bool(token_range) or (confidence > 0.0)
-
-
-def _validate_token_range(token_range_str: str, num_speculative_tokens: int) -> list[int] | None:
-    """解析并校验 speculative_token_range 字符串，返回整数列表；无效时返回 None。
-
-    Args:
-        token_range_str:       逗号分隔的整数字符串，如 "1,3,5"
-        num_speculative_tokens: 当前方法的上限，超出时打印警告
-    """
-    try:
-        token_range = [int(x.strip()) for x in token_range_str.split(",") if x.strip()]
-    except ValueError:
-        logger.warning("[wings-accel] Invalid SPECULATIVE_TOKEN_RANGE='%s', skipping", token_range_str)
-        return None
-    if not token_range:
-        return None
-    if num_speculative_tokens > 0:
-        invalid = [v for v in token_range if v > num_speculative_tokens]
-        if invalid:
-            logger.warning(
-                "[wings-accel] speculative_token_range contains values %s "
-                "exceeding num_speculative_tokens=%d; "
-                "they will be clamped at runtime",
-                invalid, num_speculative_tokens,
-            )
-    return token_range
-
-
-def _inject_adaptive_draft_fields(params: Dict[str, Any], config: List[str],
-                                   num_speculative_tokens: int = 0) -> None:
-    """将 wings-accel adaptive_draft_model 所需的字段注入 speculative-config。
-
-    支持的字段（均为可选）：
-      - speculative_token_range: 自适应草稿长度候选列表，如 "1,3,5" → [1, 3, 5]
-      - draft_confidence_threshold: 草稿置信度阈值(0.0~1.0)，draft_model / eagle3 方法有效
-
-    Args:
-        params: 引擎参数字典。
-        config: 正在构建的 speculative-config 条目列表。
-        num_speculative_tokens: 当前方法的 num_speculative_tokens 值，用于预校验。
-    """
-    token_range_str = params.get("speculative_token_range", "")
-    confidence = params.get("draft_confidence_threshold", 0.0)
-
-    if token_range_str:
-        token_range = _validate_token_range(token_range_str, num_speculative_tokens)
-        if token_range is not None:
-            config.append(f'"speculative_token_range": {token_range}')
-            logger.info(
-                "[wings-accel] Injected speculative_token_range=%s into speculative-config",
-                token_range,
-            )
-
-    if confidence > 0.0:
-        config.append(f'"draft_confidence_threshold": {confidence}')
-        logger.info(
-            "[wings-accel] Injected draft_confidence_threshold=%s into speculative-config",
-            confidence,
-        )
-
-
 def _format_speculative_result(config_entries: List[str]) -> str:
     """将推测解码配置列表格式化为 --speculative-config 命令行参数。"""
     result = " --speculative-config '{" + ", ".join(config_entries) + "}'"
@@ -986,16 +1019,11 @@ def _handle_draft_model_case(params: Dict[str, Any], config: List[str]) -> None:
         config.append('"method" : "eagle3"')
         num_spec_tokens = 4
         config.append(f'"num_speculative_tokens": {num_spec_tokens}')
-        config.append('"speculative_token_range": [1, 2, 4]')
-        config.append('"draft_confidence_threshold": 0.8')
     else:
         logger.info('--- Using the draft model speculative decoding approach ---')
         config.append('"method" : "draft_model"')
         num_spec_tokens = 4
         config.append(f'"num_speculative_tokens": {num_spec_tokens}')
-        config.append('"disable_padded_drafter_batch": true')
-        config.append('"speculative_token_range": [1, 2, 4]')
-        config.append('"draft_confidence_threshold": 0.8')
 
 
 def _handle_mtp_case(model_info: ModelIdentifier, mtp_support_models: List[Any],
@@ -1378,7 +1406,7 @@ def build_triton_patch_preamble(engine: str) -> str:
     Returns:
         str: shell 脚本片段；非 vllm_ascend 或版本 < 0.14 时返回空字符串。
     """
-    if not _need_triton_patch_and_eager(engine):
+    if not _need_triton_patch(engine):
         return ""
     lines = _build_triton_npu_patch_block()
     return "\n".join(lines) + "\n"
@@ -1539,7 +1567,7 @@ def _build_ray_head_commands(
     )
     parts.extend(_build_ray_wait_loop(ctx.nnodes))
 
-    eager_flag = " --enforce-eager" if _need_triton_patch_and_eager(ctx.engine) else ""
+    eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
     speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
     sparse_args = _build_sparse_cmd(params, ctx.engine) if params.get("enable_sparse") else ""
 
@@ -1822,8 +1850,10 @@ def _build_vllm_single_script(
     env_prefix = "\n".join(common_env_cmds) + "\n" if common_env_cmds else ""
     speculative_extra = _build_speculative_cmd(params, engine) if params.get("enable_speculative_decode") else ""
     sparse_args = _build_sparse_cmd(params, engine) if params.get("enable_sparse") else ""
+    # A+X 环境下需要 --enforce-eager 绕过 triton 版本冲突（与 Ray 路径一致）
+    eager_flag = " --enforce-eager" if _need_enforce_eager(engine) else ""
 
-    return env_prefix + f"exec {cmd}{speculative_extra}{sparse_args}\n"
+    return env_prefix + f"exec {cmd}{eager_flag}{speculative_extra}{sparse_args}\n"
 
 
 def build_start_script(params: Dict[str, Any]) -> str:

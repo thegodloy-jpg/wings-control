@@ -1,0 +1,41 @@
+FROM python:3.10.19-slim
+
+WORKDIR /opt/wings-control
+RUN mkdir /workspace
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    netcat-openbsd \
+    pciutils \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# install requirements
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+# copy wings_control code
+COPY wings_control /opt/wings-control
+RUN chmod +x ./wings_start.sh
+
+RUN ls -la /opt/wings-control/ \
+ && test -d /opt/wings-control/core    && echo "core/ OK" \
+ && test -d /opt/wings-control/engines && echo "engines/ OK" \
+ && test -d /opt/wings-control/proxy   && echo "proxy/ OK" \
+ && test -d /opt/wings-control/utils   && echo "utils/ OK" \
+ && test -f /opt/wings-control/wings_control.py && echo "wings_control.py OK" \
+ && test -f /opt/wings-control/wings_start.sh && echo "wings_start.sh OK"
+
+RUN mkdir -p /shared-volume /var/log/wings /opt/log_analyzer
+
+RUN ln -s /opt/wings-control /opt/wings_control
+
+ENV PYTHONPATH="/opt"
+ENV APP_WORKDIR="/opt/wings-control"
+
+CMD ["bash", "/opt/wings-control/wings_start.sh"]

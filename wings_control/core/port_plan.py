@@ -1,7 +1,7 @@
 """端口规划模块。
 
 该项目把端口职责固定为三层：
-- 17000: backend engine 监听端口（engine 容器内部服务地址）
+- 17000: backend engine 监听端口（engine 容器内部服务地址，可通过 ENGINE_PORT 覆盖）
 - 18000: proxy 对外服务端口（K8s Service 暴露的端口）
 - 19000: health 独立探针端口（K8s liveness/readiness 探针端口）
 
@@ -10,6 +10,7 @@ health 和 Kubernetes 清单都围绕同一套端口约定工作。
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 
@@ -46,22 +47,25 @@ def derive_port_plan(*, port: int, enable_reason_proxy: bool, health_port: int =
         PortPlan: 包含 backend/proxy/health/monitor_proxy 四层端口的完整方案。
 
     设计说明：
-    - 启用 proxy 时：backend 固定 17000（内部），proxy 使用用户指定端口或 18000。
-    - 禁用 proxy 时：backend 直接使用用户指定端口或 18000，proxy_port 置 0。
+    - 启用 proxy 时：backend 使用 ENGINE_PORT（默认 17000），proxy 使用用户指定端口或 18000。
+    - 禁用 proxy 时：backend 直接使用用户指定端口或 ENGINE_PORT，proxy_port 置 0。
     - monitor_proxy 始终启用，用于透传 Engine 侧的监控接口（/metrics, /version 等）。
     """
+    # 读取 ENGINE_PORT 环境变量，支持 PD 分离等同机多实例场景
+    _engine_port = int(os.environ.get("ENGINE_PORT", "17000"))
+
     # 当前版本默认必须走 proxy，对外端口 `port` 只影响 proxy，不影响 backend。
     if enable_reason_proxy:
         return PortPlan(
             enable_proxy=True,
-            backend_port=17000,
+            backend_port=_engine_port,
             proxy_port=port or 18000,
             health_port=health_port,
             monitor_proxy_port=monitor_proxy_port,
         )
     return PortPlan(
         enable_proxy=False,
-        backend_port=port or 18000,
+        backend_port=port or _engine_port,
         proxy_port=0,
         health_port=health_port,
         monitor_proxy_port=monitor_proxy_port,

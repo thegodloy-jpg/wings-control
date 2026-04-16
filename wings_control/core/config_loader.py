@@ -237,7 +237,7 @@ def _build_engine_cmd_parameter(cmd_known_params: Dict[str, Any]) -> Dict[str, A
         "quantization_param_path", "gpu_memory_utilization", "enable_chunked_prefill",
         "block_size", "max_num_seqs", "seed", "enable_expert_parallel",
         "max_num_batched_tokens", "enable_prefix_caching", "enable_speculative_decode",
-        "speculative_decode_model_path", "speculative_token_range", "draft_confidence_threshold",
+        "speculative_decode_model_path",
         "enable_rag_acc", "enable_auto_tool_choice",
         "enable_sparse", "lc_sparse_threshold", "total_budget", "local_kvstore_capacity",
         "compilation_config",
@@ -610,11 +610,27 @@ def _validate_embedding_rerank_params(params, ctx):
 
 
 def _set_common_params(params, engine_cmd_parameter, config_path):
-    """根据参数映射表，将用户 CLI 参数翻译为引擎实际的参数键名并写入 params。"""
+    """根据参数映射表，将用户 CLI 参数翻译为引擎实际的参数键名并写入 params。
+
+    优先级保护：仅当用户通过 CLI 参数或环境变量 **显式** 指定了某个参数时，
+    才覆盖模型默认配置（nvidia_default.json / model_deploy_config）中的已有值。
+    对于用户未显式指定的参数，若模型配置中已有值则保留，否则用 argparse 默认值补充。
+    """
     vllm_param_map_config = _load_mapping(config_path, 'default_to_vllm_parameter_mapping')
+    explicit_keys = _detect_explicit_cli_keys()
     for key, value in vllm_param_map_config.items():
-        if value and engine_cmd_parameter.get(key) is not None:
-            params[value] = engine_cmd_parameter.get(key)
+        if not value:
+            continue
+        cli_val = engine_cmd_parameter.get(key)
+        if cli_val is None:
+            continue
+        # 用户显式设置的参数（CLI 或环境变量）：始终覆盖
+        if key in explicit_keys:
+            params[value] = cli_val
+        # 模型默认配置中不存在的参数：用 argparse 默认值补充
+        elif value not in params:
+            params[value] = cli_val
+        # 否则：保留模型默认配置中的值，不被 argparse 默认值覆盖
 
 
 def _set_sequence_length(params, engine_cmd_parameter):
@@ -680,16 +696,45 @@ def _get_pd_config(ctx, pd_role):
     config = {}
 
     if device == "ascend":
-        # AscendPD — 使用 vllm-ascend v0.17+ 已注册的 MooncakeConnector (V1 API)
+        # AscendPD — 使用 vllm-ascend v0.17+ 注册的 MooncakeConnectorV1
+        # 注意: 必须使用 "MooncakeConnectorV1"（Ascend 适配版本），
+        # 而非上游 vllm 的 "MooncakeConnector"，后者不支持 Ascend 的 tuple KV cache 格式
         kv_role = "kv_producer" if pd_role == "P" else "kv_consumer"
+
+        # Ascend MooncakeConnectorV1 要求 kv_connector_extra_config 中包含
+        # prefill 和 decode 双方的并行配置 (tp_size, dp_size, pp_size)，
+        # 用于 KV cache 传输时的 TP/DP 映射计算。
+        # 通过环境变量配置，默认 TP=device_count, DP=1, PP=1
+        default_tp = int(ctx.get('device_count', 1))
+        prefill_tp = int(os.getenv("PD_PREFILL_TP_SIZE", str(default_tp)))
+        prefill_dp = int(os.getenv("PD_PREFILL_DP_SIZE", "1"))
+        prefill_pp = int(os.getenv("PD_PREFILL_PP_SIZE", "1"))
+        decode_tp = int(os.getenv("PD_DECODE_TP_SIZE", str(default_tp)))
+        decode_dp = int(os.getenv("PD_DECODE_DP_SIZE", "1"))
+        decode_pp = int(os.getenv("PD_DECODE_PP_SIZE", "1"))
+
         config = {
-            "kv_connector": "MooncakeConnector",
+            "kv_connector": "MooncakeConnectorV1",
             "kv_role": kv_role,
             "kv_connector_extra_config": {
                 "mooncake_protocol": "rdma",
+                "prefill": {
+                    "tp_size": prefill_tp,
+                    "dp_size": prefill_dp,
+                    "pp_size": prefill_pp,
+                },
+                "decode": {
+                    "tp_size": decode_tp,
+                    "dp_size": decode_dp,
+                    "pp_size": decode_pp,
+                },
             },
         }
-        logger.info("[PD Config] Ascend device detected, role=%s, kv_role=%s", pd_role, kv_role)
+        logger.info("[PD Config] Ascend device detected, role=%s, kv_role=%s, "
+                     "prefill(tp=%d,dp=%d,pp=%d), decode(tp=%d,dp=%d,pp=%d)",
+                     pd_role, kv_role,
+                     prefill_tp, prefill_dp, prefill_pp,
+                     decode_tp, decode_dp, decode_pp)
     else:
         # AscendPD
         config = {
@@ -712,24 +757,34 @@ def _set_kv_cache_config(params, ctx):
     """
     lmcache_offload = get_lmcache_env()
     pd_role = get_pd_role_env()
+    device = ctx.get('device', '')
+
+    # Ascend NPU 需要额外的 engine_id 和 kv_buffer_device 字段
+    is_ascend = (device == "ascend")
+
+    def _build_lmcache_connector():
+        """构建 LMCacheConnectorV1 配置，Ascend 场景追加 NPU 专属字段。"""
+        connector = {"kv_connector": "LMCacheConnectorV1", "kv_role": "kv_both"}
+        if is_ascend:
+            connector["engine_id"] = os.getenv("LMCACHE_ENGINE_ID", "lmca1")
+            connector["kv_buffer_device"] = "npu"
+        return connector
 
     if lmcache_offload and pd_role:
+        lmcache_connector = _build_lmcache_connector()
         config = {
             "kv_connector": 'MultiConnector',
             "kv_role": "kv_both",
             "kv_connector_extra_config": {
                 "connectors": [
                     _get_pd_config(ctx, pd_role),
-                    {"kv_connector": "LMCacheConnectorV1", "kv_role": "kv_both"}
+                    lmcache_connector
                 ]
             }
         }
         logger.info("[KVCache Offload] KVCache Offload feature is enabled and PD role is %s", pd_role)
     elif lmcache_offload:
-        config = {
-            "kv_connector": 'LMCacheConnectorV1',
-            "kv_role": "kv_both"
-        }
+        config = _build_lmcache_connector()
         logger.info("[KVCache Offload] KVCache Offload feature is enabled")
     elif pd_role:
         config = _get_pd_config(ctx, pd_role)
@@ -738,6 +793,14 @@ def _set_kv_cache_config(params, ctx):
         return  #
 
     params['kv_transfer_config'] = json.dumps(config)
+
+    # NV GPU + KVCache Offload 场景需要禁用 prefix caching，
+    # 参考 NV 冷启动/QAT 启动命令均使用 --no-enable-prefix-caching。
+    # Ascend 不受此限制。
+    if lmcache_offload and not is_ascend:
+        params['no_enable_prefix_caching'] = True
+        params.pop('enable_prefix_caching', None)
+        logger.info("[KVCache Offload] Disabled prefix caching for NV GPU")
 
 
 def _set_router_config(params):
@@ -815,38 +878,8 @@ def _apply_us8_long_ctx_strategy(params: Dict[str, Any],
         )
 
 
-def _merge_mindie_params(params, ctx, engine_cmd_parameter, model_info=None):
-    """将通用参数合并为 MindIE config.json 所要求的字段格式。
-
-    - 通过 mindie 参数映射表翻译 CLI 参数名；
-    - 自动检测模型目录中是否含 mtp.safetensors（MTP 特性）；
-    - 自动识别 MOE 模型（如 DeepSeek-R1-671B）；
-    - 计算 maxSeqLen / maxPrefillTokens；
-    - 分布式场景下设置 worldSize / npuDeviceIds，并禁用 multiNodesInferEnabled；
-    - US8: DeepSeek 满血模型 2×8 分布式长上下文时注入 dp/sp/cp/tp 策略。
-    """
-    #
-    engine_param_map_config_path = os.path.join(DEFAULT_CONFIG_DIR,
-                                            DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
-    mindie_param_map_config = _load_mapping(engine_param_map_config_path, 'default_to_mindie_parameter_mapping')
-    for key, value in mindie_param_map_config.items():
-        if not value or engine_cmd_parameter.get(key) is None:
-            continue
-        else:
-            params[value] = engine_cmd_parameter.get(key)
-
-    _detect_mtp_moe_features(engine_cmd_parameter, params)
-
-    if engine_cmd_parameter["input_length"] and engine_cmd_parameter["output_length"]:
-        params.update({
-            'maxSeqLen': int(engine_cmd_parameter["input_length"]) + int(engine_cmd_parameter["output_length"]),
-            'maxPrefillTokens': max(8192, int(engine_cmd_parameter["input_length"]))
-        })
-
-    # ── US8: DeepSeek 满血模型 2×8 分布式长上下文 dp/sp/cp/tp 策略 ─────────
-    _apply_us8_long_ctx_strategy(params, ctx, engine_cmd_parameter, model_info)
-
-    # ── distributed / single-node worldSize + npuDeviceIds ──────────────────
+def _set_mindie_distributed_params(params, ctx):
+    """MindIE 分布式 / 单机场景下设置 worldSize 和 npuDeviceIds。"""
     if ctx.get('distributed'):
         node_ips = ctx.get("node_ips") or get_node_ips()
         node_ips_list = _extract_node_ips(node_ips)
@@ -873,9 +906,13 @@ def _merge_mindie_params(params, ctx, engine_cmd_parameter, model_info=None):
         _adjust_tensor_parallelism(params, ctx["device_count"], TensorParallelConfig(tp_key='worldSize'))
         params['npuDeviceIds'] = [[i for i in range(ctx["device_count"])]]
 
-    # ── Function Call 开关 ──────────────────────────────────────────────────
-    # 用户通过 enable_auto_tool_choice 统一触发，映射到 MindIE 的
-    # mindie_tool_call_parser / mindie_model_type（由 mindie_adapter 注入）
+
+def _set_mindie_function_call(params, engine_cmd_parameter):
+    """MindIE Function Call 开关处理。
+
+    用户通过 enable_auto_tool_choice 统一触发，映射到 MindIE 的
+    mindie_tool_call_parser / mindie_model_type（由 mindie_adapter 注入）。
+    """
     user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
     if user_wants_fc:
         if "mindie_tool_call_parser" in params:
@@ -891,6 +928,57 @@ def _merge_mindie_params(params, ctx, engine_cmd_parameter, model_info=None):
         params.pop("mindie_model_type", None)
         params.pop("mindie_chat_template", None)
 
+
+def _set_mindie_common_params(params, engine_cmd_parameter):
+    """MindIE 参数映射：翻译 CLI 参数名为 MindIE 原生键名。
+
+    优先级保护（对齐 vLLM 的 _set_common_params）：
+    仅当用户通过 CLI 或环境变量显式指定了某个参数时才覆盖模型默认配置。
+    对于用户未显式指定的参数，若模型配置中已有值则保留，否则用 argparse 默认值补充。
+    """
+    engine_param_map_config_path = os.path.join(DEFAULT_CONFIG_DIR,
+                                            DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
+    mindie_param_map_config = _load_mapping(engine_param_map_config_path, 'default_to_mindie_parameter_mapping')
+    explicit_keys = _detect_explicit_cli_keys()
+    for key, value in mindie_param_map_config.items():
+        if not value:
+            continue
+        cli_val = engine_cmd_parameter.get(key)
+        if cli_val is None:
+            continue
+        # 用户显式设置的参数（CLI 或环境变量）：始终覆盖
+        if key in explicit_keys:
+            params[value] = cli_val
+        # 模型默认配置中不存在的参数：用 argparse 默认值补充
+        elif value not in params:
+            params[value] = cli_val
+        # 否则：保留模型默认配置中的值，不被 argparse 默认值覆盖
+
+
+def _merge_mindie_params(params, ctx, engine_cmd_parameter, model_info=None):
+    """将通用参数合并为 MindIE config.json 所要求的字段格式。
+
+    调用链路:
+        1. _set_mindie_common_params    → 根据参数映射表翻译 CLI 参数
+        2. _detect_mtp_moe_features     → MTP/MOE 特性检测
+        3. maxSeqLen / maxPrefillTokens → 计算序列长度
+        4. _apply_us8_long_ctx_strategy → DeepSeek 分布式长上下文策略
+        5. _set_mindie_distributed_params → worldSize / npuDeviceIds
+        6. _set_mindie_function_call    → Function Call 开关
+    """
+    _set_mindie_common_params(params, engine_cmd_parameter)
+    _detect_mtp_moe_features(engine_cmd_parameter, params)
+
+    if engine_cmd_parameter["input_length"] and engine_cmd_parameter["output_length"]:
+        params.update({
+            'maxSeqLen': int(engine_cmd_parameter["input_length"]) + int(engine_cmd_parameter["output_length"]),
+            'maxPrefillTokens': max(8192, int(engine_cmd_parameter["input_length"]))
+        })
+
+    _apply_us8_long_ctx_strategy(params, ctx, engine_cmd_parameter, model_info)
+    _set_mindie_distributed_params(params, ctx)
+    _set_mindie_function_call(params, engine_cmd_parameter)
+
     return params
 
 
@@ -902,19 +990,30 @@ def _merge_sglang_params(params, ctx, engine_cmd_parameter):
     - 合并 input_length + output_length 为 context_length；
     - 设置张量并行度（tp_size）；
     - sglang 4.10.0+ 中 --enable-ep-moe 已废弃，改为 ep_size = tp_size。
+
+    优先级保护（对齐 vLLM 的 _set_common_params）：
+    仅当用户通过 CLI 或环境变量显式指定了某个参数时才覆盖模型默认配置。
+    对于用户未显式指定的参数，若模型配置中已有值则保留，否则用 argparse 默认值补充。
     """
     #
     engine_param_map_config_path = os.path.join(DEFAULT_CONFIG_DIR,
                                             DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
     sglang_param_map_config = _load_mapping(engine_param_map_config_path, 'default_to_sglang_parameter_mapping')
+    explicit_keys = _detect_explicit_cli_keys()
     for key, value in sglang_param_map_config.items():
         if not value or engine_cmd_parameter.get(key) is None:
             continue
-        else:
-            params[value] = engine_cmd_parameter.get(key)
-            # sglangvllm
-            if key == "enable_prefix_caching":
-                params[value] = not engine_cmd_parameter.get(key)
+        cli_val = engine_cmd_parameter.get(key)
+        # sglang 的 enable_prefix_caching 语义与 vllm 相反，需要取反
+        if key == "enable_prefix_caching":
+            cli_val = not cli_val
+        # 用户显式设置的参数（CLI 或环境变量）：始终覆盖
+        if key in explicit_keys:
+            params[value] = cli_val
+        # 模型默认配置中不存在的参数：用 argparse 默认值补充
+        elif value not in params:
+            params[value] = cli_val
+        # 否则：保留模型默认配置中的值，不被 argparse 默认值覆盖
 
     #
     if engine_cmd_parameter["input_length"] and engine_cmd_parameter["output_length"]:
@@ -935,8 +1034,12 @@ def _merge_sglang_params(params, ctx, engine_cmd_parameter):
     )
 
     # sglang 4.10.0--enable-ep-moe is deprecated
-    if "enable_ep_moe" in params:
-        params.pop("enable_ep_moe")
+    # 注意：必须检查值为 truthy 而非仅检查 key 存在，
+    # 因为 sglang_default.json 中 enable_ep_moe 默认为 null，
+    # 且参数映射会将 enable_expert_parallel=False 写入为 enable_ep_moe=False，
+    # 若仅检查 key 存在会导致 EP 被错误启用。
+    ep_moe_val = params.pop("enable_ep_moe", None)
+    if ep_moe_val:
         params['ep_size'] = params['tp_size']
 
     # 处理 tool parser 参数（function call 支持）

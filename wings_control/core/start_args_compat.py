@@ -198,8 +198,6 @@ class LaunchArgs:
         enable_prefix_caching:  是否启用前缀缓存（加速共享前缀场景）
         enable_speculative_decode: 是否启用推测解码
         speculative_decode_model_path: 推测解码小模型路径
-        speculative_token_range: 自适应草稿长度候选列表(逗号分隔)，如 "1,3,5"
-        draft_confidence_threshold: 草稿置信度阈值(0.0~1.0)，draft_model / eagle3 方法有效
         enable_rag_acc: 是否启用 RAG 加速
         enable_auto_tool_choice: 是否自动选择工具调用
         enable_sparse:  是否启用 Sparse KV Cache (v2 新增)
@@ -240,8 +238,6 @@ class LaunchArgs:
     enable_prefix_caching: bool
     enable_speculative_decode: bool
     speculative_decode_model_path: str
-    speculative_token_range: str
-    draft_confidence_threshold: float
     enable_rag_acc: bool
     enable_auto_tool_choice: bool
     enable_sparse: bool
@@ -301,8 +297,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_bool(p, "--enable-speculative-decode", "ENABLE_SPECULATIVE_DECODE", False)
     p.add_argument("--speculative-decode-model-path", default=_env("SPECULATIVE_DECODE_MODEL_PATH", ""))
-    p.add_argument("--speculative-token-range", default=_env("SPECULATIVE_TOKEN_RANGE", ""))
-    p.add_argument("--draft-confidence-threshold", type=float, default=_env_float("DRAFT_CONFIDENCE_THRESHOLD", 0.0))
     _add_bool(p, "--enable-rag-acc", "ENABLE_RAG_ACC", False)
     _add_bool(p, "--enable-auto-tool-choice", "ENABLE_AUTO_TOOL_CHOICE", False)
 
@@ -362,8 +356,6 @@ def _map_args_to_launch_kwargs(args, engine: str) -> dict:
         "enable_prefix_caching": bool(args.enable_prefix_caching),
         "enable_speculative_decode": bool(args.enable_speculative_decode),
         "speculative_decode_model_path": args.speculative_decode_model_path,
-        "speculative_token_range": args.speculative_token_range,
-        "draft_confidence_threshold": float(args.draft_confidence_threshold),
         "enable_rag_acc": bool(args.enable_rag_acc),
         "enable_auto_tool_choice": bool(args.enable_auto_tool_choice),
         "enable_sparse": bool(args.enable_sparse),

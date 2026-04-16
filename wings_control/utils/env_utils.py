@@ -206,6 +206,20 @@ def get_qat_env():
     return qat
 
 
+def get_cold_start_env():
+    """检查 KVCache 冷启动预热（Cold Start Pre-caching）功能是否启用。
+
+    从 LMCACHE_COLD_START 环境变量读取，判断是否在引擎启动时
+    对高频 Prompt 的 KVCache 进行预热（pre-caching），减少首次推理延迟。
+    需配合 LMCache Offload 功能一起使用。
+
+    Returns:
+        bool: 启用返回 True，未设置或为 'false' 时返回 False
+    """
+    cold_start = os.getenv('LMCACHE_COLD_START', 'false')
+    return cold_start.lower() == 'true'
+
+
 def get_pd_role_env():
     """获取 PD 分离式推理（Disaggregated Inference）中的角色。
 

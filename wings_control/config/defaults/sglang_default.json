@@ -10,6 +10,5 @@
   "max_running_requests": 256,
   "chunked_prefill_size": 4096,
   "random_seed": 42,
-  "enable_ep_moe": null,
   "disable_chunked_prefix_cache": false
 }

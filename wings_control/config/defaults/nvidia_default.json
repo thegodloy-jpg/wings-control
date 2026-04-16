@@ -1,4 +1,4 @@
-{
+﻿{
   "model_deploy_config": {
     "llm": {
       "default": {
@@ -38,13 +38,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "deepseekv3"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "deepseekv3"
           }
         },
@@ -69,7 +67,6 @@
               "context_length": 4096,
               "mem_fraction_static": 0.9,
               "grammar_backend": "xgrammar",
-              "enable_ep_moe": true,
               "tool_call_parser": "deepseekv3"
             },
             "H20-141G": {
@@ -89,14 +86,12 @@
               "show_time_cost": true,
               "enable_torch_compile": true,
               "torch_compile_max_bs": 32,
-              "enable_ep_moe": true,
               "tool_call_parser": "deepseekv3"
             }
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "deepseekv3"
           }
         },
@@ -121,7 +116,6 @@
               "context_length": 4096,
               "mem_fraction_static": 0.9,
               "grammar_backend": "xgrammar",
-              "enable_ep_moe": true,
               "tool_call_parser": "deepseekv3"
             },
             "H20-141G": {
@@ -141,14 +135,12 @@
               "show_time_cost": true,
               "enable_torch_compile": true,
               "torch_compile_max_bs": 32,
-              "enable_ep_moe": true,
               "tool_call_parser": "deepseekv3"
             }
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "deepseekv3"
           }
         }
@@ -172,13 +164,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           }
         },
@@ -198,13 +188,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           }
         },
@@ -224,13 +212,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           }
         }
@@ -252,13 +238,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           }
         }
@@ -278,13 +262,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           }
         }
@@ -306,13 +288,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "deepseekv3"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "deepseekv3"
           }
         }
@@ -335,13 +315,11 @@
           },
           "sglang": {
             "trust_remote_code": true,
-            "context_length": 4096,
-            "enable_ep_moe": true
+            "context_length": 4096
           },
           "sglang_distributed": {
             "trust_remote_code": true,
-            "context_length": 4096,
-            "enable_ep_moe": true
+            "context_length": 4096
           }
         }
       },
@@ -352,6 +330,7 @@
             "max_model_len": 4096,
             "task": "generate",
             "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
+            "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
           "vllm_distributed": {
@@ -359,6 +338,7 @@
             "max_model_len": 4096,
             "task": "generate",
             "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
+            "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
           "sglang": {
@@ -396,13 +376,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           }
         }
@@ -425,13 +403,11 @@
           },
           "sglang": {
             "trust_remote_code": true,
-            "context_length": 4096,
-            "enable_ep_moe": true
+            "context_length": 4096
           },
           "sglang_distributed": {
             "trust_remote_code": true,
-            "context_length": 4096,
-            "enable_ep_moe": true
+            "context_length": 4096
           }
         }
       },
@@ -502,13 +478,11 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "enable_ep_moe": true,
             "tool_call_parser": "qwen25"
           }
         }

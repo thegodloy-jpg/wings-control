@@ -209,12 +209,6 @@ while [[ $# -gt 0 ]]; do
         --speculative-decode-model-path)
             [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --speculative-decode-model-path requires a value"; usage; }
             SPECULATIVE_DECODE_MODEL_PATH="$2"; shift 2 ;;
-        --speculative-token-range)
-            [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --speculative-token-range requires a value"; usage; }
-            SPECULATIVE_TOKEN_RANGE="$2"; shift 2 ;;
-        --draft-confidence-threshold)
-            [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --draft-confidence-threshold requires a value"; usage; }
-            DRAFT_CONFIDENCE_THRESHOLD="$2"; shift 2 ;;
         --enable-sparse)
             ENABLE_SPARSE=true; shift ;;
         --lc-sparse-threshold)
@@ -301,8 +295,6 @@ fi
 [ -n "${DEVICE_COUNT:-}" ]            && export DEVICE_COUNT
 [ -n "${MODEL_TYPE:-}" ]              && export MODEL_TYPE
 [ -n "${SPECULATIVE_DECODE_MODEL_PATH:-}" ] && export SPECULATIVE_DECODE_MODEL_PATH
-[ -n "${SPECULATIVE_TOKEN_RANGE:-}" ]       && export SPECULATIVE_TOKEN_RANGE
-[ -n "${DRAFT_CONFIDENCE_THRESHOLD:-}" ]    && export DRAFT_CONFIDENCE_THRESHOLD
 [ -n "${LC_SPARSE_THRESHOLD:-}" ]            && export LC_SPARSE_THRESHOLD
 [ -n "${TOTAL_BUDGET:-}" ]                   && export TOTAL_BUDGET
 [ -n "${LOCAL_KVSTORE_CAPACITY:-}" ]         && export LOCAL_KVSTORE_CAPACITY
@@ -360,8 +352,6 @@ APP_ARGS=("--model-name" "$MODEL_NAME" "--model-path" "$MODEL_PATH")
 [ -n "${MODEL_TYPE:-}" ]              && APP_ARGS+=("--model-type" "$MODEL_TYPE")
 [ "${ENABLE_SPECULATIVE_DECODE:-}" = true ] && APP_ARGS+=("--enable-speculative-decode")
 [ -n "${SPECULATIVE_DECODE_MODEL_PATH:-}" ] && APP_ARGS+=("--speculative-decode-model-path" "$SPECULATIVE_DECODE_MODEL_PATH")
-[ -n "${SPECULATIVE_TOKEN_RANGE:-}" ]       && APP_ARGS+=("--speculative-token-range" "$SPECULATIVE_TOKEN_RANGE")
-[ -n "${DRAFT_CONFIDENCE_THRESHOLD:-}" ]    && APP_ARGS+=("--draft-confidence-threshold" "$DRAFT_CONFIDENCE_THRESHOLD")
 [ "${ENABLE_SPARSE:-}" = true ]       && APP_ARGS+=("--enable-sparse")
 [ -n "${LC_SPARSE_THRESHOLD:-}" ]      && APP_ARGS+=("--lc-sparse-threshold" "$LC_SPARSE_THRESHOLD")
 [ -n "${TOTAL_BUDGET:-}" ]             && APP_ARGS+=("--total-budget" "$TOTAL_BUDGET")
@@ -412,8 +402,6 @@ echo "Starting wings application (sidecar launcher) with args: ${APP_ARGS[*]}"
 # 记录新功能启用状态
 [ "${ENABLE_SPECULATIVE_DECODE:-}" = true ] && echo "Speculative decode feature enabled"
 [ -n "${SPECULATIVE_DECODE_MODEL_PATH:-}" ] && echo "Speculative decode model path: $SPECULATIVE_DECODE_MODEL_PATH"
-[ -n "${SPECULATIVE_TOKEN_RANGE:-}" ]       && echo "Speculative token range: $SPECULATIVE_TOKEN_RANGE"
-[ -n "${DRAFT_CONFIDENCE_THRESHOLD:-}" ]    && echo "Draft confidence threshold: $DRAFT_CONFIDENCE_THRESHOLD"
 [ "${ENABLE_RAG_ACC:-}" = true ] && echo "RAG acceleration feature enabled"
 
 echo "Port plan: backend=${BACKEND_PORT} proxy=${PROXY_PORT} health=${HEALTH_PORT:-19000}"

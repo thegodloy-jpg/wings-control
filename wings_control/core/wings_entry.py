@@ -39,9 +39,11 @@ logger = logging.getLogger(__name__)
 # features 列表由以下高级特性环境变量决定（名称与 supported_features.json 对齐）：
 #   ENABLE_SPECULATIVE_DECODE → adaptive_draft_model
 #   ENABLE_SPARSE             → sparse_kv
-#   LMCACHE_OFFLOAD           → lmcache_offload
 #   ENABLE_SOFT_FP8           → soft_fp8
 #   ENABLE_SOFT_FP4           → soft_fp4
+#
+# 注意：LMCACHE_OFFLOAD（KV 卸载）通过 --lmcache-target 独立安装，
+# 不走 --features 路径，而是使用专用的 install.py --lmcache-target 参数。
 #
 # 可通过 WINGS_ENGINE_PATCH_OPTIONS 环境变量直接覆盖（JSON 字符串），
 # 此时直接使用用户提供的值，不再按特性开关自动生成。
@@ -60,9 +62,15 @@ _ENGINE_PATCH_KEY_MAP = {
 # 改为通过 --install-runtime-deps 独立安装，不再走 --features 路径。
 _FEATURE_SWITCH_MAP = {
     "ENABLE_SPARSE": "sparse_kv",
-    "LMCACHE_OFFLOAD": "lmcache_offload",
     "ENABLE_SOFT_FP8": "soft_fp8",
     "ENABLE_SOFT_FP4": "soft_fp4",
+}
+
+# 引擎到 LMCache 安装目标的映射
+# 当 LMCACHE_OFFLOAD=true 时，通过 install.py --lmcache-target <target> 安装 LMCache 补丁
+_ENGINE_LMCACHE_TARGET_MAP = {
+    "vllm": "nvidia-x86",
+    "vllm_ascend": "ascend-arm",
 }
 
 
@@ -246,6 +254,50 @@ def _build_speculative_runtime_deps_snippet() -> str:
     )
 
 
+def _build_lmcache_install_snippet(engine: str) -> str:
+    """为 LMCache KV 卸载生成 --lmcache-target 的容错 shell 片段。
+
+    当 LMCACHE_OFFLOAD=true 时，通过 install.py --lmcache-target 安装
+    LMCache 补丁依赖，目标平台由引擎类型决定：
+      - vllm        → nvidia-x86
+      - vllm_ascend  → ascend-arm
+
+    Returns:
+        str: shell 脚本片段；LMCache 未启用时返回空字符串。
+    """
+    if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() != "true":
+        return ""
+
+    target = _ENGINE_LMCACHE_TARGET_MAP.get(engine)
+    if not target:
+        logger.warning(
+            "[LMCache] Engine '%s' has no known lmcache-target mapping; "
+            "skipping LMCache patch install.", engine,
+        )
+        return ""
+
+    accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
+    return (
+        "# --- wings-accel: install LMCache patches (fault-tolerant) ---\n"
+        f"if [ -f \"{accel_dir}/install.py\" ]; then\n"
+        f"    echo '[wings-accel] Installing LMCache patches (target: {target})...'\n"
+        "    set +e\n"
+        f"    python3 {accel_dir}/install.py --lmcache-target {target}\n"
+        "    LMCACHE_RC=$?\n"
+        "    set -e\n"
+        "    if [ $LMCACHE_RC -ne 0 ]; then\n"
+        '        echo "[wings-accel] WARNING: LMCache patch install failed'
+        ' (exit=$LMCACHE_RC), skipping. Service will continue without LMCache patches."\n'
+        "    else\n"
+        "        echo '[wings-accel] LMCache patches installed successfully.'\n"
+        "    fi\n"
+        "else\n"
+        f"    echo '[wings-accel] WARNING: {accel_dir}/install.py not found, "
+        "skipping LMCache patch install.'\n"
+        "fi\n"
+    )
+
+
 def _build_per_feature_fallback_code(patch_key: str, engine_version: str, features: list[str]) -> str:
     """Build per-feature fallback shell code block for fault-tolerant accel install."""
     accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
@@ -305,11 +357,12 @@ def _build_accel_preamble(engine: str) -> str:
 
     安装策略（容错）：
       1. 投机推理（ENABLE_SPECULATIVE_DECODE）使用 --install-runtime-deps 独立安装
-      2. 其他高级特性（sparse_kv/lmcache_offload/soft_fp8/soft_fp4）继续走 --features 路径
-      3. 先尝试批量安装所有特性
-      4. 若批量安装失败（install.py exit 非零），回退到逐特性安装
-      5. 单个特性安装失败时记录警告并跳过，继续安装其余特性
-      6. 无论安装结果如何，始终继续拉起引擎服务
+      2. LMCache KV 卸载（LMCACHE_OFFLOAD）使用 --lmcache-target 独立安装
+      3. 其他高级特性（sparse_kv/soft_fp8/soft_fp4）继续走 --features 路径
+      4. 先尝试批量安装所有特性
+      5. 若批量安装失败（install.py exit 非零），回退到逐特性安装
+      6. 单个特性安装失败时记录警告并跳过，继续安装其余特性
+      7. 无论安装结果如何，始终继续拉起引擎服务
     """
     if not settings.ENABLE_ACCEL:
         logger.debug("Accel disabled: skipping WINGS_ENGINE_PATCH_OPTIONS injection")
@@ -322,6 +375,12 @@ def _build_accel_preamble(engine: str) -> str:
     if spec_snippet:
         logger.info("Accel: injecting speculative decoding runtime deps (--install-runtime-deps)")
         preamble_parts.append(spec_snippet)
+
+    # ── LMCache KV 卸载：独立使用 --lmcache-target ──
+    lmcache_snippet = _build_lmcache_install_snippet(engine)
+    if lmcache_snippet:
+        logger.info("Accel: injecting LMCache patch install (--lmcache-target)")
+        preamble_parts.append(lmcache_snippet)
 
     # ── 路径 A：用户直接通过环境变量覆盖（仅影响非投机推理特性） ──
     user_override = _validate_accel_user_override()
@@ -812,10 +871,6 @@ def _log_advanced_feature_config(
         logger.info("[AdvFeature] │ [speculative_decode]")
         logger.info("[AdvFeature] │   model_path = %s",
                     spec_model_path or "(none, using auto strategy)")
-        logger.info("[AdvFeature] │   token_range = %s",
-                    merged.get("speculative_token_range", "") or "(not set)")
-        logger.info("[AdvFeature] │   draft_confidence = %s",
-                    merged.get("draft_confidence_threshold", 0.0))
     # KV 稀疏
     if merged.get("enable_sparse"):
         logger.info("[AdvFeature] │ [sparse_kv]")
@@ -860,8 +915,8 @@ def _build_advanced_feature_fallback_cmd(merged: dict) -> str:
             ec_copy.pop("kv_transfer_config", None)
             merged_no_features["engine_config"] = ec_copy
             logger.info(
-                "[AdvFeature] Removed kv_transfer_config from engine_config "
-                "for fallback (LMCache Offload was enabled)"
+                "[AdvFeature] Removed kv_transfer_config "
+                "from engine_config for fallback (LMCache Offload was enabled)"
             )
     fallback_body = start_engine_service(merged_no_features)
     fallback_cmd = _strip_exec_and_backgroundify(fallback_body)
