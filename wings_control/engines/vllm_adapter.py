@@ -1100,9 +1100,15 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         return _format_speculative_result(speculative_config_temp)
 
     if any(model_info.model_architecture in group for group in mtp_support_models):
-        logger.info("[AdvFeature-SpecDecode] Architecture %s matches MTP model group → MTP strategy",
-                    model_info.model_architecture)
-        _handle_mtp_case(model_info, mtp_support_models, mtp_types, speculative_config_temp)
+        if get_lmcache_env():
+            logger.info("[AdvFeature-SpecDecode] Architecture %s matches MTP model group, "
+                        "but KV offload (LMCache) is enabled → downgrade to suffix strategy",
+                        model_info.model_architecture)
+            _handle_suffix_case(speculative_config_temp)
+        else:
+            logger.info("[AdvFeature-SpecDecode] Architecture %s matches MTP model group → MTP strategy",
+                        model_info.model_architecture)
+            _handle_mtp_case(model_info, mtp_support_models, mtp_types, speculative_config_temp)
         return _format_speculative_result(speculative_config_temp)
 
     logger.info(
