@@ -1,6 +1,6 @@
 # PROXY_WORKERS 性能与资源消耗对比报告（多场景）
 
-**生成时间**: 2026-04-16 09:56:32
+**生成时间**: 2026-04-17 03:48:31
 **测试机器**: 7.6.52.148 (64 核 Intel Xeon Gold 6444Y, 219GB RAM)
 **Mock 后端**: PREFILL_MS=100, TOKEN_DELAY_MS=30
 **预期基线**: Engine TTFT ≈ 100ms, Engine TPS ≈ 33.3 tok/s
@@ -128,111 +128,161 @@ TTFT = 从发送请求到收到第一个 token 的时间。Mock 引擎 prefill =
 | workers-128 | Proxy | 10 | 111.8ms | 107.4ms | 149.3ms | 149.3ms | 149.3ms | 102.6ms | 149.3ms | 13.9ms |
 | workers-128 | Direct | 10 | 103.8ms | 103.0ms | 108.5ms | 108.5ms | 108.5ms | 101.8ms | 108.5ms | 2.2ms |
 
-### 2.2 并发 TTFT 详细数据
+### 2.2 并发 TTFT 详细数据（Proxy vs Direct）
 
 #### 场景: 输入128/输出128
 
 ##### 并发=1
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 40 | 106.8ms | 106.6ms | 109.8ms | 110.4ms | 110.5ms | 102.6ms | 110.5ms | 2.1ms |
-| workers-4 | 40 | 105.6ms | 105.0ms | 109.0ms | 111.9ms | 113.3ms | 102.9ms | 113.3ms | 2.4ms |
-| workers-16 | 40 | 105.5ms | 104.9ms | 108.2ms | 109.1ms | 118.6ms | 103.1ms | 118.6ms | 2.7ms |
-| workers-64 | 40 | 105.5ms | 105.3ms | 108.6ms | 109.3ms | 109.4ms | 102.1ms | 109.4ms | 2.0ms |
-| workers-128 | 40 | 105.7ms | 104.7ms | 108.9ms | 109.7ms | 113.8ms | 102.4ms | 113.8ms | 2.5ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 40 | 106.8ms | 106.6ms | 109.8ms | 110.4ms | 110.5ms | 102.6ms | 110.5ms | 2.1ms |
+| workers-1 | Direct | 40 | 104.9ms | 105.5ms | 106.5ms | 106.7ms | 109.7ms | 100.9ms | 109.7ms | 1.6ms |
+| workers-4 | Proxy | 40 | 105.6ms | 105.0ms | 109.0ms | 111.9ms | 113.3ms | 102.9ms | 113.3ms | 2.4ms |
+| workers-4 | Direct | 40 | 104.9ms | 105.5ms | 106.5ms | 106.7ms | 109.7ms | 100.9ms | 109.7ms | 1.6ms |
+| workers-16 | Proxy | 40 | 105.5ms | 104.9ms | 108.2ms | 109.1ms | 118.6ms | 103.1ms | 118.6ms | 2.7ms |
+| workers-16 | Direct | 40 | 104.9ms | 105.5ms | 106.5ms | 106.7ms | 109.7ms | 100.9ms | 109.7ms | 1.6ms |
+| workers-64 | Proxy | 40 | 105.5ms | 105.3ms | 108.6ms | 109.3ms | 109.4ms | 102.1ms | 109.4ms | 2.0ms |
+| workers-64 | Direct | 40 | 104.9ms | 105.5ms | 106.5ms | 106.7ms | 109.7ms | 100.9ms | 109.7ms | 1.6ms |
+| workers-128 | Proxy | 40 | 105.7ms | 104.7ms | 108.9ms | 109.7ms | 113.8ms | 102.4ms | 113.8ms | 2.5ms |
+| workers-128 | Direct | 40 | 104.9ms | 105.5ms | 106.5ms | 106.7ms | 109.7ms | 100.9ms | 109.7ms | 1.6ms |
 
 ##### 并发=5
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 40 | 111.9ms | 110.2ms | 131.6ms | 136.4ms | 138.7ms | 103.2ms | 138.7ms | 9.1ms |
-| workers-4 | 40 | 107.8ms | 106.6ms | 116.3ms | 117.8ms | 118.3ms | 102.2ms | 118.3ms | 4.4ms |
-| workers-16 | 40 | 109.4ms | 107.5ms | 124.3ms | 130.0ms | 131.8ms | 102.2ms | 131.8ms | 7.2ms |
-| workers-64 | 40 | 107.1ms | 105.3ms | 116.2ms | 117.6ms | 119.1ms | 101.8ms | 119.1ms | 4.4ms |
-| workers-128 | 40 | 108.3ms | 106.0ms | 117.3ms | 121.1ms | 121.2ms | 102.9ms | 121.2ms | 5.0ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 40 | 111.9ms | 110.2ms | 131.6ms | 136.4ms | 138.7ms | 103.2ms | 138.7ms | 9.1ms |
+| workers-1 | Direct | 40 | 106.4ms | 104.5ms | 114.2ms | 114.5ms | 114.8ms | 101.6ms | 114.8ms | 4.3ms |
+| workers-4 | Proxy | 40 | 107.8ms | 106.6ms | 116.3ms | 117.8ms | 118.3ms | 102.2ms | 118.3ms | 4.4ms |
+| workers-4 | Direct | 40 | 106.4ms | 104.5ms | 114.2ms | 114.5ms | 114.8ms | 101.6ms | 114.8ms | 4.3ms |
+| workers-16 | Proxy | 40 | 109.4ms | 107.5ms | 124.3ms | 130.0ms | 131.8ms | 102.2ms | 131.8ms | 7.2ms |
+| workers-16 | Direct | 40 | 106.4ms | 104.5ms | 114.2ms | 114.5ms | 114.8ms | 101.6ms | 114.8ms | 4.3ms |
+| workers-64 | Proxy | 40 | 107.1ms | 105.3ms | 116.2ms | 117.6ms | 119.1ms | 101.8ms | 119.1ms | 4.4ms |
+| workers-64 | Direct | 40 | 106.4ms | 104.5ms | 114.2ms | 114.5ms | 114.8ms | 101.6ms | 114.8ms | 4.3ms |
+| workers-128 | Proxy | 40 | 108.3ms | 106.0ms | 117.3ms | 121.1ms | 121.2ms | 102.9ms | 121.2ms | 5.0ms |
+| workers-128 | Direct | 40 | 106.4ms | 104.5ms | 114.2ms | 114.5ms | 114.8ms | 101.6ms | 114.8ms | 4.3ms |
 
 ##### 并发=10
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 40 | 118.1ms | 115.5ms | 137.7ms | 146.8ms | 147.1ms | 105.6ms | 147.1ms | 10.3ms |
-| workers-4 | 40 | 108.9ms | 108.9ms | 116.1ms | 118.4ms | 118.5ms | 103.3ms | 118.5ms | 3.6ms |
-| workers-16 | 40 | 117.5ms | 114.1ms | 136.5ms | 143.3ms | 144.7ms | 103.1ms | 144.7ms | 12.0ms |
-| workers-64 | 40 | 114.7ms | 110.0ms | 132.0ms | 132.3ms | 135.6ms | 106.3ms | 135.6ms | 9.2ms |
-| workers-128 | 40 | 114.4ms | 110.0ms | 133.3ms | 136.4ms | 139.0ms | 103.9ms | 139.0ms | 10.9ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 40 | 118.1ms | 115.5ms | 137.7ms | 146.8ms | 147.1ms | 105.6ms | 147.1ms | 10.3ms |
+| workers-1 | Direct | 40 | 109.8ms | 108.4ms | 120.3ms | 121.7ms | 129.8ms | 101.3ms | 129.8ms | 7.1ms |
+| workers-4 | Proxy | 40 | 108.9ms | 108.9ms | 116.1ms | 118.4ms | 118.5ms | 103.3ms | 118.5ms | 3.6ms |
+| workers-4 | Direct | 40 | 109.8ms | 108.4ms | 120.3ms | 121.7ms | 129.8ms | 101.3ms | 129.8ms | 7.1ms |
+| workers-16 | Proxy | 40 | 117.5ms | 114.1ms | 136.5ms | 143.3ms | 144.7ms | 103.1ms | 144.7ms | 12.0ms |
+| workers-16 | Direct | 40 | 109.8ms | 108.4ms | 120.3ms | 121.7ms | 129.8ms | 101.3ms | 129.8ms | 7.1ms |
+| workers-64 | Proxy | 40 | 114.7ms | 110.0ms | 132.0ms | 132.3ms | 135.6ms | 106.3ms | 135.6ms | 9.2ms |
+| workers-64 | Direct | 40 | 109.8ms | 108.4ms | 120.3ms | 121.7ms | 129.8ms | 101.3ms | 129.8ms | 7.1ms |
+| workers-128 | Proxy | 40 | 114.4ms | 110.0ms | 133.3ms | 136.4ms | 139.0ms | 103.9ms | 139.0ms | 10.9ms |
+| workers-128 | Direct | 40 | 109.8ms | 108.4ms | 120.3ms | 121.7ms | 129.8ms | 101.3ms | 129.8ms | 7.1ms |
 
 ##### 并发=20
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 60 | 139.2ms | 135.4ms | 191.3ms | 214.9ms | 216.3ms | 103.2ms | 216.3ms | 31.8ms |
-| workers-4 | 60 | 117.9ms | 118.3ms | 130.5ms | 134.9ms | 137.6ms | 102.6ms | 137.6ms | 9.3ms |
-| workers-16 | 60 | 127.2ms | 120.0ms | 152.3ms | 155.1ms | 157.5ms | 109.9ms | 157.5ms | 14.1ms |
-| workers-64 | 60 | 125.5ms | 124.7ms | 138.9ms | 144.9ms | 147.4ms | 104.8ms | 147.4ms | 10.1ms |
-| workers-128 | 60 | 124.0ms | 126.5ms | 132.0ms | 135.7ms | 138.2ms | 103.9ms | 138.2ms | 8.4ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 60 | 139.2ms | 135.4ms | 191.3ms | 214.9ms | 216.3ms | 103.2ms | 216.3ms | 31.8ms |
+| workers-1 | Direct | 60 | 137.0ms | 139.7ms | 152.9ms | 154.6ms | 155.1ms | 119.5ms | 155.1ms | 12.9ms |
+| workers-4 | Proxy | 60 | 117.9ms | 118.3ms | 130.5ms | 134.9ms | 137.6ms | 102.6ms | 137.6ms | 9.3ms |
+| workers-4 | Direct | 60 | 137.0ms | 139.7ms | 152.9ms | 154.6ms | 155.1ms | 119.5ms | 155.1ms | 12.9ms |
+| workers-16 | Proxy | 60 | 127.2ms | 120.0ms | 152.3ms | 155.1ms | 157.5ms | 109.9ms | 157.5ms | 14.1ms |
+| workers-16 | Direct | 60 | 137.0ms | 139.7ms | 152.9ms | 154.6ms | 155.1ms | 119.5ms | 155.1ms | 12.9ms |
+| workers-64 | Proxy | 60 | 125.5ms | 124.7ms | 138.9ms | 144.9ms | 147.4ms | 104.8ms | 147.4ms | 10.1ms |
+| workers-64 | Direct | 60 | 137.0ms | 139.7ms | 152.9ms | 154.6ms | 155.1ms | 119.5ms | 155.1ms | 12.9ms |
+| workers-128 | Proxy | 60 | 124.0ms | 126.5ms | 132.0ms | 135.7ms | 138.2ms | 103.9ms | 138.2ms | 8.4ms |
+| workers-128 | Direct | 60 | 137.0ms | 139.7ms | 152.9ms | 154.6ms | 155.1ms | 119.5ms | 155.1ms | 12.9ms |
 
 ##### 并发=50
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 150 | 361.8ms | 298.7ms | 729.7ms | 733.5ms | 737.5ms | 105.7ms | 738.5ms | 240.9ms |
-| workers-4 | 150 | 174.3ms | 136.5ms | 269.0ms | 284.8ms | 343.4ms | 103.7ms | 348.6ms | 72.2ms |
-| workers-16 | 150 | 188.9ms | 151.0ms | 391.3ms | 394.1ms | 400.8ms | 103.1ms | 401.7ms | 96.9ms |
-| workers-64 | 150 | 145.9ms | 120.5ms | 225.4ms | 229.9ms | 233.2ms | 103.4ms | 233.5ms | 45.9ms |
-| workers-128 | 150 | 134.8ms | 119.5ms | 190.1ms | 191.4ms | 194.0ms | 102.2ms | 194.4ms | 31.4ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 150 | 361.8ms | 298.7ms | 729.7ms | 733.5ms | 737.5ms | 105.7ms | 738.5ms | 240.9ms |
+| workers-1 | Direct | 150 | 152.6ms | 153.7ms | 178.2ms | 201.2ms | 210.4ms | 115.7ms | 213.6ms | 23.6ms |
+| workers-4 | Proxy | 150 | 174.3ms | 136.5ms | 269.0ms | 284.8ms | 343.4ms | 103.7ms | 348.6ms | 72.2ms |
+| workers-4 | Direct | 150 | 152.6ms | 153.7ms | 178.2ms | 201.2ms | 210.4ms | 115.7ms | 213.6ms | 23.6ms |
+| workers-16 | Proxy | 150 | 188.9ms | 151.0ms | 391.3ms | 394.1ms | 400.8ms | 103.1ms | 401.7ms | 96.9ms |
+| workers-16 | Direct | 150 | 152.6ms | 153.7ms | 178.2ms | 201.2ms | 210.4ms | 115.7ms | 213.6ms | 23.6ms |
+| workers-64 | Proxy | 150 | 145.9ms | 120.5ms | 225.4ms | 229.9ms | 233.2ms | 103.4ms | 233.5ms | 45.9ms |
+| workers-64 | Direct | 150 | 152.6ms | 153.7ms | 178.2ms | 201.2ms | 210.4ms | 115.7ms | 213.6ms | 23.6ms |
+| workers-128 | Proxy | 150 | 134.8ms | 119.5ms | 190.1ms | 191.4ms | 194.0ms | 102.2ms | 194.4ms | 31.4ms |
+| workers-128 | Direct | 150 | 152.6ms | 153.7ms | 178.2ms | 201.2ms | 210.4ms | 115.7ms | 213.6ms | 23.6ms |
 
 #### 场景: 输入512/输出512
 
 ##### 并发=1
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 20 | 106.0ms | 106.0ms | 107.9ms | 109.0ms | 109.0ms | 103.2ms | 109.0ms | 1.3ms |
-| workers-4 | 20 | 106.1ms | 105.1ms | 109.4ms | 114.0ms | 114.0ms | 103.5ms | 114.0ms | 2.6ms |
-| workers-16 | 20 | 109.1ms | 108.3ms | 117.0ms | 122.1ms | 122.1ms | 103.6ms | 122.1ms | 4.8ms |
-| workers-64 | 20 | 108.9ms | 109.2ms | 115.0ms | 117.1ms | 117.1ms | 103.0ms | 117.1ms | 3.7ms |
-| workers-128 | 20 | 110.8ms | 110.7ms | 121.7ms | 123.3ms | 123.3ms | 104.1ms | 123.3ms | 5.5ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 20 | 106.0ms | 106.0ms | 107.9ms | 109.0ms | 109.0ms | 103.2ms | 109.0ms | 1.3ms |
+| workers-1 | Direct | 20 | 105.6ms | 105.6ms | 109.5ms | 117.6ms | 117.6ms | 101.9ms | 117.6ms | 3.4ms |
+| workers-4 | Proxy | 20 | 106.1ms | 105.1ms | 109.4ms | 114.0ms | 114.0ms | 103.5ms | 114.0ms | 2.6ms |
+| workers-4 | Direct | 20 | 105.6ms | 105.6ms | 109.5ms | 117.6ms | 117.6ms | 101.9ms | 117.6ms | 3.4ms |
+| workers-16 | Proxy | 20 | 109.1ms | 108.3ms | 117.0ms | 122.1ms | 122.1ms | 103.6ms | 122.1ms | 4.8ms |
+| workers-16 | Direct | 20 | 105.6ms | 105.6ms | 109.5ms | 117.6ms | 117.6ms | 101.9ms | 117.6ms | 3.4ms |
+| workers-64 | Proxy | 20 | 108.9ms | 109.2ms | 115.0ms | 117.1ms | 117.1ms | 103.0ms | 117.1ms | 3.7ms |
+| workers-64 | Direct | 20 | 105.6ms | 105.6ms | 109.5ms | 117.6ms | 117.6ms | 101.9ms | 117.6ms | 3.4ms |
+| workers-128 | Proxy | 20 | 110.8ms | 110.7ms | 121.7ms | 123.3ms | 123.3ms | 104.1ms | 123.3ms | 5.5ms |
+| workers-128 | Direct | 20 | 105.6ms | 105.6ms | 109.5ms | 117.6ms | 117.6ms | 101.9ms | 117.6ms | 3.4ms |
 
 ##### 并发=5
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 20 | 117.2ms | 115.9ms | 128.6ms | 129.2ms | 129.2ms | 104.1ms | 129.2ms | 6.4ms |
-| workers-4 | 20 | 108.0ms | 106.2ms | 113.9ms | 114.4ms | 114.4ms | 102.7ms | 114.4ms | 4.4ms |
-| workers-16 | 20 | 113.4ms | 113.4ms | 119.2ms | 119.6ms | 119.6ms | 106.3ms | 119.6ms | 4.2ms |
-| workers-64 | 20 | 110.4ms | 109.2ms | 115.4ms | 115.7ms | 115.7ms | 105.5ms | 115.7ms | 3.7ms |
-| workers-128 | 20 | 109.2ms | 107.5ms | 117.8ms | 117.9ms | 117.9ms | 102.3ms | 117.9ms | 5.2ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 20 | 117.2ms | 115.9ms | 128.6ms | 129.2ms | 129.2ms | 104.1ms | 129.2ms | 6.4ms |
+| workers-1 | Direct | 20 | 107.2ms | 106.6ms | 112.9ms | 114.7ms | 114.7ms | 101.1ms | 114.7ms | 4.0ms |
+| workers-4 | Proxy | 20 | 108.0ms | 106.2ms | 113.9ms | 114.4ms | 114.4ms | 102.7ms | 114.4ms | 4.4ms |
+| workers-4 | Direct | 20 | 107.2ms | 106.6ms | 112.9ms | 114.7ms | 114.7ms | 101.1ms | 114.7ms | 4.0ms |
+| workers-16 | Proxy | 20 | 113.4ms | 113.4ms | 119.2ms | 119.6ms | 119.6ms | 106.3ms | 119.6ms | 4.2ms |
+| workers-16 | Direct | 20 | 107.2ms | 106.6ms | 112.9ms | 114.7ms | 114.7ms | 101.1ms | 114.7ms | 4.0ms |
+| workers-64 | Proxy | 20 | 110.4ms | 109.2ms | 115.4ms | 115.7ms | 115.7ms | 105.5ms | 115.7ms | 3.7ms |
+| workers-64 | Direct | 20 | 107.2ms | 106.6ms | 112.9ms | 114.7ms | 114.7ms | 101.1ms | 114.7ms | 4.0ms |
+| workers-128 | Proxy | 20 | 109.2ms | 107.5ms | 117.8ms | 117.9ms | 117.9ms | 102.3ms | 117.9ms | 5.2ms |
+| workers-128 | Direct | 20 | 107.2ms | 106.6ms | 112.9ms | 114.7ms | 114.7ms | 101.1ms | 114.7ms | 4.0ms |
 
 ##### 并发=10
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 30 | 130.0ms | 130.1ms | 142.9ms | 145.4ms | 149.4ms | 114.0ms | 149.4ms | 8.8ms |
-| workers-4 | 30 | 109.1ms | 108.6ms | 115.0ms | 116.8ms | 117.6ms | 101.7ms | 117.6ms | 4.4ms |
-| workers-16 | 30 | 123.6ms | 118.2ms | 153.7ms | 154.8ms | 155.1ms | 103.2ms | 155.1ms | 18.8ms |
-| workers-64 | 30 | 128.1ms | 129.9ms | 139.7ms | 143.4ms | 143.7ms | 107.0ms | 143.7ms | 8.2ms |
-| workers-128 | 30 | 116.4ms | 113.9ms | 134.1ms | 135.0ms | 135.3ms | 103.6ms | 135.3ms | 10.4ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 30 | 130.0ms | 130.1ms | 142.9ms | 145.4ms | 149.4ms | 114.0ms | 149.4ms | 8.8ms |
+| workers-1 | Direct | 30 | 111.4ms | 112.5ms | 119.1ms | 123.1ms | 123.7ms | 100.9ms | 123.7ms | 6.2ms |
+| workers-4 | Proxy | 30 | 109.1ms | 108.6ms | 115.0ms | 116.8ms | 117.6ms | 101.7ms | 117.6ms | 4.4ms |
+| workers-4 | Direct | 30 | 111.4ms | 112.5ms | 119.1ms | 123.1ms | 123.7ms | 100.9ms | 123.7ms | 6.2ms |
+| workers-16 | Proxy | 30 | 123.6ms | 118.2ms | 153.7ms | 154.8ms | 155.1ms | 103.2ms | 155.1ms | 18.8ms |
+| workers-16 | Direct | 30 | 111.4ms | 112.5ms | 119.1ms | 123.1ms | 123.7ms | 100.9ms | 123.7ms | 6.2ms |
+| workers-64 | Proxy | 30 | 128.1ms | 129.9ms | 139.7ms | 143.4ms | 143.7ms | 107.0ms | 143.7ms | 8.2ms |
+| workers-64 | Direct | 30 | 111.4ms | 112.5ms | 119.1ms | 123.1ms | 123.7ms | 100.9ms | 123.7ms | 6.2ms |
+| workers-128 | Proxy | 30 | 116.4ms | 113.9ms | 134.1ms | 135.0ms | 135.3ms | 103.6ms | 135.3ms | 10.4ms |
+| workers-128 | Direct | 30 | 111.4ms | 112.5ms | 119.1ms | 123.1ms | 123.7ms | 100.9ms | 123.7ms | 6.2ms |
 
 ##### 并发=20
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 60 | 122.8ms | 122.1ms | 143.7ms | 144.4ms | 145.7ms | 102.8ms | 145.7ms | 13.6ms |
-| workers-4 | 60 | 113.9ms | 116.0ms | 123.2ms | 123.8ms | 125.3ms | 101.7ms | 125.3ms | 7.5ms |
-| workers-16 | 60 | 117.8ms | 114.2ms | 135.9ms | 137.1ms | 138.1ms | 103.0ms | 138.1ms | 11.0ms |
-| workers-64 | 60 | 123.7ms | 122.4ms | 145.8ms | 148.6ms | 151.1ms | 102.3ms | 151.1ms | 15.5ms |
-| workers-128 | 60 | 133.1ms | 128.1ms | 163.7ms | 173.6ms | 175.0ms | 103.7ms | 175.0ms | 22.5ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 60 | 122.8ms | 122.1ms | 143.7ms | 144.4ms | 145.7ms | 102.8ms | 145.7ms | 13.6ms |
+| workers-1 | Direct | 60 | 113.6ms | 117.4ms | 121.4ms | 122.7ms | 123.7ms | 101.3ms | 123.7ms | 7.4ms |
+| workers-4 | Proxy | 60 | 113.9ms | 116.0ms | 123.2ms | 123.8ms | 125.3ms | 101.7ms | 125.3ms | 7.5ms |
+| workers-4 | Direct | 60 | 113.6ms | 117.4ms | 121.4ms | 122.7ms | 123.7ms | 101.3ms | 123.7ms | 7.4ms |
+| workers-16 | Proxy | 60 | 117.8ms | 114.2ms | 135.9ms | 137.1ms | 138.1ms | 103.0ms | 138.1ms | 11.0ms |
+| workers-16 | Direct | 60 | 113.6ms | 117.4ms | 121.4ms | 122.7ms | 123.7ms | 101.3ms | 123.7ms | 7.4ms |
+| workers-64 | Proxy | 60 | 123.7ms | 122.4ms | 145.8ms | 148.6ms | 151.1ms | 102.3ms | 151.1ms | 15.5ms |
+| workers-64 | Direct | 60 | 113.6ms | 117.4ms | 121.4ms | 122.7ms | 123.7ms | 101.3ms | 123.7ms | 7.4ms |
+| workers-128 | Proxy | 60 | 133.1ms | 128.1ms | 163.7ms | 173.6ms | 175.0ms | 103.7ms | 175.0ms | 22.5ms |
+| workers-128 | Direct | 60 | 113.6ms | 117.4ms | 121.4ms | 122.7ms | 123.7ms | 101.3ms | 123.7ms | 7.4ms |
 
 ##### 并发=50
 
-| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
-|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
-| workers-1 | 150 | 254.4ms | 190.3ms | 504.7ms | 508.6ms | 511.9ms | 101.0ms | 512.1ms | 147.7ms |
-| workers-4 | 150 | 183.8ms | 131.3ms | 405.4ms | 406.5ms | 407.9ms | 102.4ms | 409.0ms | 116.2ms |
-| workers-16 | 150 | 190.4ms | 140.7ms | 329.8ms | 334.7ms | 398.7ms | 102.9ms | 399.0ms | 96.0ms |
-| workers-64 | 150 | 154.4ms | 155.1ms | 189.8ms | 198.7ms | 208.3ms | 105.1ms | 210.7ms | 26.8ms |
-| workers-128 | 150 | 165.2ms | 153.3ms | 247.7ms | 257.2ms | 273.1ms | 102.8ms | 278.9ms | 47.2ms |
+| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |
+|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|
+| workers-1 | Proxy | 150 | 254.4ms | 190.3ms | 504.7ms | 508.6ms | 511.9ms | 101.0ms | 512.1ms | 147.7ms |
+| workers-1 | Direct | 150 | 174.3ms | 167.9ms | 224.1ms | 226.1ms | 227.7ms | 104.8ms | 228.7ms | 39.8ms |
+| workers-4 | Proxy | 150 | 183.8ms | 131.3ms | 405.4ms | 406.5ms | 407.9ms | 102.4ms | 409.0ms | 116.2ms |
+| workers-4 | Direct | 150 | 174.3ms | 167.9ms | 224.1ms | 226.1ms | 227.7ms | 104.8ms | 228.7ms | 39.8ms |
+| workers-16 | Proxy | 150 | 190.4ms | 140.7ms | 329.8ms | 334.7ms | 398.7ms | 102.9ms | 399.0ms | 96.0ms |
+| workers-16 | Direct | 150 | 174.3ms | 167.9ms | 224.1ms | 226.1ms | 227.7ms | 104.8ms | 228.7ms | 39.8ms |
+| workers-64 | Proxy | 150 | 154.4ms | 155.1ms | 189.8ms | 198.7ms | 208.3ms | 105.1ms | 210.7ms | 26.8ms |
+| workers-64 | Direct | 150 | 174.3ms | 167.9ms | 224.1ms | 226.1ms | 227.7ms | 104.8ms | 228.7ms | 39.8ms |
+| workers-128 | Proxy | 150 | 165.2ms | 153.3ms | 247.7ms | 257.2ms | 273.1ms | 102.8ms | 278.9ms | 47.2ms |
+| workers-128 | Direct | 150 | 174.3ms | 167.9ms | 224.1ms | 226.1ms | 227.7ms | 104.8ms | 228.7ms | 39.8ms |
 
 ### 2.3 TTFT 汇总（Mean / P95）
 
@@ -292,111 +342,161 @@ TPS = 单请求解码阶段 token 吞吐率。Mock 引擎基线 ≈ 33.3 tok/s�
 | workers-128 | Proxy | 10 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15507.0ms | 15537.4ms |
 | workers-128 | Direct | 10 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15496.0ms | 15507.1ms |
 
-### 3.2 并发 TPS 详细数据
+### 3.2 并发 TPS 详细数据（Proxy vs Direct）
 
 #### 场景: 输入128/输出128
 
 ##### 并发=1
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3932.6ms | 3943.9ms | 157.4s |
-| workers-4 | 40 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 128.0 | 3930.8ms | 3939.8ms | 157.3s |
-| workers-16 | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3931.0ms | 3943.3ms | 157.3s |
-| workers-64 | 40 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 128.0 | 3932.9ms | 3942.1ms | 157.4s |
-| workers-128 | 40 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 128.0 | 3933.1ms | 3941.9ms | 157.4s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3932.6ms | 3943.9ms | 157.4s |
+| workers-1 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3931.3ms | 3936.5ms | 157.4s |
+| workers-4 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 128.0 | 3930.8ms | 3939.8ms | 157.3s |
+| workers-4 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3931.3ms | 3936.5ms | 157.4s |
+| workers-16 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3931.0ms | 3943.3ms | 157.3s |
+| workers-16 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3931.3ms | 3936.5ms | 157.4s |
+| workers-64 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 128.0 | 3932.9ms | 3942.1ms | 157.4s |
+| workers-64 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3931.3ms | 3936.5ms | 157.4s |
+| workers-128 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 128.0 | 3933.1ms | 3941.9ms | 157.4s |
+| workers-128 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3931.3ms | 3936.5ms | 157.4s |
 
 ##### 并发=5
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3937.8ms | 3967.1ms | 31.6s |
-| workers-4 | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.3ms | 3945.7ms | 31.5s |
-| workers-16 | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3934.8ms | 3952.9ms | 31.5s |
-| workers-64 | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3934.3ms | 3952.0ms | 31.5s |
-| workers-128 | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3936.6ms | 3950.3ms | 31.5s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3937.8ms | 3967.1ms | 31.6s |
+| workers-1 | Direct | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.1ms | 3941.7ms | 31.6s |
+| workers-4 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.3ms | 3945.7ms | 31.5s |
+| workers-4 | Direct | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.1ms | 3941.7ms | 31.6s |
+| workers-16 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3934.8ms | 3952.9ms | 31.5s |
+| workers-16 | Direct | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.1ms | 3941.7ms | 31.6s |
+| workers-64 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3934.3ms | 3952.0ms | 31.5s |
+| workers-64 | Direct | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.1ms | 3941.7ms | 31.6s |
+| workers-128 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3936.6ms | 3950.3ms | 31.5s |
+| workers-128 | Direct | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.1ms | 3941.7ms | 31.6s |
 
 ##### 并发=10
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 40 | 33.2 tok/s | 32.9 tok/s | 33.3 tok/s | 128.0 | 3947.7ms | 3982.0ms | 15.9s |
-| workers-4 | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.9ms | 3942.2ms | 15.9s |
-| workers-16 | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3945.0ms | 3967.8ms | 15.9s |
-| workers-64 | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3944.8ms | 3961.2ms | 15.8s |
-| workers-128 | 40 | 33.2 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3945.5ms | 3964.4ms | 15.8s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 40 | 33.2 tok/s | 32.9 tok/s | 33.3 tok/s | 128.0 | 3947.7ms | 3982.0ms | 15.9s |
+| workers-1 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3937.5ms | 3951.3ms | 15.9s |
+| workers-4 | Proxy | 40 | 33.2 tok/s | 33.1 tok/s | 33.3 tok/s | 128.0 | 3933.9ms | 3942.2ms | 15.9s |
+| workers-4 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3937.5ms | 3951.3ms | 15.9s |
+| workers-16 | Proxy | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3945.0ms | 3967.8ms | 15.9s |
+| workers-16 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3937.5ms | 3951.3ms | 15.9s |
+| workers-64 | Proxy | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3944.8ms | 3961.2ms | 15.8s |
+| workers-64 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3937.5ms | 3951.3ms | 15.9s |
+| workers-128 | Proxy | 40 | 33.2 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3945.5ms | 3964.4ms | 15.8s |
+| workers-128 | Direct | 40 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3937.5ms | 3951.3ms | 15.9s |
 
 ##### 并发=20
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 60 | 33.1 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3972.4ms | 4050.9ms | 12.0s |
-| workers-4 | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 128.0 | 3948.6ms | 3964.5ms | 11.9s |
-| workers-16 | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3963.1ms | 3988.0ms | 12.0s |
-| workers-64 | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3960.1ms | 3985.6ms | 12.0s |
-| workers-128 | 60 | 33.1 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3956.9ms | 3975.9ms | 11.9s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 60 | 33.1 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3972.4ms | 4050.9ms | 12.0s |
+| workers-1 | Direct | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3976.5ms | 3994.9ms | 12.0s |
+| workers-4 | Proxy | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 128.0 | 3948.6ms | 3964.5ms | 11.9s |
+| workers-4 | Direct | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3976.5ms | 3994.9ms | 12.0s |
+| workers-16 | Proxy | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3963.1ms | 3988.0ms | 12.0s |
+| workers-16 | Direct | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3976.5ms | 3994.9ms | 12.0s |
+| workers-64 | Proxy | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3960.1ms | 3985.6ms | 12.0s |
+| workers-64 | Direct | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3976.5ms | 3994.9ms | 12.0s |
+| workers-128 | Proxy | 60 | 33.1 tok/s | 33.0 tok/s | 33.2 tok/s | 128.0 | 3956.9ms | 3975.9ms | 11.9s |
+| workers-128 | Direct | 60 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3976.5ms | 3994.9ms | 12.0s |
 
 ##### 并发=50
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 150 | 33.1 tok/s | 32.9 tok/s | 33.3 tok/s | 128.0 | 4202.8ms | 4580.6ms | 12.8s |
-| workers-4 | 150 | 33.2 tok/s | 31.1 tok/s | 35.3 tok/s | 128.0 | 3996.1ms | 4117.5ms | 12.3s |
-| workers-16 | 150 | 33.0 tok/s | 32.6 tok/s | 34.0 tok/s | 128.0 | 4031.7ms | 4244.2ms | 12.3s |
-| workers-64 | 150 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3976.7ms | 4069.2ms | 12.1s |
-| workers-128 | 150 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3971.2ms | 4043.5ms | 12.0s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 150 | 33.1 tok/s | 32.9 tok/s | 33.3 tok/s | 128.0 | 4202.8ms | 4580.6ms | 12.8s |
+| workers-1 | Direct | 150 | 32.9 tok/s | 32.5 tok/s | 33.2 tok/s | 128.0 | 4008.5ms | 4036.6ms | 12.1s |
+| workers-4 | Proxy | 150 | 33.2 tok/s | 31.1 tok/s | 35.3 tok/s | 128.0 | 3996.1ms | 4117.5ms | 12.3s |
+| workers-4 | Direct | 150 | 32.9 tok/s | 32.5 tok/s | 33.2 tok/s | 128.0 | 4008.5ms | 4036.6ms | 12.1s |
+| workers-16 | Proxy | 150 | 33.0 tok/s | 32.6 tok/s | 34.0 tok/s | 128.0 | 4031.7ms | 4244.2ms | 12.3s |
+| workers-16 | Direct | 150 | 32.9 tok/s | 32.5 tok/s | 33.2 tok/s | 128.0 | 4008.5ms | 4036.6ms | 12.1s |
+| workers-64 | Proxy | 150 | 33.2 tok/s | 33.0 tok/s | 33.3 tok/s | 128.0 | 3976.7ms | 4069.2ms | 12.1s |
+| workers-64 | Direct | 150 | 32.9 tok/s | 32.5 tok/s | 33.2 tok/s | 128.0 | 4008.5ms | 4036.6ms | 12.1s |
+| workers-128 | Proxy | 150 | 33.1 tok/s | 32.9 tok/s | 33.2 tok/s | 128.0 | 3971.2ms | 4043.5ms | 12.0s |
+| workers-128 | Direct | 150 | 32.9 tok/s | 32.5 tok/s | 33.2 tok/s | 128.0 | 4008.5ms | 4036.6ms | 12.1s |
 
 #### 场景: 输入512/输出512
 
 ##### 并发=1
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15495.5ms | 15515.2ms | 309.9s |
-| workers-4 | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15496.8ms | 15511.5ms | 310.0s |
-| workers-16 | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15498.1ms | 15522.2ms | 310.1s |
-| workers-64 | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15504.3ms | 15525.0ms | 310.2s |
-| workers-128 | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15502.9ms | 15528.5ms | 310.1s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15495.5ms | 15515.2ms | 309.9s |
+| workers-1 | Direct | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15495.4ms | 15506.0ms | 310.0s |
+| workers-4 | Proxy | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15496.8ms | 15511.5ms | 310.0s |
+| workers-4 | Direct | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15495.4ms | 15506.0ms | 310.0s |
+| workers-16 | Proxy | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15498.1ms | 15522.2ms | 310.1s |
+| workers-16 | Direct | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15495.4ms | 15506.0ms | 310.0s |
+| workers-64 | Proxy | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15504.3ms | 15525.0ms | 310.2s |
+| workers-64 | Direct | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15495.4ms | 15506.0ms | 310.0s |
+| workers-128 | Proxy | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15502.9ms | 15528.5ms | 310.1s |
+| workers-128 | Direct | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15495.4ms | 15506.0ms | 310.0s |
 
 ##### 并发=5
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15512.5ms | 15526.2ms | 62.2s |
-| workers-4 | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15499.9ms | 15518.9ms | 62.1s |
-| workers-16 | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15512.0ms | 15526.1ms | 62.2s |
-| workers-64 | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15503.1ms | 15519.3ms | 62.1s |
-| workers-128 | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15500.1ms | 15532.1ms | 62.1s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15512.5ms | 15526.2ms | 62.2s |
+| workers-1 | Direct | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15504.5ms | 15529.3ms | 62.1s |
+| workers-4 | Proxy | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15499.9ms | 15518.9ms | 62.1s |
+| workers-4 | Direct | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15504.5ms | 15529.3ms | 62.1s |
+| workers-16 | Proxy | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15512.0ms | 15526.1ms | 62.2s |
+| workers-16 | Direct | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15504.5ms | 15529.3ms | 62.1s |
+| workers-64 | Proxy | 20 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15503.1ms | 15519.3ms | 62.1s |
+| workers-64 | Direct | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15504.5ms | 15529.3ms | 62.1s |
+| workers-128 | Proxy | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15500.1ms | 15532.1ms | 62.1s |
+| workers-128 | Direct | 20 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15504.5ms | 15529.3ms | 62.1s |
 
 ##### 并发=10
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15535.4ms | 15571.1ms | 46.7s |
-| workers-4 | 30 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15499.6ms | 15524.2ms | 46.6s |
-| workers-16 | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15522.8ms | 15551.2ms | 46.6s |
-| workers-64 | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15529.2ms | 15549.5ms | 46.7s |
-| workers-128 | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15515.4ms | 15544.6ms | 46.6s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15535.4ms | 15571.1ms | 46.7s |
+| workers-1 | Direct | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15510.4ms | 15527.2ms | 46.6s |
+| workers-4 | Proxy | 30 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15499.6ms | 15524.2ms | 46.6s |
+| workers-4 | Direct | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15510.4ms | 15527.2ms | 46.6s |
+| workers-16 | Proxy | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15522.8ms | 15551.2ms | 46.6s |
+| workers-16 | Direct | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15510.4ms | 15527.2ms | 46.6s |
+| workers-64 | Proxy | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15529.2ms | 15549.5ms | 46.7s |
+| workers-64 | Direct | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15510.4ms | 15527.2ms | 46.6s |
+| workers-128 | Proxy | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15515.4ms | 15544.6ms | 46.6s |
+| workers-128 | Direct | 30 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15510.4ms | 15527.2ms | 46.6s |
 
 ##### 并发=20
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15525.2ms | 15560.0ms | 46.7s |
-| workers-4 | 60 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15509.6ms | 15529.4ms | 46.6s |
-| workers-16 | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15520.8ms | 15554.2ms | 46.7s |
-| workers-64 | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15536.0ms | 15558.8ms | 46.7s |
-| workers-128 | 60 | 33.1 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15552.6ms | 15582.6ms | 46.8s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15525.2ms | 15560.0ms | 46.7s |
+| workers-1 | Direct | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15517.6ms | 15536.7ms | 46.6s |
+| workers-4 | Proxy | 60 | 33.2 tok/s | 33.2 tok/s | 33.2 tok/s | 512.0 | 15509.6ms | 15529.4ms | 46.6s |
+| workers-4 | Direct | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15517.6ms | 15536.7ms | 46.6s |
+| workers-16 | Proxy | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15520.8ms | 15554.2ms | 46.7s |
+| workers-16 | Direct | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15517.6ms | 15536.7ms | 46.6s |
+| workers-64 | Proxy | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15536.0ms | 15558.8ms | 46.7s |
+| workers-64 | Direct | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15517.6ms | 15536.7ms | 46.6s |
+| workers-128 | Proxy | 60 | 33.1 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15552.6ms | 15582.6ms | 46.8s |
+| workers-128 | Direct | 60 | 33.2 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15517.6ms | 15536.7ms | 46.6s |
 
 ##### 并发=50
 
-| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
-|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
-| workers-1 | 150 | 33.1 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15683.5ms | 15937.1ms | 47.3s |
-| workers-4 | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15627.4ms | 15859.5ms | 47.1s |
-| workers-16 | 150 | 33.1 tok/s | 33.0 tok/s | 33.6 tok/s | 512.0 | 15612.2ms | 15778.9ms | 47.2s |
-| workers-64 | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15595.8ms | 15639.2ms | 46.9s |
-| workers-128 | 150 | 33.1 tok/s | 33.0 tok/s | 33.2 tok/s | 512.0 | 15604.9ms | 15682.3ms | 46.9s |
+| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |
+|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|
+| workers-1 | Proxy | 150 | 33.1 tok/s | 33.1 tok/s | 33.2 tok/s | 512.0 | 15683.5ms | 15937.1ms | 47.3s |
+| workers-1 | Direct | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15626.9ms | 15706.5ms | 47.0s |
+| workers-4 | Proxy | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15627.4ms | 15859.5ms | 47.1s |
+| workers-4 | Direct | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15626.9ms | 15706.5ms | 47.0s |
+| workers-16 | Proxy | 150 | 33.1 tok/s | 33.0 tok/s | 33.6 tok/s | 512.0 | 15612.2ms | 15778.9ms | 47.2s |
+| workers-16 | Direct | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15626.9ms | 15706.5ms | 47.0s |
+| workers-64 | Proxy | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15595.8ms | 15639.2ms | 46.9s |
+| workers-64 | Direct | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15626.9ms | 15706.5ms | 47.0s |
+| workers-128 | Proxy | 150 | 33.1 tok/s | 33.0 tok/s | 33.2 tok/s | 512.0 | 15604.9ms | 15682.3ms | 46.9s |
+| workers-128 | Direct | 150 | 33.1 tok/s | 33.0 tok/s | 33.1 tok/s | 512.0 | 15626.9ms | 15706.5ms | 47.0s |
 
 ### 3.3 TPS 跨场景对比
 
@@ -489,6 +589,17 @@ TPS = 单请求解码阶段 token 吞吐率。Mock 引擎基线 ≈ 33.3 tok/s�
 
 2. **512/512 的 workers-128（257.2ms）比 workers-64（198.7ms）差**：128 个进程的 OS 调度和 uvicorn load balancer 选择开销过大。Worker 数远超并发数（128 >> 50）时，进程管理开销反而增加了延迟。
 
+**Proxy vs Direct 对比（并发=50 P95）：**
+
+| 配置 | 128/128 Proxy | 128/128 Direct | Proxy 开销 | 512/512 Proxy | 512/512 Direct | Proxy 开销 |
+|------|-------------|--------------|-----------|-------------|--------------|-----------|
+| workers-1 | 733.5ms | 201.2ms | +532.3ms | 508.6ms | 226.1ms | +282.5ms |
+| workers-4 | 284.8ms | 201.2ms | +83.6ms | 406.5ms | 226.1ms | +180.4ms |
+| workers-64 | 229.9ms | 201.2ms | +28.7ms | 198.7ms | 226.1ms | **-27.4ms** |
+| workers-128 | 191.4ms | 201.2ms | **-9.8ms** | 257.2ms | 226.1ms | +31.1ms |
+
+workers-64/128 时 Proxy P95 甚至低于 Direct，因为多 worker 进程将并发请求分散到独立进程，减少了 Python event loop 内部的 I/O 调度竞争。
+
 > **核心结论**：PROXY_WORKERS 的唯一价值是降低高并发下的 TTFT（排队效应），对串行请求无影响，对 TPS 无影响。
 
 ### 4.4 系统吞吐量（系统 TPS = 并发数 × 单请求 TPS）
@@ -560,159 +671,3 @@ TPS = 单请求解码阶段 token 吞吐率。Mock 引擎基线 ≈ 33.3 tok/s�
 3. **4 workers 是最佳性价比选择**: 285MB 额外内存即可显著改善并发 TTFT
 4. **资源消耗与输入输出 token 数无关**: proxy 本身不消耗大量 CPU/内存
 5. **串行 TPS ≈ 直连 TPS**: proxy 对流式传输几乎零开销
-
----
-
-## 6. K8s 场景资源规划方案
-
-### 6.1 配置方式
-
-wings-control 容器通过环境变量 `PROXY_WORKERS` 控制 worker 进程数：
-
-```yaml
-# K8s Deployment 示例
-env:
-  - name: PROXY_WORKERS
-    value: "4"  # 默认值=4, 最大值=128
-```
-
-代码路径：`wings_control.py` 读取 `os.getenv("PROXY_WORKERS", "4")`，上限 128，然后通过 `uvicorn --workers N` 启动代理进程。
-
-### 6.2 单 Worker 资源基准
-
-根据实测数据（基于 uvicorn + httpx 代理转发）：
-
-| 资源类型 | 空闲 | 高并发 (concurrency=50) | 说明 |
-|---------|------|----------------------|------|
-| **内存 (RSS)** | ~65 MB/worker | ~66 MB/worker | 内存几乎不随并发增长 |
-| **CPU** | ~0.1%/worker | ~0.3%/worker | 代理只做 I/O 转发，CPU 占用极低 |
-| **进程数** | N+2 (含 master+monitor) | 同左 | workers=1 时为 1 个进程, workers=N(N>1) 时为 N+2 |
-
-### 6.3 资源规划计算公式
-
-```
-所需内存 = (PROXY_WORKERS + 2) × 65 MB + 200 MB (其他组件余量)
-所需 CPU  = max(0.5 核, PROXY_WORKERS × 0.01 核)     # 空闲
-            max(1.0 核, PROXY_WORKERS × 0.03 核)     # 高并发
-
-推荐 PROXY_WORKERS = min(
-    (可用内存 MB - 200) / 65 - 2,      # 内存约束
-    128,                                 # 代码上限
-    预期最大并发数                        # 超过并发数无意义
-)
-```
-
-### 6.4 按容器资源推荐方案
-
-#### 方案一：资源受限型（常见 Sidecar 场景）
-
-| 容器资源 | PROXY_WORKERS | 实际占用内存 | 适合并发 | TTFT 改善（conc=50 P95） |
-|---------|--------------|-----------|---------|------------------------|
-| 0.5 核 / 512 MB | 1 | ~65 MB | ≤5 | 基线 |
-| 0.5 核 / 512 MB | 4 | ~295 MB | ≤20 | -61% (733→285ms) |
-| 1 核 / 1 GB | 4 | ~295 MB | ≤20 | -61% |
-| 1 核 / 1 GB | 12 | ~910 MB | ≤50 | ~-50% |
-
-#### 方案二：标准部署型
-
-| 容器资源 | PROXY_WORKERS | 实际占用内存 | 适合并发 | TTFT 改善（conc=50 P95） |
-|---------|--------------|-----------|---------|------------------------|
-| 1 核 / 2 GB | 16 | ~1073 MB | ≤50 | -46% |
-| 2 核 / 4 GB | 16 | ~1073 MB | ≤50 | -46% |
-| 2 核 / 4 GB | 48 | ~3250 MB | ≤100 | ~-65% |
-
-#### 方案三：高性能型
-
-| 容器资源 | PROXY_WORKERS | 实际占用内存 | 适合并发 | TTFT 改善（conc=50 P95） |
-|---------|--------------|-----------|---------|------------------------|
-| 2 核 / 8 GB | 64 | ~4186 MB | ≤200 | -69% |
-| 4 核 / 16 GB | 128 | ~8338 MB | ≤500 | -74% |
-
-### 6.5 K8s Resource 配置模板
-
-#### 推荐方案（workers=4，最佳性价比）
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: wings-control
-spec:
-  template:
-    spec:
-      containers:
-        - name: wings-control
-          image: wings-control:latest
-          env:
-            - name: PROXY_WORKERS
-              value: "4"
-          resources:
-            requests:
-              cpu: "200m"        # 0.2 核 (日常空闲 ~0.01 核)
-              memory: "512Mi"    # 实际 ~295 MB
-            limits:
-              cpu: "1000m"       # 1 核 (高并发峰值 ~0.66 核)
-              memory: "512Mi"    # Hard limit
-          ports:
-            - containerPort: 18000  # Proxy
-            - containerPort: 19000  # Health
-```
-
-#### 高并发方案（workers=64）
-
-```yaml
-          env:
-            - name: PROXY_WORKERS
-              value: "64"
-          resources:
-            requests:
-              cpu: "500m"        # 0.5 核 (空闲 ~0.05 核)
-              memory: "5Gi"      # 实际 ~4.2 GB
-            limits:
-              cpu: "2000m"       # 2 核 (高并发峰值 ~0.6 核)
-              memory: "5Gi"
-```
-
-### 6.6 自动计算建议脚本
-
-如果需要程序化推荐，可在 wings-control 启动前自动计算：
-
-```bash
-#!/bin/bash
-# 根据容器可用资源自动计算 PROXY_WORKERS
-
-# 读取 cgroup 限制 (K8s 容器内)
-MEMORY_LIMIT_MB=$(( $(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo 536870912) / 1024 / 1024 ))
-CPU_LIMIT_MILLI=$(( $(cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo 100000) * 1000 / $(cat /sys/fs/cgroup/cpu/cpu.cfs_period_us 2>/dev/null || echo 100000) ))
-
-# 计算最大可用 workers（留 200MB 给其他组件）
-MAX_BY_MEM=$(( (MEMORY_LIMIT_MB - 200) / 65 - 2 ))
-# 不超过 CPU 核数 × 100（CPU 不是瓶颈，但避免过载）
-MAX_BY_CPU=$(( CPU_LIMIT_MILLI / 10 ))
-# 不超过代码上限 128
-MAX_CAP=128
-
-# 取最小值
-WORKERS=$MAX_BY_MEM
-[ $MAX_BY_CPU -lt $WORKERS ] && WORKERS=$MAX_BY_CPU
-[ $MAX_CAP -lt $WORKERS ] && WORKERS=$MAX_CAP
-[ $WORKERS -lt 1 ] && WORKERS=1
-
-export PROXY_WORKERS=$WORKERS
-echo "Container: ${MEMORY_LIMIT_MB}MB mem, ${CPU_LIMIT_MILLI}m CPU → PROXY_WORKERS=$WORKERS"
-```
-
-### 6.7 决策流程图
-
-```
-[容器可用内存]
-      ↓
-  ≤ 512 MB → PROXY_WORKERS=4    (最佳性价比, 适合 ≤20 并发)
-  ≤ 1 GB   → PROXY_WORKERS=12   (中等并发, 适合 ≤50)
-  ≤ 2 GB   → PROXY_WORKERS=16   (标准部署)
-  ≤ 4 GB   → PROXY_WORKERS=48   (高并发)
-  ≤ 8 GB   → PROXY_WORKERS=64   (高性能)
-  > 8 GB   → PROXY_WORKERS=128  (极限配置)
-```
-
-**核心建议**: 对大多数场景，**PROXY_WORKERS=4**（默认值）即可。该配置仅需 ~300MB 内存，在并发=50 时 TTFT P95 降低 61%。仅当预期持续高并发（>50 请求同时在途）且内存充裕（>4GB）时才需增加。
