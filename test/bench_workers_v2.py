@@ -383,6 +383,7 @@ def run_test(proxy_url: str, direct_url: Optional[str], label: str,
         "idle_resources": {},
         "serial": {},
         "concurrent": {},
+        "concurrent_direct": {},
     }
 
     # ── Idle resource snapshot ──
@@ -475,6 +476,35 @@ def run_test(proxy_url: str, direct_url: Optional[str], label: str,
         print(f"    TPS:  mean={analysis['tps'].get('mean',0):.1f} "
               f"p95={analysis['tps'].get('p95',0):.1f}")
         print(f"    Errors: {analysis['errors']} | Wall: {wall_ms:.0f}ms{res_str}")
+
+    # ── Concurrent streaming tests (direct to backend — baseline) ──
+    if direct_url:
+        print(f"\n{'='*60}")
+        print(f"  [{label}] Concurrent direct (baseline) tests")
+        print(f"{'='*60}")
+
+        for c in concurrencies:
+            total_reqs = max(n_concurrent, c * 3)
+            print(f"\n  [{label}] Direct concurrency={c}, total_requests={total_reqs}")
+
+            t0 = time.perf_counter()
+            conc_results = asyncio.run(
+                bench_concurrent_stream(direct_url, c, total_reqs, max_tokens, input_tokens)
+            )
+            wall_ms = (time.perf_counter() - t0) * 1000
+
+            analysis = analyze_results(conc_results)
+            analysis["wall_ms"] = round(wall_ms, 1)
+            analysis["concurrency"] = c
+            analysis["total_requests"] = total_reqs
+
+            results["concurrent_direct"][str(c)] = analysis
+
+            print(f"    Direct TTFT: mean={analysis['ttft'].get('mean',0):.1f}ms "
+                  f"p95={analysis['ttft'].get('p95',0):.1f}ms")
+            print(f"    Direct TPS:  mean={analysis['tps'].get('mean',0):.1f} "
+                  f"p95={analysis['tps'].get('p95',0):.1f}")
+            print(f"    Errors: {analysis['errors']} | Wall: {wall_ms:.0f}ms")
 
     return results
 

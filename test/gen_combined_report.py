@@ -187,8 +187,8 @@ def generate_combined_report(configs: List[Tuple[str, List[Dict]]], output_path:
                     f"{fmt(ttft.get('max'))} | {fmt(ttft.get('stdev'))} |")
         lines.append("")
 
-    # 2.2 Concurrent TTFT detailed per scenario
-    lines.append("### 2.2 并发 TTFT 详细数据")
+    # 2.2 Concurrent TTFT detailed per scenario (Proxy vs Direct)
+    lines.append("### 2.2 并发 TTFT 详细数据（Proxy vs Direct）")
     lines.append("")
 
     for cfg_label, datasets in configs:
@@ -200,18 +200,30 @@ def generate_combined_report(configs: List[Tuple[str, List[Dict]]], output_path:
         for ck in conc_keys:
             lines.append(f"##### 并发={ck}")
             lines.append("")
-            lines.append("| 配置 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |")
-            lines.append("|------|-------|------|--------|-----|-----|-----|-----|-----|-------|")
+            lines.append("| 配置 | 通道 | 请求数 | Mean | Median | P90 | P95 | P99 | Min | Max | Stdev |")
+            lines.append("|------|------|-------|------|--------|-----|-----|-----|-----|-----|-------|")
             for d in datasets:
+                # Proxy concurrent data
                 cd = d.get("concurrent", {}).get(ck, {})
                 ttft = cd.get("ttft", {})
                 n = cd.get("requests", 0)
                 lines.append(
-                    f"| {d['label']} | {n} | "
+                    f"| {d['label']} | Proxy | {n} | "
                     f"{fmt(ttft.get('mean'))} | {fmt(ttft.get('median'))} | "
                     f"{fmt(ttft.get('p90'))} | {fmt(ttft.get('p95'))} | "
                     f"{fmt(ttft.get('p99'))} | {fmt(ttft.get('min'))} | "
                     f"{fmt(ttft.get('max'))} | {fmt(ttft.get('stdev'))} |")
+                # Direct concurrent data (if available)
+                cd_direct = d.get("concurrent_direct", {}).get(ck, {})
+                if cd_direct:
+                    ttft_d = cd_direct.get("ttft", {})
+                    n_d = cd_direct.get("requests", 0)
+                    lines.append(
+                        f"| {d['label']} | Direct | {n_d} | "
+                        f"{fmt(ttft_d.get('mean'))} | {fmt(ttft_d.get('median'))} | "
+                        f"{fmt(ttft_d.get('p90'))} | {fmt(ttft_d.get('p95'))} | "
+                        f"{fmt(ttft_d.get('p99'))} | {fmt(ttft_d.get('min'))} | "
+                        f"{fmt(ttft_d.get('max'))} | {fmt(ttft_d.get('stdev'))} |")
             lines.append("")
 
     # 2.3 TTFT summary table (Mean / P95) — condensed cross-scenario
@@ -270,8 +282,8 @@ def generate_combined_report(configs: List[Tuple[str, List[Dict]]], output_path:
                     f"{fmt(total.get('p95'))} |")
         lines.append("")
 
-    # 3.2 Concurrent TPS detailed per scenario
-    lines.append("### 3.2 并发 TPS 详细数据")
+    # 3.2 Concurrent TPS detailed per scenario (Proxy vs Direct)
+    lines.append("### 3.2 并发 TPS 详细数据（Proxy vs Direct）")
     lines.append("")
 
     for cfg_label, datasets in configs:
@@ -283,9 +295,10 @@ def generate_combined_report(configs: List[Tuple[str, List[Dict]]], output_path:
         for ck in conc_keys:
             lines.append(f"##### 并发={ck}")
             lines.append("")
-            lines.append("| 配置 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |")
-            lines.append("|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|")
+            lines.append("| 配置 | 通道 | 请求数 | Mean TPS | Min TPS | Max TPS | 输出 Tokens | 总耗时 Mean | 总耗时 P95 | 壁钟时间 |")
+            lines.append("|------|------|-------|---------|---------|---------|-----------|-----------|-----------|---------|")
             for d in datasets:
+                # Proxy concurrent data
                 cd = d.get("concurrent", {}).get(ck, {})
                 tps = cd.get("tps", {})
                 total = cd.get("total_ms", {})
@@ -294,7 +307,7 @@ def generate_combined_report(configs: List[Tuple[str, List[Dict]]], output_path:
                 wall = cd.get("wall_ms", 0)
                 wall_s = f"{wall/1000:.1f}s" if wall else "-"
                 lines.append(
-                    f"| {d['label']} | {n} | "
+                    f"| {d['label']} | Proxy | {n} | "
                     f"{fmt(tps.get('mean'), ' tok/s')} | "
                     f"{fmt(tps.get('min'), ' tok/s')} | "
                     f"{fmt(tps.get('max'), ' tok/s')} | "
@@ -302,6 +315,24 @@ def generate_combined_report(configs: List[Tuple[str, List[Dict]]], output_path:
                     f"{fmt(total.get('mean'))} | "
                     f"{fmt(total.get('p95'))} | "
                     f"{wall_s} |")
+                # Direct concurrent data (if available)
+                cd_direct = d.get("concurrent_direct", {}).get(ck, {})
+                if cd_direct:
+                    tps_d = cd_direct.get("tps", {})
+                    total_d = cd_direct.get("total_ms", {})
+                    tokens_d = cd_direct.get("tokens", {})
+                    n_d = cd_direct.get("requests", 0)
+                    wall_d = cd_direct.get("wall_ms", 0)
+                    wall_s_d = f"{wall_d/1000:.1f}s" if wall_d else "-"
+                    lines.append(
+                        f"| {d['label']} | Direct | {n_d} | "
+                        f"{fmt(tps_d.get('mean'), ' tok/s')} | "
+                        f"{fmt(tps_d.get('min'), ' tok/s')} | "
+                        f"{fmt(tps_d.get('max'), ' tok/s')} | "
+                        f"{tokens_d.get('mean', '-')} | "
+                        f"{fmt(total_d.get('mean'))} | "
+                        f"{fmt(total_d.get('p95'))} | "
+                        f"{wall_s_d} |")
             lines.append("")
 
     # 3.3 TPS summary (cross-config comparison)
