@@ -20,6 +20,7 @@ from pathlib import Path
 
 from config.settings import settings
 from core.config_loader import load_and_merge_configs
+from utils.file_utils import safe_write_file, WriteOptions
 from core.engine_manager import start_engine_service
 from core.hardware_detect import detect_hardware
 from core.port_plan import PortPlan
@@ -37,10 +38,8 @@ logger = logging.getLogger(__name__)
 # WINGS_ACCEL_DIR 由 settings.WINGS_ACCEL_DIR 决定（默认 /accel-volume，可通过环境变量覆盖）
 #
 # features 列表由以下高级特性环境变量决定（名称与 supported_features.json 对齐）：
-#   ENABLE_SPECULATIVE_DECODE → adaptive_draft_model
+#   ENABLE_SPECULATIVE_DECODE → adaptive_draft_model（已改为 --install-runtime-deps 独立安装）
 #   ENABLE_SPARSE             → sparse_kv
-#   ENABLE_SOFT_FP8           → soft_fp8
-#   ENABLE_SOFT_FP4           → soft_fp4
 #
 # 注意：LMCACHE_OFFLOAD（KV 卸载）通过 --lmcache-target 独立安装，
 # 不走 --features 路径，而是使用专用的 install.py --lmcache-target 参数。
@@ -62,8 +61,6 @@ _ENGINE_PATCH_KEY_MAP = {
 # 改为通过 --install-runtime-deps 独立安装，不再走 --features 路径。
 _FEATURE_SWITCH_MAP = {
     "ENABLE_SPARSE": "sparse_kv",
-    "ENABLE_SOFT_FP8": "soft_fp8",
-    "ENABLE_SOFT_FP4": "soft_fp4",
 }
 
 # 引擎到 LMCache 安装目标的映射
@@ -233,6 +230,7 @@ def _build_speculative_runtime_deps_snippet() -> str:
         return ""
 
     accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
+    update_json = _shell_update_feature_json("speculative_decode", False)
     return (
         "# --- wings-accel: install speculative decoding runtime deps (fault-tolerant) ---\n"
         f"if [ -f \"{accel_dir}/install.py\" ]; then\n"
@@ -244,7 +242,8 @@ def _build_speculative_runtime_deps_snippet() -> str:
         "    if [ $SPEC_RC -ne 0 ]; then\n"
         "        echo \"[wings-accel] WARNING: Speculative decoding runtime deps install failed"
         " (exit=$SPEC_RC), skipping. Service will continue without patches.\"\n"
-        "    else\n"
+        + update_json
+        + "    else\n"
         "        echo '[wings-accel] Speculative decoding runtime deps installed successfully.'\n"
         "    fi\n"
         "else\n"
@@ -277,6 +276,7 @@ def _build_lmcache_install_snippet(engine: str) -> str:
         return ""
 
     accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
+    update_json = _shell_update_feature_json("kv_offload", False)
     return (
         "# --- wings-accel: install LMCache patches (fault-tolerant) ---\n"
         f"if [ -f \"{accel_dir}/install.py\" ]; then\n"
@@ -288,7 +288,8 @@ def _build_lmcache_install_snippet(engine: str) -> str:
         "    if [ $LMCACHE_RC -ne 0 ]; then\n"
         '        echo "[wings-accel] WARNING: LMCache patch install failed'
         ' (exit=$LMCACHE_RC), skipping. Service will continue without LMCache patches."\n'
-        "    else\n"
+        + update_json
+        + "    else\n"
         "        echo '[wings-accel] LMCache patches installed successfully.'\n"
         "    fi\n"
         "else\n"
@@ -301,9 +302,11 @@ def _build_lmcache_install_snippet(engine: str) -> str:
 def _build_per_feature_fallback_code(patch_key: str, engine_version: str, features: list[str]) -> str:
     """Build per-feature fallback shell code block for fault-tolerant accel install."""
     accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
+    # features 名称与 advanced_features.json 中的 key 一致（如 sparse_kv）
     blocks = []
     for feat in features:
         single_options = json.dumps({patch_key: {"version": engine_version, "features": [feat]}})
+        update_json = _shell_update_feature_json(feat, False).lstrip()
         blocks.append(
             f"        echo \"[wings-accel] Trying feature: {feat}\"\n"
             f"        set +e\n"
@@ -312,6 +315,7 @@ def _build_per_feature_fallback_code(patch_key: str, engine_version: str, featur
             f"        set -e\n"
             f"        if [ $FEAT_RC -ne 0 ]; then\n"
             f"            echo \"[wings-accel] WARNING: Feature '{feat}' install failed (exit=$FEAT_RC), skipping.\"\n"
+            f"            {update_json}"
             f"        else\n"
             f"            echo \"[wings-accel] Feature '{feat}' installed successfully.\"\n"
             f"        fi\n"
@@ -358,7 +362,7 @@ def _build_accel_preamble(engine: str) -> str:
     安装策略（容错）：
       1. 投机推理（ENABLE_SPECULATIVE_DECODE）使用 --install-runtime-deps 独立安装
       2. LMCache KV 卸载（LMCACHE_OFFLOAD）使用 --lmcache-target 独立安装
-      3. 其他高级特性（sparse_kv/soft_fp8/soft_fp4）继续走 --features 路径
+      3. 其他高级特性（sparse_kv）继续走 --features 路径
       4. 先尝试批量安装所有特性
       5. 若批量安装失败（install.py exit 非零），回退到逐特性安装
       6. 单个特性安装失败时记录警告并跳过，继续安装其余特性
@@ -648,6 +652,56 @@ mkdir -p /shared-volume
         return analyzer_preamble
 
 
+# ── 高级特性状态 JSON ──
+# 在 /shared-volume/advanced_features.json 中记录 4 个高级特性的使能状态，
+# 供 health 接口和外部监控查询。初始值在 Python 层写入（build_launcher_plan），
+# 补丁安装失败时在 shell 层通过 python3 -c 单行脚本更新对应字段为 false。
+
+_ADVANCED_FEATURES_FILE = os.path.join(settings.SHARED_VOLUME_PATH, "advanced_features.json")
+
+
+def _write_advanced_features_json(engine: str, merged: dict) -> None:
+    """写入高级特性初始状态 JSON 到共享卷。
+
+    4 个 bool 字段：
+      - speculative_decode: 投机推理
+      - sparse_kv: KV 稀疏
+      - kv_offload: LMCache KV 卸载
+      - rag_acc: RAG 加速
+    """
+    features = {
+        "speculative_decode": bool(merged.get("enable_speculative_decode")),
+        "sparse_kv": bool(merged.get("enable_sparse")),
+        "kv_offload": os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true",
+        "rag_acc": os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true",
+    }
+    data = {"engine": engine, "features": features}
+    ok = safe_write_file(
+        _ADVANCED_FEATURES_FILE, data, is_json=True,
+        options=WriteOptions(is_json=True, atomic=True),
+    )
+    if ok:
+        logger.info("Wrote advanced_features.json: %s", features)
+    else:
+        logger.error("Failed to write advanced_features.json")
+
+
+def _shell_update_feature_json(feature_key: str, value: bool = False) -> str:
+    """生成 shell 单行脚本，用于在补丁安装失败时更新 advanced_features.json 中的指定字段。"""
+    json_path = _ADVANCED_FEATURES_FILE
+    val_str = "True" if value else "False"
+    return (
+        f"        python3 -c \""
+        f"import json, os; "
+        f"p='{json_path}'; "
+        f"d=json.load(open(p)) if os.path.exists(p) else {{'engine':'','features':{{}}}}; "
+        f"d.setdefault('features',{{}})['{feature_key}']={val_str}; "
+        f"f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); "
+        f"os.replace(p+'.tmp',p)"
+        f"\"\n"
+    )
+
+
 # ── 高级特性回退策略 ──
 # 启用高级特性（投机解码/KV稀疏/KV卸载）时，若引擎崩溃则无条件禁用所有高级特性重试一次。
 # 采用一刀切策略：不区分启动阶段或运行阶段，崩溃即回退。
@@ -681,6 +735,8 @@ def _build_monitor_script(
     fallback_cmd: str = "",
     retry_cmd: str = "",
     active_features: str = "",
+    engine: str = "",
+    rag_configured: bool = False,
 ) -> str:
     """生成引擎进程等待和异常处理的 shell 片段。
 
@@ -690,6 +746,8 @@ def _build_monitor_script(
         retry_cmd:       当默认模式引擎崩溃时的重试启动命令（与原始命令相同）。
                          如果为空字符串，则不生成重试逻辑。优先级低于 fallback_cmd。
         active_features: 当前激活的高级特性名称（逗号分隔），用于日志。
+        engine:          引擎名称，用于 fallback 时写入 advanced_features.json。
+        rag_configured:  RAG 加速是否已配置，fallback 时保留此值。
 
     Returns:
         str: 进程监控脚本片段
@@ -789,6 +847,8 @@ fi
     cleanup_4 = cleanup_analyzer.replace("  ", "    ")  # 4-space indent (回退逻辑减少了一层if嵌套)
     write_progress_4 = write_progress.replace("  ", "    ")
     feat_label = active_features or "advanced_features"
+    rag_val = "true" if rag_configured else "false"
+    json_path = _ADVANCED_FEATURES_FILE
 
     return f"""
 # --- Engine process wait and exception handling (with advanced feature fallback) ---
@@ -809,6 +869,19 @@ else
   echo "[AdvFeature] │ Action: Restarting engine without advanced features"
   echo "[AdvFeature] └── Fallback command about to execute..."
   echo "[Engine] Falling back to basic mode (disabled: {feat_label})..."
+  # 更新 advanced_features.json：引擎级特性全部置 false，RAG 保持不变
+  cat > "{json_path}" <<'FEATURES_EOF'
+{{
+    "engine": "{engine}",
+    "features": {{
+        "speculative_decode": false,
+        "sparse_kv": false,
+        "kv_offload": false,
+        "rag_acc": {rag_val}
+    }}
+}}
+FEATURES_EOF
+  echo "[AdvFeature] Updated advanced_features.json: all engine features disabled"
   echo "[Engine] Waiting 5s for port release before restart..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
@@ -997,6 +1070,7 @@ def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> Launche
     active_feature_names = _collect_active_feature_names(merged)
     active_features_label = ", ".join(active_feature_names)
 
+    _write_advanced_features_json(engine, merged)
     _log_advanced_feature_config(engine, merged, has_advanced_feature)
     fallback_cmd = _build_advanced_feature_fallback_cmd(merged) if has_advanced_feature else ""
     retry_cmd = _build_engine_retry_cmd(merged) if not has_advanced_feature else ""
@@ -1008,9 +1082,11 @@ def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> Launche
     modelslim_patch = build_modelslim_quarot_patch_preamble(engine)
     accel_preamble = _build_accel_preamble(engine)
     env_overrides = _build_env_overrides_preamble()
+    rag_configured = os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true"
     monitor_script = _build_monitor_script(
         fallback_cmd=fallback_cmd, retry_cmd=retry_cmd,
         active_features=active_features_label,
+        engine=engine, rag_configured=rag_configured,
     )
 
     command = (
