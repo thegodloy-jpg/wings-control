@@ -144,6 +144,23 @@ def _set_sparse_config(params):
         os.environ['SPARSE_ENABLE'] = 'false'
 
 
+def _set_rag_acc_config(params):
+    """配置 RAG 加速相关环境变量。
+
+    根据 params 中 enable_rag_acc 的值设置 RAG_ACC_ENABLED 环境变量，
+    供 wings_entry（advanced_features.json）和 proxy 层判断是否启用 RAG 加速。
+
+    兜底逻辑：当直接运行 python -m wings_control（跳过 wings_start.sh）时，
+    wings_start.sh 中的 export RAG_ACC_ENABLED 不会被执行，此处确保 Python 层
+    也能正确设置该环境变量，与 _set_spec_decoding_config / _set_sparse_config 对齐。
+    """
+    if params.get("enable_rag_acc"):
+        os.environ['RAG_ACC_ENABLED'] = 'true'
+        logger.info("RAG acceleration is enabled")
+    else:
+        os.environ.setdefault('RAG_ACC_ENABLED', 'false')
+
+
 def _get_h20_model_hint() -> str:
     """获取 H20 GPU 型号提示（用于 DeepSeek 模型的卡型专属配置）。
 
@@ -1514,9 +1531,10 @@ def _auto_select_engine(hardware_env: Dict[str, Any],
     # 回写最终选定的引擎名称
     cmd_known_params["engine"] = engine
 
-    # 配置推测解码和稀疏 KV 环境变量
+    # 配置推测解码、稀疏 KV 和 RAG 加速环境变量
     _set_spec_decoding_config(cmd_known_params)
     _set_sparse_config(cmd_known_params)
+    _set_rag_acc_config(cmd_known_params)
 
     # 在昇腾设备上将 vllm 自动升级为 vllm_ascend
     if engine == "vllm":
