@@ -413,18 +413,57 @@ def _build_monitor_proxy_proc(
     )
 
 
+def _detect_cgroup_memory_mb() -> int | None:
+    """读取 cgroup 内存限制（兼容 v1/v2），返回 MB；读取失败返回 None。"""
+    paths = [
+        "/sys/fs/cgroup/memory.max",                  # cgroup v2
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes", # cgroup v1
+    ]
+    for p in paths:
+        try:
+            raw = Path(p).read_text().strip()
+            if raw == "max" or not raw.isdigit():
+                continue
+            val = int(raw)
+            if val > 0:
+                return val // (1024 * 1024)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _auto_proxy_workers(max_workers: int = 128) -> int:
+    """根据容器内存限制自动计算最优 Worker 数。
+
+    公式：workers = (可用内存MB - 200) / 65 - 2，结果夹在 [1, max_workers]。
+    若无法读取 cgroup 限制（非容器环境），退回默认值 4。
+    """
+    mem_mb = _detect_cgroup_memory_mb()
+    if mem_mb is None:
+        return 4
+    workers = int((mem_mb - 200) / 65) - 2
+    workers = max(1, min(workers, max_workers))
+    logger.info("Auto-detected cgroup memory limit: %d MB -> PROXY_WORKERS=%d", mem_mb, workers)
+    return workers
+
+
 def _build_processes(port_plan: PortPlan) -> list[ManagedProc]:
     """构造 launcher 需要托管的 proxy、health 与 monitor_proxy 进程。"""
     env = _build_child_env(port_plan)
     python_bin = settings.PYTHON_BIN
     uvicorn_mod = settings.UVICORN_MODULE
 
-    # 确定 proxy worker 数量：优先使用 PROXY_WORKERS 环境变量。
-    # 默认 4 个 worker：FastAPI 是异步框架，单 worker 即可处理数千并发，
-    # proxy 仅做请求转发（I/O 密集），4 workers ≈ 260MB 内存，足够应对生产负载。
-    # 上限 128：如需更高并发可通过 PROXY_WORKERS 环境变量调大，每个 worker 约 65MB RAM。
+    # 确定 proxy worker 数量：
+    # 1. 优先使用 PROXY_WORKERS 环境变量（用户显式指定）
+    # 2. 未指定时自动读取 cgroup 内存限制计算最优值
+    # 3. 非容器环境退回默认值 4
+    # 上限 128：每个 worker 约 65MB RAM。
     max_proxy_workers = 128
-    proxy_workers = min(int(os.getenv("PROXY_WORKERS", "4")), max_proxy_workers)
+    env_val = os.getenv("PROXY_WORKERS")
+    if env_val is not None:
+        proxy_workers = min(int(env_val), max_proxy_workers)
+    else:
+        proxy_workers = _auto_proxy_workers(max_proxy_workers)
     env["PROXY_WORKERS"] = str(proxy_workers)
 
     return [

@@ -90,8 +90,9 @@ GLOBAL_QUEUE_MAXSIZE = int(os.getenv("GLOBAL_QUEUE_MAXSIZE", "1024"))
 
 # 上限 128：允许高并发场景下分配更多 worker 进程处理转发请求。
 # 每个 worker 约 65MB RAM，128 workers ≈ 8GB，在生产服务器上可接受。
+# 默认值 4：与 wings_control.py 启动器保持一致（正常路径会通过环境变量覆盖此值）。
 _MAX_PROXY_WORKERS = 128
-WORKERS = min(int(os.getenv("PROXY_WORKERS", "128")), _MAX_PROXY_WORKERS)
+WORKERS = min(int(os.getenv("PROXY_WORKERS", "4")), _MAX_PROXY_WORKERS)
 WORKER_INDEX = int(os.getenv("WORKER_INDEX", "-1"))
 RAG_ACC_ENABLED = os.getenv("RAG_ACC_ENABLED", "false").lower() != "false"
 
