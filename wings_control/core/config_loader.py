@@ -460,35 +460,6 @@ def _resolve_gpu_total_memory(ctx: Dict[str, Any]) -> float:
     return 12.0
 
 
-def _set_cuda_graph_sizes(params, ctx, model_info):
-    """为 vllm/vllm_ascend 在非全量模式（gpu_usage_mode != full）下自动计算 cuda_graph_sizes。
-
-    在共享显存（MIG/虚拟 GPU）场景下，需要根据可用显存和模型层数推算最优
-    CUDA Graph 捕获批次大小上限，避免 CUDA Graph 构建过多导致显存溢出。
-    """
-    if ctx["gpu_usage_mode"] != "full" and ctx["model_type"] == "llm":
-        total_memory = _resolve_gpu_total_memory(ctx)
-        max_capture_size = int(total_memory / 64 * 2048 - 256)
-        num_layers = model_info.num_hidden_layers
-        if num_layers is None or num_layers <= 0:
-            logger.warning("num_hidden_layers is %s, defaulting to 32 for cuda-graph-sizes calculation", num_layers)
-            num_layers = 32
-        max_num_batch_sizes = math.floor(
-            max_capture_size / (num_layers + 1) / 2)
-        cudagraph_capture_sizes = [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, \
-                                72, 80, 88, 96, 104, 112, 120, 128, 136, 144, \
-                                152, 160, 168, 176, 184, 192, 200, 208, 216, \
-                                224, 232, 240, 256, 264, 272, 280, 288, 296, \
-                                304, 312, 320, 328, 336, 344, 352, 360, 368, \
-                                376, 384, 392, 400, 408, 416, 424, 432, 440, \
-                                448, 456, 464, 472, 480, 488, 496, 504, 512]
-        max_num_batch_sizes = max(min(max_num_batch_sizes, len(cudagraph_capture_sizes)), 1)
-        selected_sizes = cudagraph_capture_sizes[:max_num_batch_sizes]
-        params["cudagraph_capture_sizes"] = selected_sizes
-        _max_size = selected_sizes[-1] if selected_sizes else 0
-        logger.info("cudagraph-capture-sizes is set to %d entries (max=%s)", len(selected_sizes), _max_size)
-
-
 def _set_operator_acceleration(params, ctx):
     """当昇腾算子加速（USE_KUNLUN_ATB）启用时，注入 use_kunlun_atb=True 到参数字典。"""
     if get_operator_acceleration_env() and ctx["device"] == "ascend":
@@ -809,14 +780,6 @@ def _set_kv_cache_config(params, ctx):
         return  #
 
     params['kv_transfer_config'] = json.dumps(config)
-
-    # NV GPU + KVCache Offload 场景需要禁用 prefix caching，
-    # 参考 NV 冷启动/QAT 启动命令均使用 --no-enable-prefix-caching。
-    # Ascend 不受此限制。
-    if lmcache_offload and not is_ascend:
-        params['no_enable_prefix_caching'] = True
-        params.pop('enable_prefix_caching', None)
-        logger.info("[KVCache Offload] Disabled prefix caching for NV GPU")
 
 
 def _set_router_config(params):
