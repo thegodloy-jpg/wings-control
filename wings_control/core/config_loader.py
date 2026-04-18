@@ -791,17 +791,29 @@ def _set_hybrid_kv_cache(params, model_info):
     使用不同类型的 KV Cache Spec。vLLM 默认禁用 hybrid KV cache manager，
     导致无法统一不同类型的 KV Cache Spec 而抛出 ValueError。
 
-    此外，当设置了 --kv-transfer-config（PD 分离 / LMCache）时，
-    vLLM 会额外强制禁用 hybrid KV cache manager。
-
     对匹配 HYBRID_KV_CACHE_ARCHS 的架构，注入
     --no-disable-hybrid-kv-cache-manager 覆盖默认行为。
+
+    注意：当 PD 分离启用时，KV 连接器（MooncakeConnectorV1 等）尚未支持
+    HMA（Hybrid Memory Architecture），因此不注入该参数，仅输出警告。
     """
     arch = getattr(model_info, "model_architecture", None) if model_info else None
-    if arch and arch in HYBRID_KV_CACHE_ARCHS:
-        params['no_disable_hybrid_kv_cache_manager'] = True
-        logger.info("[HybridKV] Architecture %s requires hybrid KV cache manager, "
-                    "injecting --no-disable-hybrid-kv-cache-manager", arch)
+    if not arch or arch not in HYBRID_KV_CACHE_ARCHS:
+        return
+
+    if get_pd_role_env():
+        logger.warning(
+            "[HybridKV] Architecture %s requires hybrid KV cache manager (HMA), "
+            "but PD separation is enabled. Current KV connectors "
+            "(MooncakeConnectorV1 / NixlConnector) do not yet support HMA. "
+            "PD separation with hybrid attention models is not supported in "
+            "current vLLM version. Skipping --no-disable-hybrid-kv-cache-manager.",
+            arch)
+        return
+
+    params['no_disable_hybrid_kv_cache_manager'] = True
+    logger.info("[HybridKV] Architecture %s requires hybrid KV cache manager, "
+                "injecting --no-disable-hybrid-kv-cache-manager", arch)
 
 
 def _set_router_config(params):
