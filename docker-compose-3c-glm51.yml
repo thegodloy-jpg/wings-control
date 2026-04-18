@@ -59,6 +59,7 @@ x-common-env: &common-env
   WINGS_SKIP_PID_CHECK: "true"
   ENABLE_REASON_PROXY: "true"
   ENGINE: vllm
+  ENGINE_VERSION: "v0.19.0"
   MODEL_NAME: *model-name
   MODEL_PATH: *model-path
   DEVICE_COUNT: *device-count

@@ -350,6 +350,7 @@ def _build_indexcache_install_snippet(engine: str, merged: dict) -> str:
         + update_json
         + "    else\n"
         "        echo '[wings-accel] IndexCache patches installed successfully.'\n"
+        f"        export WINGS_ENGINE_PATCH_OPTIONS='{options}'\n"
         "    fi\n"
         "else\n"
         f"    echo '[wings-accel] WARNING: {accel_dir}/install.py not found, "
