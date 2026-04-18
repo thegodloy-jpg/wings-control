@@ -90,7 +90,7 @@ services:
     image: quay.io/ascend/vllm-ascend:v0.17.0rc1
     container_name: pd-test-engine-p
     network_mode: "host"
-    shm_size: "16g"
+    shm_size: "32g"
     restart: "no"
     ipc: host
     environment:
@@ -159,7 +159,7 @@ services:
     image: quay.io/ascend/vllm-ascend:v0.17.0rc1
     container_name: pd-test-engine-d
     network_mode: "host"
-    shm_size: "16g"
+    shm_size: "32g"
     restart: "no"
     ipc: host
     environment:

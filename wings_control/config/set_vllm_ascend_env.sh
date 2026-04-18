@@ -42,6 +42,13 @@ else
     exit 1
 fi
 
+# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
+# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
+if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
+    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
+    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
+fi
+
 # 昇腾通用环境变量
 export HCCL_BUFFSIZE=1024
 export OMP_PROC_BIND=false
