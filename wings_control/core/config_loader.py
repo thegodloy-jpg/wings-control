@@ -337,7 +337,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _set_parallelism_params(params, ctx)
     _set_kv_cache_config(params, ctx)
     _set_hybrid_kv_cache(params, model_info)
-    _ensure_pd_head_dim(model_info)
+    _ensure_pd_head_dim(params, model_info)
     _set_router_config(params)
     _set_operator_acceleration(params, ctx)
     _set_soft_fp8(params, ctx, model_info)
@@ -819,13 +819,16 @@ def _set_hybrid_kv_cache(params, model_info):
                 "injecting --no-disable-hybrid-kv-cache-manager", arch)
 
 
-def _ensure_pd_head_dim(model_info):
-    """PD 分离模式下，确保模型 config.json 包含 head_dim 字段。
+def _ensure_pd_head_dim(params, model_info):
+    """PD 分离模式下，通过 --hf-overrides 注入缺失的 head_dim。
 
     vllm-ascend 的 MooncakeConnectorV1 在 KVCacheRecvingThread 初始化时
     直接读取 hf_text_config.head_dim，但部分模型架构（如 Qwen2ForCausalLM）
     的 config.json 中未显式声明 head_dim（模型代码中动态计算为
     hidden_size // num_attention_heads），导致 decode 侧 AttributeError 崩溃。
+
+    通过 engine_config['hf_overrides'] 注入，生成 --hf-overrides '{"head_dim": N}'
+    CLI 参数，无需修改模型文件，兼容只读挂载。
 
     参考: https://github.com/vllm-project/vllm-ascend/issues/7352
     """
@@ -845,23 +848,12 @@ def _ensure_pd_head_dim(model_info):
         return
 
     head_dim = hidden_size // num_attention_heads
-    config_path = model_info.model_path / "config.json"
-
-    try:
-        config["head_dim"] = head_dim
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        logger.info(
-            "[PD] Auto-injected head_dim=%d into %s "
-            "(hidden_size=%d / num_attention_heads=%d)",
-            head_dim, config_path, hidden_size, num_attention_heads)
-    except OSError:
-        logger.warning(
-            "[PD] Cannot write head_dim to %s (read-only?). "
-            "Decode node may crash with 'has no attribute head_dim'. "
-            "Please add '\"head_dim\": %d' to config.json manually.",
-            config_path, head_dim, exc_info=True)
+    engine_config = params.setdefault("engine_config", {})
+    engine_config["hf_overrides"] = json.dumps({"head_dim": head_dim})
+    logger.info(
+        "[PD] Model config.json missing head_dim, injecting "
+        "--hf-overrides '{\"head_dim\": %d}' (hidden_size=%d / num_attention_heads=%d)",
+        head_dim, hidden_size, num_attention_heads)
 
 
 def _set_router_config(params):
