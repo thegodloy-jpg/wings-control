@@ -1082,15 +1082,18 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
 
     仅 vllm (NVIDIA) 支持 KV 稀疏特性。
     根据模型架构决定策略：
-      - IndexCache 架构（GlmMoeDsa/DeepseekV32）：追加 --hf-overrides
-      - 其他架构：追加 --kv-cache-dtype fp8 --calculate-kv-scales
+      - IndexCache 架构（GlmMoeDsa/DeepseekV32）：返回 --hf-overrides CLI 参数
+      - 其他架构：直接修改 engine_config 注入 kv_cache_dtype=fp8，返回空字符串
+
+    **必须在 _build_vllm_cmd_parts 之前调用**，以便 FP8 参数正确合入基础命令，
+    避免与 engine_config 中已有的 kv_cache_dtype 产生重复。
 
     Args:
-        params: 参数字典
+        params: 参数字典（FP8 路径会就地修改 engine_config）
         engine: 引擎类型
 
     Returns:
-        str: 拼接后的命令参数字符串，未启用或引擎不支持时返回空字符串
+        str: 额外的 CLI 参数字符串（IndexCache 返回 --hf-overrides，FP8 返回空串）
     """
     if engine != "vllm":
         return ""
@@ -1106,8 +1109,11 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
         logger.info("[KV Sparse] Architecture %s → IndexCache strategy (--hf-overrides)", arch)
         return " --hf-overrides '{\"index_topk_freq\": 4}'"
     else:
-        logger.info("[KV Sparse] Architecture %s → FP8 KV CACHE strategy (--kv-cache-dtype fp8)", arch)
-        return " --kv-cache-dtype fp8 --calculate-kv-scales"
+        logger.info("[KV Sparse] Architecture %s → FP8 KV CACHE strategy (kv_cache_dtype=fp8)", arch)
+        engine_config = params.setdefault("engine_config", {})
+        engine_config["kv_cache_dtype"] = "fp8"
+        engine_config["calculate_kv_scales"] = True
+        return ""
 
 
 def build_start_command(params: Dict[str, Any]) -> str:
@@ -1322,6 +1328,7 @@ def _build_ray_wait_loop(nnodes: int) -> List[str]:
 def _build_ray_head_commands(
     params: Dict[str, Any],
     ctx: DistScriptCtx,
+    sparse_args: str,
 ) -> List[str]:
     """构建 Ray head 节点 (rank 0) 的脚本命令列表。"""
     parts: List[str] = [_SH_VLLM_HOST]
@@ -1339,7 +1346,6 @@ def _build_ray_head_commands(
 
     eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
     speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
-    sparse_args = _build_kv_sparse_cmd(params, ctx.engine) if params.get("enable_sparse") else ""
 
     ray_pp_extra = ""
     model_info_ray = ModelIdentifier(
@@ -1583,6 +1589,7 @@ def _build_vllm_distributed_script(
     cmd: str,
     common_env_cmds: List[str],
     engine: str,
+    sparse_args: str,
 ) -> str:
     """组装分布式模式（nnodes > 1）的 bash 脚本体并返回。"""
     node_rank = params.get("node_rank", 0)
@@ -1602,7 +1609,7 @@ def _build_vllm_distributed_script(
         # 不再硬编码在 build_start_script 中，避免 retry/fallback 命令
         # 缩进 heredoc 闭合标记导致 bash 语法错误。
         if node_rank == 0:
-            script_parts.extend(_build_ray_head_commands(params, ctx))
+            script_parts.extend(_build_ray_head_commands(params, ctx, sparse_args))
         else:
             script_parts.extend(_build_ray_worker_commands(params, ctx))
     else:
@@ -1615,11 +1622,11 @@ def _build_vllm_single_script(
     cmd: str,
     common_env_cmds: List[str],
     engine: str,
+    sparse_args: str,
 ) -> str:
     """组装单机模式的 bash 脚本体并返回。"""
     env_prefix = "\n".join(common_env_cmds) + "\n" if common_env_cmds else ""
     speculative_extra = _build_speculative_cmd(params, engine) if params.get("enable_speculative_decode") else ""
-    sparse_args = _build_kv_sparse_cmd(params, engine) if params.get("enable_sparse") else ""
     # A+X 环境下需要 --enforce-eager 绕过 triton 版本冲突（与 Ray 路径一致）
     eager_flag = " --enforce-eager" if _need_enforce_eager(engine) else ""
 
@@ -1653,14 +1660,17 @@ def build_start_script(params: Dict[str, Any]) -> str:
         str: 完整的 bash 脚本体（不含 shebang）
     """
     engine = params.get("engine", "vllm")
+    # KV 稀疏：必须在 _build_vllm_cmd_parts 之前调用，
+    # FP8 路径会就地修改 engine_config，避免 --kv-cache-dtype 重复
+    sparse_args = _build_kv_sparse_cmd(params, engine) if params.get("enable_sparse") else ""
     cmd = _build_vllm_cmd_parts(params)
     is_distributed = params.get("distributed", False)
     nnodes = params.get("nnodes", 1)
     common_env_cmds = _build_vllm_common_env_cmds(params, engine)
 
     if is_distributed and nnodes > 1:
-        return _build_vllm_distributed_script(params, cmd, common_env_cmds, engine)
-    return _build_vllm_single_script(params, cmd, common_env_cmds, engine)
+        return _build_vllm_distributed_script(params, cmd, common_env_cmds, engine, sparse_args)
+    return _build_vllm_single_script(params, cmd, common_env_cmds, engine, sparse_args)
 
 
 def start_vllm_distributed(params: Dict):
