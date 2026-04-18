@@ -1107,7 +1107,7 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
 
     if arch in INDEXCACHE_ARCHS:
         logger.info("[KV Sparse] Architecture %s → IndexCache strategy (--hf-overrides)", arch)
-        return " --block-size 64 --hf-overrides '{\"index_topk_freq\": 4}'"
+        return " --hf-overrides '{\"index_topk_freq\": 4}'"
     else:
         logger.info("[KV Sparse] Architecture %s → FP8 KV CACHE strategy (kv_cache_dtype=fp8)", arch)
         engine_config = params.setdefault("engine_config", {})
