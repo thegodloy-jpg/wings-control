@@ -1107,10 +1107,7 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
 
     if arch in INDEXCACHE_ARCHS:
         logger.info("[KV Sparse] Architecture %s → IndexCache strategy (--hf-overrides)", arch)
-        # IndexCache 使用 FLASHMLA_SPARSE 后端，要求 block_size 匹配 FlashMLA 页大小
-        engine_config = params.setdefault("engine_config", {})
-        engine_config["block_size"] = 64
-        return " --hf-overrides '{\"index_topk_freq\": 4}'"
+        return " --block-size 64 --hf-overrides '{\"index_topk_freq\": 4}'"
     else:
         logger.info("[KV Sparse] Architecture %s → FP8 KV CACHE strategy (kv_cache_dtype=fp8)", arch)
         engine_config = params.setdefault("engine_config", {})
