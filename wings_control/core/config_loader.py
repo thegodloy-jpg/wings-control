@@ -683,20 +683,28 @@ def _get_pd_config(ctx, pd_role):
 
     返回:
         包含 KV Transfer 配置项的字典
+
+    环境变量:
+        PD_CONNECTOR_TYPE: 指定 Ascend PD 分离使用的 KV connector 类型。
+            - "MooncakeConnectorV1"（默认）: vllm-ascend 的 Ascend 原生实现，
+              支持 tuple KV cache 格式和 MLA，但部分模型存在 head_dim 兼容性问题
+              和运行时内存损坏风险（详见 vllm-ascend #7352, #5660）。
+            - "MooncakeConnector": vllm-ascend 注册的新版连接器，
+              改进了 KV cache 注册逻辑，部分场景更稳定（详见 #7433）。
+            - 也可设置为其他已注册的连接器名称（如自定义连接器）。
     """
     device = ctx.get('device', '')
     config = {}
 
     if device == "ascend":
-        # AscendPD — 使用 vllm-ascend v0.17+ 注册的 MooncakeConnectorV1
-        # 注意: 必须使用 "MooncakeConnectorV1"（Ascend 适配版本），
-        # 而非上游 vllm 的 "MooncakeConnector"，后者不支持 Ascend 的 tuple KV cache 格式
         kv_role = "kv_producer" if pd_role == "P" else "kv_consumer"
 
-        # Ascend MooncakeConnectorV1 要求 kv_connector_extra_config 中包含
+        # 通过环境变量选择 connector 类型，默认 MooncakeConnectorV1
+        connector_type = os.getenv("PD_CONNECTOR_TYPE", "MooncakeConnectorV1")
+
+        # Ascend Mooncake 系列 connector 要求 kv_connector_extra_config 中包含
         # prefill 和 decode 双方的并行配置 (tp_size, dp_size, pp_size)，
         # 用于 KV cache 传输时的 TP/DP 映射计算。
-        # 通过环境变量配置，默认 TP=device_count, DP=1, PP=1
         default_tp = int(ctx.get('device_count', 1))
         prefill_tp = int(os.getenv("PD_PREFILL_TP_SIZE", str(default_tp)))
         prefill_dp = int(os.getenv("PD_PREFILL_DP_SIZE", "1"))
@@ -706,7 +714,7 @@ def _get_pd_config(ctx, pd_role):
         decode_pp = int(os.getenv("PD_DECODE_PP_SIZE", "1"))
 
         config = {
-            "kv_connector": "MooncakeConnectorV1",
+            "kv_connector": connector_type,
             "kv_role": kv_role,
             "kv_connector_extra_config": {
                 "mooncake_protocol": "rdma",
@@ -722,9 +730,9 @@ def _get_pd_config(ctx, pd_role):
                 },
             },
         }
-        logger.info("[PD Config] Ascend device detected, role=%s, kv_role=%s, "
+        logger.info("[PD Config] Ascend device detected, connector=%s, role=%s, kv_role=%s, "
                      "prefill(tp=%d,dp=%d,pp=%d), decode(tp=%d,dp=%d,pp=%d)",
-                     pd_role, kv_role,
+                     connector_type, pd_role, kv_role,
                      prefill_tp, prefill_dp, prefill_pp,
                      decode_tp, decode_dp, decode_pp)
     else:

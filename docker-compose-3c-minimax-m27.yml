@@ -6,8 +6,8 @@
 #  默认引擎: vLLM
 #  默认模型: MiniMax-M2.7 (TP=8, MoE 架构 MiniMaxM2ForCausalLM)
 #
-#  注意: M2.7 为大型 MoE 模型, 建议使用 8×GPU (80GB+)
-#        如显存不足可配合 quantization 或 pipeline_parallel
+#  注意: M2.7 为大型 MoE 模型, 建议使用 4×GPU (80GB+) 或更多
+#        FP8 量化权重在 TP=8 下 MoE 层尺寸不对齐 (192%128≠0)，推荐 TP=4
 #
 #  使用方法:
 #    1. 根据实际环境修改下方 x-user-config 中的模型路径、镜像版本、设备数
@@ -50,9 +50,9 @@ x-user-config:
 
   # -- 设备配置 --
   device-type:     "nvidia"                     # nvidia | ascend
-  device-count:    &device-count  "8"
+  device-count:    &device-count  "4"
   # NVIDIA: 逗号分隔的 GPU ID；Ascend: NPU ID
-  visible-devices: &visible-devices "0,1,2,3,4,5,6,7"
+  visible-devices: &visible-devices "0,1,2,3"
 
 # 模型挂载卷（修改模型路径时，同步修改此处的 宿主路径:容器路径）
 x-model-volume: &model-volume "/var/aispace/model/ai-storage/ai-prod/platform/MiniMax-M2.7:/models/MiniMax-M2.7:ro"

@@ -253,6 +253,7 @@ capacity = localstore_avail_gb / per_block_gb
 | `KV_AGENT_LIB_PATH` | K8s ConfigMap | `_build_cache_env_commands()` | vLLM (NVIDIA) kv_agent 原生库路径 |
 | `LMCACHE_LIB_PATH` | K8s ConfigMap | `_build_cache_env_commands()` | vLLM-Ascend lmcache 原生库路径 |
 | `PD_ROLE` | K8s ConfigMap / setEnv.sh | `env_utils.get_pd_role_env()` | "P" (Prefill) 或 "D" (Decode) |
+| `PD_CONNECTOR_TYPE` | K8s ConfigMap / setEnv.sh | `_get_pd_config()` | Ascend PD connector 类型，默认 "MooncakeConnectorV1"，可选 "MooncakeConnector" |
 | `PYTHONHASHSEED` | sidecar 设置 | `_build_cache_env_commands()` | 设为 0，跨实例哈希一致性 |
 
 ### 4.2 `_set_kv_cache_config` 配置注入
@@ -270,15 +271,25 @@ capacity = localstore_avail_gb / per_block_gb
 
 ### 4.3 PD Connector 配置详情
 
-`_get_pd_config(ctx, pd_role)` — `config_loader.py L640`
+`_get_pd_config(ctx, pd_role)` — `config_loader.py L677`
 
 **Ascend 设备：**
+
+通过 `PD_CONNECTOR_TYPE` 环境变量选择 connector（默认 `MooncakeConnectorV1`）：
+
+| Connector | 说明 | 适用场景 |
+|-----------|------|---------|
+| `MooncakeConnectorV1` | vllm-ascend 原生实现，支持 tuple KV cache 和 MLA | 默认，主流场景 |
+| `MooncakeConnector` | 新版连接器，改进了 KV cache 注册逻辑 | MooncakeConnectorV1 运行时崩溃时的替代方案 |
+
 ```json
 {
-    "kv_connector": "MooncakeConnector",
+    "kv_connector": "MooncakeConnectorV1",
     "kv_role": "kv_producer",
     "kv_connector_extra_config": {
-        "mooncake_protocol": "rdma"
+        "mooncake_protocol": "rdma",
+        "prefill": {"tp_size": 4, "dp_size": 1, "pp_size": 1},
+        "decode": {"tp_size": 4, "dp_size": 1, "pp_size": 1}
     }
 }
 ```
