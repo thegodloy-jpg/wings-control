@@ -114,6 +114,8 @@ services:
 
   # ==================== 3. Engine 容器 ====================
   # 推理引擎：等待 control 生成 start_command.sh 后执行
+  # 注意：wings-vllm 镜像内置 ENTRYPOINT ["vllm","serve"]，
+  #       必须用 entrypoint 覆盖，否则 command 会被当作 vllm 参数解析而报错。
   engine:
     image: *engine-image
     container_name: wings-engine
@@ -123,6 +125,8 @@ services:
     depends_on:
       accel-init:
         condition: service_completed_successfully
+    # 覆盖镜像内置 ENTRYPOINT，使 command 作为 shell 脚本执行
+    entrypoint: ["/bin/sh", "-c"]
     # -- NVIDIA GPU 配置 (Ascend 设备请注释此块，取消下方 Ascend 块注释) --
     runtime: nvidia
     environment:
@@ -131,21 +135,22 @@ services:
     # environment:
     #   ASCEND_VISIBLE_DEVICES: *visible-devices
     #   ASCEND_RT_VISIBLE_DEVICES: *visible-devices
-    command: >
-      /bin/sh -c "echo '[engine] Waiting for start_command.sh...';
-      timeout=300; elapsed=0;
-      while [ ! -f /shared-volume/start_command.sh ]; do
-        sleep 2; elapsed=$$((elapsed+2));
-        if [ $$elapsed -ge $$timeout ]; then
-          echo '[engine] ERROR: Timeout (${timeout}s) waiting for start_command.sh';
-          exit 1;
-        fi;
-      done;
-      echo '[engine] Found start_command.sh after $${elapsed}s';
-      echo '========== start_command.sh content ==========';
-      cat /shared-volume/start_command.sh;
-      echo '===============================================';
-      bash /shared-volume/start_command.sh"
+    command:
+      - |
+        echo '[engine] Waiting for start_command.sh...';
+        timeout=300; elapsed=0;
+        while [ ! -f /shared-volume/start_command.sh ]; do
+          sleep 2; elapsed=$$((elapsed+2));
+          if [ $$elapsed -ge $$timeout ]; then
+            echo "[engine] ERROR: Timeout ($${timeout}s) waiting for start_command.sh";
+            exit 1;
+          fi;
+        done;
+        echo "[engine] Found start_command.sh after $${elapsed}s";
+        echo '========== start_command.sh content ==========';
+        cat /shared-volume/start_command.sh;
+        echo '===============================================';
+        bash /shared-volume/start_command.sh
     volumes:
       - shared-vol:/shared-volume
       - accel-vol:/accel-volume:ro
