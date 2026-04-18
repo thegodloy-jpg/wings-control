@@ -138,7 +138,7 @@ services:
     command:
       - |
         echo '[engine] Waiting for start_command.sh...';
-        timeout=300; elapsed=0;
+        timeout=3600; elapsed=0;
         while [ ! -f /shared-volume/start_command.sh ]; do
           sleep 2; elapsed=$$((elapsed+2));
           if [ $$elapsed -ge $$timeout ]; then
