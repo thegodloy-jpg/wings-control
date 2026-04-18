@@ -665,8 +665,7 @@ find {settings.SHARED_VOLUME_PATH}/log_analyzer -name '__pycache__' -type d -exe
 cd {settings.SHARED_VOLUME_PATH} && python3 -B -m log_analyzer.log_analyzer \\
     --config "$ANALYZER_CONFIG" \\
     --log-file /var/log/wings/engine.log \\
-    --progress-file {settings.PROGRESS_FILE} \\
-    --accel-file {settings.ACCEL_FILE} &
+    --progress-file {settings.PROGRESS_FILE} &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
