@@ -308,10 +308,12 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
         2. _set_sequence_length     → 合并 input_length + output_length
         3. _set_parallelism_params  → 设置张量并行度
         4. _set_kv_cache_config     → LMCache / PD 分离 KV Transfer 配置
-        5. _set_router_config       → Wings Router NATS 配置
-        6. _set_operator_acceleration → 昇腾算子加速
-        7. _set_soft_fp8            → Soft FP8 量化配置
-        8. _set_task                → embedding/rerank 任务类型
+        5. _set_hybrid_kv_cache     → 混合 KV Cache 架构启用 HMA
+        6. _ensure_pd_head_dim      → PD 模式补全 config.json 缺失的 head_dim
+        7. _set_router_config       → Wings Router NATS 配置
+        8. _set_operator_acceleration → 昇腾算子加速
+        9. _set_soft_fp8            → Soft FP8 量化配置
+        10. _set_task               → embedding/rerank 任务类型
 
     Args:
         params:              当前引擎参数字典（会被原地修改）
@@ -335,6 +337,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _set_parallelism_params(params, ctx)
     _set_kv_cache_config(params, ctx)
     _set_hybrid_kv_cache(params, model_info)
+    _ensure_pd_head_dim(model_info)
     _set_router_config(params)
     _set_operator_acceleration(params, ctx)
     _set_soft_fp8(params, ctx, model_info)
@@ -814,6 +817,51 @@ def _set_hybrid_kv_cache(params, model_info):
     params['no_disable_hybrid_kv_cache_manager'] = True
     logger.info("[HybridKV] Architecture %s requires hybrid KV cache manager, "
                 "injecting --no-disable-hybrid-kv-cache-manager", arch)
+
+
+def _ensure_pd_head_dim(model_info):
+    """PD 分离模式下，确保模型 config.json 包含 head_dim 字段。
+
+    vllm-ascend 的 MooncakeConnectorV1 在 KVCacheRecvingThread 初始化时
+    直接读取 hf_text_config.head_dim，但部分模型架构（如 Qwen2ForCausalLM）
+    的 config.json 中未显式声明 head_dim（模型代码中动态计算为
+    hidden_size // num_attention_heads），导致 decode 侧 AttributeError 崩溃。
+
+    参考: https://github.com/vllm-project/vllm-ascend/issues/7352
+    """
+    if not get_pd_role_env():
+        return
+
+    if not model_info or not model_info.config:
+        return
+
+    config = model_info.config
+    if "head_dim" in config:
+        return
+
+    hidden_size = config.get("hidden_size")
+    num_attention_heads = config.get("num_attention_heads")
+    if not hidden_size or not num_attention_heads:
+        return
+
+    head_dim = hidden_size // num_attention_heads
+    config_path = model_info.model_path / "config.json"
+
+    try:
+        config["head_dim"] = head_dim
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        logger.info(
+            "[PD] Auto-injected head_dim=%d into %s "
+            "(hidden_size=%d / num_attention_heads=%d)",
+            head_dim, config_path, hidden_size, num_attention_heads)
+    except OSError:
+        logger.warning(
+            "[PD] Cannot write head_dim to %s (read-only?). "
+            "Decode node may crash with 'has no attribute head_dim'. "
+            "Please add '\"head_dim\": %d' to config.json manually.",
+            config_path, head_dim, exc_info=True)
 
 
 def _set_router_config(params):
