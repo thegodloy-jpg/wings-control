@@ -827,8 +827,13 @@ def _ensure_pd_head_dim(params, model_info):
     的 config.json 中未显式声明 head_dim（模型代码中动态计算为
     hidden_size // num_attention_heads），导致 decode 侧 AttributeError 崩溃。
 
-    通过 engine_config['hf_overrides'] 注入，生成 --hf-overrides '{"head_dim": N}'
+    通过直接设置 params['hf_overrides'] 注入，生成 --hf-overrides '{"head_dim": N}'
     CLI 参数，无需修改模型文件，兼容只读挂载。
+
+    注意：此函数在 _merge_vllm_params 中调用，此时 params 是平坦的引擎参数字典
+    （即 engine_config 的内容），不可使用 params.setdefault("engine_config", ...)
+    否则会在 engine_config 内部创建嵌套的 engine_config 键，导致 vLLM 收到
+    无法识别的 --engine-config CLI 参数。
 
     参考: https://github.com/vllm-project/vllm-ascend/issues/7352
     """
@@ -848,8 +853,7 @@ def _ensure_pd_head_dim(params, model_info):
         return
 
     head_dim = hidden_size // num_attention_heads
-    engine_config = params.setdefault("engine_config", {})
-    engine_config["hf_overrides"] = json.dumps({"head_dim": head_dim})
+    params["hf_overrides"] = json.dumps({"head_dim": head_dim})
     logger.info(
         "[PD] Model config.json missing head_dim, injecting "
         "--hf-overrides '{\"head_dim\": %d}' (hidden_size=%d / num_attention_heads=%d)",
