@@ -105,7 +105,9 @@ _LLM_MODELS = {
         ],
     "MiniMaxM2ForCausalLM": [
         "MiniMax-M2.5",
-        "MiniMax-M2.5-w8a8"
+        "MiniMax-M2.5-w8a8",
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-w8a8"
         ],
     "LlamaForCausalLM": [
         "LLaMA3-8B",

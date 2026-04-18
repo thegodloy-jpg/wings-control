@@ -409,6 +409,30 @@
             "trust_remote_code": true,
             "context_length": 4096
           }
+        },
+        "MiniMax-M2.7": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "minimax_m2",
+            "reasoning_parser": "minimax_m2_reasoning"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "enable_expert_parallel": true,
+            "tool_call_parser": "minimax_m2",
+            "reasoning_parser": "minimax_m2_reasoning"
+          },
+          "sglang": {
+            "trust_remote_code": true,
+            "context_length": 4096
+          },
+          "sglang_distributed": {
+            "trust_remote_code": true,
+            "context_length": 4096
+          }
         }
       },
       "LlamaForCausalLM": {
