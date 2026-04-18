@@ -86,11 +86,16 @@ services:
 
   # ==================== 2. Wings Control 容器 ====================
   # 控制面 sidecar：解析参数、生成启动脚本、运行 proxy/health 服务
+  # 调试模式：取消下方 command 注释，容器将保持运行但不自动启动 wings_control，
+  #          需手动 docker exec -it wings-control bash 进入后执行：
+  #          python -m wings_control --model-name <模型名> --model-path <路径>
   wings-control:
     image: *control-image
     container_name: wings-control
     network_mode: "host"
     restart: "no"
+    # 取消注释以下行启用调试模式（容器保持运行，手动进入执行命令）
+    # command: ["sleep", "infinity"]
     depends_on:
       accel-init:
         condition: service_completed_successfully
