@@ -35,7 +35,8 @@ from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd
     get_router_instance_group_name_env, get_router_instance_name_env, get_router_nats_path_env, \
     get_operator_acceleration_env, get_local_ip
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
-from utils.model_utils import ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8, is_qwen3_series_fp8
+from utils.model_utils import (ModelIdentifier, HYBRID_KV_CACHE_ARCHS,
+                               is_qwen3_32b_nvfp4, is_deepseek_series_fp8, is_qwen3_series_fp8)
 from utils.device_utils import check_pcie_cards
 
 logger = logging.getLogger(__name__)
@@ -333,6 +334,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _set_sequence_length(params, engine_cmd_parameter)
     _set_parallelism_params(params, ctx)
     _set_kv_cache_config(params, ctx)
+    _set_hybrid_kv_cache(params, model_info)
     _set_router_config(params)
     _set_operator_acceleration(params, ctx)
     _set_soft_fp8(params, ctx, model_info)
@@ -780,6 +782,26 @@ def _set_kv_cache_config(params, ctx):
         return  #
 
     params['kv_transfer_config'] = json.dumps(config)
+
+
+def _set_hybrid_kv_cache(params, model_info):
+    """对混合注意力架构，启用 vLLM 的 hybrid KV cache manager。
+
+    混合架构（如 GLM-5.1 的 DSA、Qwen3.5 的 GDN + 标准注意力）会在不同层
+    使用不同类型的 KV Cache Spec。vLLM 默认禁用 hybrid KV cache manager，
+    导致无法统一不同类型的 KV Cache Spec 而抛出 ValueError。
+
+    此外，当设置了 --kv-transfer-config（PD 分离 / LMCache）时，
+    vLLM 会额外强制禁用 hybrid KV cache manager。
+
+    对匹配 HYBRID_KV_CACHE_ARCHS 的架构，注入
+    --no-disable-hybrid-kv-cache-manager 覆盖默认行为。
+    """
+    arch = getattr(model_info, "model_architecture", None) if model_info else None
+    if arch and arch in HYBRID_KV_CACHE_ARCHS:
+        params['no_disable_hybrid_kv_cache_manager'] = True
+        logger.info("[HybridKV] Architecture %s requires hybrid KV cache manager, "
+                    "injecting --no-disable-hybrid-kv-cache-manager", arch)
 
 
 def _set_router_config(params):
