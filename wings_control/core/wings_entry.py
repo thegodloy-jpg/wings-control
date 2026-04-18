@@ -1110,27 +1110,14 @@ def _build_engine_retry_cmd(merged: dict) -> str:
     return retry_cmd
 
 
-def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> LauncherPlan:
-    """根据启动参数、硬件信息和端口规划生成完整启动脚本。
-
-    执行流程：
-    1. 调用 detect_hardware() 获取硬件环境（设备类型、数量、型号）
-    2. 调用 load_and_merge_configs() 多层配置合并
-    3. 用显式参数覆盖合并结果（engine/model_name/model_path 等）
-    4. 注入分布式信息（nnodes/node_rank/head_node_addr）
-    5. 根据 node_rank 决定是否注入 host/port
-    6. 调用 start_engine_service() 分发给具体 adapter 生成脚本
-    7. 添加 shebang + set -euo pipefail 包装成安全脚本
-
-    Args:
-        launch_args: 标准化的启动参数（来自 parse_launch_args）
-        port_plan:   三层端口分配方案（来自 derive_port_plan）
+def _resolve_engine_and_features(
+    merged: dict, launch_args: LaunchArgs,
+) -> tuple[str, bool, str]:
+    """确定引擎类型、判断高级特性状态，并写入状态 JSON / 记录日志。
 
     Returns:
-        LauncherPlan: 包含完整 shell 脚本、合并参数和硬件信息
+        (engine, has_advanced_feature, active_features_label)
     """
-    hardware = detect_hardware()
-    merged = _prepare_merged_params(launch_args, port_plan, hardware)
     # engine 已在 load_and_merge_configs 中经过 _auto_select_engine 的
     # 自动选择、校验和升级（如 vllm → vllm_ascend），不可用原始值覆盖。
     engine = merged.get("engine", launch_args.engine)
@@ -1140,24 +1127,64 @@ def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> Launche
 
     _write_advanced_features_json(engine, merged)
     _log_advanced_feature_config(engine, merged, has_advanced_feature)
+    return engine, has_advanced_feature, active_features_label
+
+
+def _build_engine_and_monitor_scripts(
+    engine: str,
+    merged: dict,
+    has_advanced_feature: bool,
+    active_features_label: str,
+) -> tuple[str, str]:
+    """生成引擎启动脚本体（含 PID 跟踪）和进程监控脚本。
+
+    根据是否启用高级特性，生成不同的回退/重试策略：
+    - 高级特性启用 → 崩溃时禁用全部高级特性回退
+    - 默认模式 → 崩溃时用相同参数重试一次
+
+    Returns:
+        (script_body, monitor_script)
+    """
     fallback_cmd = _build_advanced_feature_fallback_cmd(merged) if has_advanced_feature else ""
     retry_cmd = _build_engine_retry_cmd(merged) if not has_advanced_feature else ""
     script_body = _build_pid_tracked_script(start_engine_service(merged), has_advanced_feature)
 
-    analyzer_preamble = _build_analyzer_preamble(engine, merged, hardware)
-    faulthandler_patch = _build_faulthandler_patch_preamble(engine)
-    triton_patch = build_triton_patch_preamble(engine)
-    modelslim_patch = build_modelslim_quarot_patch_preamble(engine)
-    accel_preamble = _build_accel_preamble(engine, merged)
-    env_overrides = _build_env_overrides_preamble()
     rag_configured = os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true"
     monitor_script = _build_monitor_script(
         fallback_cmd=fallback_cmd, retry_cmd=retry_cmd,
         active_features=active_features_label,
         engine=engine, rag_configured=rag_configured,
     )
+    return script_body, monitor_script
 
-    command = (
+
+def _assemble_startup_command(
+    engine: str,
+    merged: dict,
+    hardware: dict,
+    script_body: str,
+    monitor_script: str,
+) -> str:
+    """收集所有前置脚本片段，与引擎脚本体和监控脚本组装成完整的 bash 启动脚本。
+
+    组装顺序（每层职责）：
+      1. shebang + 安全选项 + 日志目录 + Prometheus metrics 目录
+      2. log_analyzer 部署进度监控
+      3. 标准输出无缓冲 + 日志过滤 tee 管道
+      4. faulthandler / triton / modelslim 补丁
+      5. 用户 env_overrides
+      6. accel 加速包安装
+      7. 引擎启动脚本体（含 PID 跟踪）
+      8. 进程监控（等待 + 回退/重试逻辑）
+    """
+    analyzer_preamble = _build_analyzer_preamble(engine, merged, hardware)
+    faulthandler_patch = _build_faulthandler_patch_preamble(engine)
+    triton_patch = build_triton_patch_preamble(engine)
+    modelslim_patch = build_modelslim_quarot_patch_preamble(engine)
+    accel_preamble = _build_accel_preamble(engine, merged)
+    env_overrides = _build_env_overrides_preamble()
+
+    return (
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         "mkdir -p /var/log/wings\n"
         # Prometheus multi-process metrics directory: ensure a clean dir
@@ -1188,6 +1215,35 @@ def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> Launche
         + script_body
         + monitor_script
     )
+
+
+def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> LauncherPlan:
+    """根据启动参数、硬件信息和端口规划生成完整启动脚本。
+
+    编排流程：
+    1. 硬件探测 + 配置合并 → merged 参数字典
+    2. 引擎/高级特性解析 → engine, 特性状态
+    3. 引擎启动脚本 + 进程监控脚本生成
+    4. 全部 preamble + 脚本体 + 监控组装成完整 bash 命令
+
+    Args:
+        launch_args: 标准化的启动参数（来自 parse_launch_args）
+        port_plan:   三层端口分配方案（来自 derive_port_plan）
+
+    Returns:
+        LauncherPlan: 包含完整 shell 脚本、合并参数和硬件信息
+    """
+    hardware = detect_hardware()
+    merged = _prepare_merged_params(launch_args, port_plan, hardware)
+
+    engine, has_advanced_feature, active_features_label = _resolve_engine_and_features(
+        merged, launch_args,
+    )
+    script_body, monitor_script = _build_engine_and_monitor_scripts(
+        engine, merged, has_advanced_feature, active_features_label,
+    )
+    command = _assemble_startup_command(engine, merged, hardware, script_body, monitor_script)
+
     logger.info("Generated start_command.sh (%d bytes)", len(command))
     logger.debug(
         "start_command.sh content:\n"
