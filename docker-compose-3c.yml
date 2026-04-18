@@ -35,15 +35,15 @@ version: "3.8"
 x-user-config:
   # -- 镜像版本 --
   wings-version: &wings-version "26.0.0"
-  accel-image:   &accel-image   "wings-accel:26.0.0"
-  control-image: &control-image "wings-control:26.0.0"
-  engine-image:  &engine-image  "vllm/vllm-openai:v0.17.0"
+  accel-image:   &accel-image   "fusionregistry:5000/wings-accel:26.0.0"
+  control-image: &control-image "fusionregistry:5000/wings-control:26.0.0"
+  engine-image:  &engine-image  "wings-vllm:v0.19.0-202604162107"
 
   # -- 模型配置 --
-  model-name:      &model-name    "Qwen3.5-27B"
-  model-path:      &model-path    "/models/Qwen3.5-27B"
+  model-name:      &model-name    "Qwen3.5-35B-A3B"
+  model-path:      &model-path    "/models/Qwen3.5-35B-A3B"
   # 宿主机上模型文件的实际路径（修改后需同步更新 x-model-volume）
-  host-model-dir:  "/data/models/Qwen3.5-27B"
+  host-model-dir:  "/var/aispace/model/ai-storage/ai-prod/platform/zhanghui/Qwen3.5-35B-A3B"
 
   # -- 设备配置 --
   device-type:     "nvidia"                     # nvidia | ascend
@@ -52,7 +52,7 @@ x-user-config:
   visible-devices: &visible-devices "0,1"
 
 # 模型挂载卷（修改模型路径时，同步修改此处的 宿主路径:容器路径）
-x-model-volume: &model-volume "/data/models/Qwen3.5-27B:/models/Qwen3.5-27B:ro"
+x-model-volume: &model-volume "/var/aispace/model/ai-storage/ai-prod/platform/zhanghui/Qwen3.5-35B-A3B:/models/Qwen3.5-35B-A3B:ro"
 
 # ======================== 公共环境变量 ========================
 x-common-env: &common-env
@@ -64,6 +64,7 @@ x-common-env: &common-env
   DEVICE_COUNT: *device-count
   ENABLE_ACCEL: "true"
   WINGS_ACCEL_DIR: "/accel-volume"
+  ENABLE_SPECULATIVE_DECODE: "true"
 
 services:
   # ==================== 1. Accel Init 容器 ====================
@@ -95,7 +96,7 @@ services:
     network_mode: "host"
     restart: "no"
     # 取消注释以下行启用调试模式（容器保持运行，手动进入执行命令）
-    # command: ["sleep", "infinity"]
+    command: ["sleep", "infinity"]
     depends_on:
       accel-init:
         condition: service_completed_successfully
