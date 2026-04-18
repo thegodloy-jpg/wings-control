@@ -26,7 +26,7 @@ from typing import Dict, Any, List, Optional
 
 import yaml
 
-from utils.model_utils import ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8
+from utils.model_utils import ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8, INDEXCACHE_ARCHS
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env
@@ -447,45 +447,6 @@ def _build_cache_env_commands(engine: str) -> List[str]:
     if yaml_path:
         env_commands.append(f'export LMCACHE_CONFIG_FILE={shlex.quote(yaml_path)}')
 
-    return env_commands
-
-
-def _build_sparse_lib_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
-    """构建 Sparse KV 原生库的 LD_LIBRARY_PATH 注入命令。
-
-    Sparse KV 依赖 vsparse/native 下的 C++ 动态库，需要通过
-    LD_LIBRARY_PATH 注入。此函数独立于 KVCache Offload，
-    仅在 enable_sparse=true 且 engine=vllm 时生效。
-
-    Args:
-        params: 参数字典，需包含 enable_sparse
-        engine: 引擎类型
-
-    Returns:
-        List[str]: LD_LIBRARY_PATH 设置命令列表
-    """
-    env_commands = []
-    if not params.get("enable_sparse"):
-        return env_commands
-    if engine != "vllm":
-        return env_commands
-    # Sparse lib 路径注入
-    sparse_lib_path_env = os.getenv("SPARSE_LIB_PATH", "")
-    if sparse_lib_path_env:
-        # 用户通过环境变量显式指定路径
-        sparse_lib_path = _sanitize_shell_path(sparse_lib_path_env)
-        env_commands.append(f'_SPARSE_LIB_PATH={sparse_lib_path}')
-        logger.info("[Sparse KV] Added LD_LIBRARY_PATH for vsparse native: %s", sparse_lib_path)
-    else:
-        # 动态探测 Python site-packages 路径，避免硬编码 Python 版本号
-        # (e.g. python3.10 vs python3.12 会导致路径不匹配)
-        env_commands.append(
-            '_SPARSE_LIB_PATH=$('
-            'python3 -c "import site; print(site.getsitepackages()[0])" '
-            '2>/dev/null)/vsparse/native'
-        )
-        logger.info("[Sparse KV] Added LD_LIBRARY_PATH for vsparse native (dynamic detection)")
-    env_commands.append('export LD_LIBRARY_PATH="${_SPARSE_LIB_PATH}:${LD_LIBRARY_PATH:-}"')
     return env_commands
 
 
@@ -927,16 +888,6 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("[vLLM] Mapping deprecated task=%s to --runner pooling", removed_task)
         engine_config.setdefault("runner", "pooling")
 
-    # Sparse KV 有独立 --kv-transfer-config 生成路径，移除冲突项
-    if params.get("enable_sparse"):
-        existing_kv_cfg = engine_config.pop("kv_transfer_config", None)
-        if existing_kv_cfg:
-            logger.warning(
-                "[Sparse KV] Removed LMCache/PD kv_transfer_config from "
-                "engine_config to avoid conflict with Sparse KV's "
-                "--kv-transfer-config. Removed value: %s",
-                existing_kv_cfg,
-            )
     return engine_config
 
 
@@ -1119,231 +1070,44 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
     return _format_speculative_result(speculative_config_temp)
 
 
-# ── Sparse KV ────────────────────────────────────────────────────────────
+# ── KV Sparse（IndexCache / FP8 KV CACHE）───────────────────────────────
+
+# 当 enable_sparse=true 时，根据模型架构决定 KV 稀疏策略：
+#   - INDEXCACHE_ARCHS 中的架构 → IndexCache 加速
+#   - 其他架构 → FP8 KV CACHE 量化
 
 
-def _estimate_gpu_total_memory_gb() -> float:
-    """估算单张 GPU 总显存（GB）。
+def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
+    """构建 KV 稀疏特性的启动命令参数。
 
-    优先级:
-      1. WINGS_DEVICE_MEMORY 环境变量（运行时探测值，GB）
-      2. 兜底 40 GB（保守估计）
-    """
-    mem_env = os.getenv("WINGS_DEVICE_MEMORY", "").strip()
-    if mem_env:
-        try:
-            return float(mem_env)
-        except ValueError:
-            pass
-    return 40.0
-
-
-def _estimate_memory_limit_capacity(
-    params: Dict[str, Any],
-    engine_config: Dict[str, Any],
-    block_size: int,
-    gpu_total_gb: float,
-) -> int:
-    """基于 GPU 显存估算 LocalStore 可用的最大 block 容量。
-
-    Returns:
-        int: 显存约束下的最大 block 数，无法估算时返回 0。
-    """
-    total_budget = float(params.get("total_budget", 0) or 0)
-    gpu_memory_utilization = float(engine_config.get("gpu_memory_utilization", 0.9) or 0.9)
-    tp_size = int(engine_config.get("tensor_parallel_size", 1) or 1)
-
-    if total_budget <= 0 or gpu_total_gb <= 0:
-        return 0
-
-    # LocalStore 可用显存（GB）≈ GPU 总显存 × total_budget
-    localstore_budget_gb = gpu_total_gb * total_budget
-    # 保守估计不超过非 KV-cache 空间
-    non_kv_space_gb = gpu_total_gb * (1.0 - gpu_memory_utilization)
-    localstore_avail_gb = min(localstore_budget_gb, max(non_kv_space_gb, 1.0))
-
-    # 经验估算每 block 大小 (GB): 典型 7B 模型约 2MB/block (block_size=16)
-    # 按 block_size 线性缩放，TP 分摊
-    per_block_gb = (block_size / 16.0) * (2.0 / 1024.0) / max(tp_size, 1)
-    if per_block_gb <= 0:
-        return 0
-
-    capacity = int(localstore_avail_gb / per_block_gb)
-    logger.info(
-        "[Sparse KV] memory-based capacity estimate: "
-        "gpu=%.1fGB, total_budget=%.2f, localstore_avail=%.2fGB, "
-        "per_block=%.4fGB, mem_limit_capacity=%d",
-        gpu_total_gb, total_budget, localstore_avail_gb,
-        per_block_gb, capacity,
-    )
-    return capacity
-
-
-def _select_sparse_capacity(
-    demand: int,
-    mem_limit: int,
-    max_model_len,
-    block_size: int,
-    total_budget: float,
-) -> int:
-    """从需求值和显存上限值中综合决策最终 capacity。"""
-    if demand > 0 and mem_limit > 0:
-        capacity = min(demand, mem_limit)
-        if demand > mem_limit:
-            logger.warning(
-                "[Sparse KV] capacity clamped by GPU memory: "
-                "demand=%d (max_model_len=%s/block_size=%d) > "
-                "mem_limit=%d; using %d",
-                demand, max_model_len, block_size, mem_limit, capacity,
-            )
-        else:
-            logger.info(
-                "[Sparse KV] capacity=%d "
-                "(demand=%d, mem_limit=%d, min taken)",
-                capacity, demand, mem_limit,
-            )
-        return capacity
-    if demand > 0:
-        logger.info(
-            "[Sparse KV] capacity=%d (from max_model_len=%s / block_size=%d)",
-            demand, max_model_len, block_size,
-        )
-        return demand
-    if mem_limit > 0:
-        logger.info(
-            "[Sparse KV] capacity=%d (from memory estimate, no max_model_len)",
-            mem_limit,
-        )
-        return mem_limit
-    logger.warning(
-        "[Sparse KV] Cannot auto-calculate capacity "
-        "(max_model_len=%s, block_size=%d, total_budget=%.2f); "
-        "defaulting to 8192",
-        max_model_len, block_size, total_budget,
-    )
-    return 8192
-
-
-def _resolve_sparse_capacity(params: Dict[str, Any]) -> int:
-    """计算 LocalStoreKVStore 的 capacity 值（考虑显存约束）。
-
-    优先级:
-      1. 用户显式设置 local_kvstore_capacity → 直接使用
-      2. 自动推算 → min(需求值, 显存上限值)
-      3. 兜底默认值 8192
-
-    Returns:
-        int: capacity 值（至少为 1）
-    """
-    user_capacity = params.get("local_kvstore_capacity", 0)
-    if user_capacity and int(user_capacity) > 0:
-        return int(user_capacity)
-
-    engine_config = params.get("engine_config", {})
-    max_model_len = engine_config.get("max_model_len", 0)
-    block_size = int(engine_config.get("block_size") or params.get("block_size") or 16)
-
-    # 需求值：覆盖一个最大长度请求的所有 KV block
-    demand_capacity = 0
-    if max_model_len and int(max_model_len) > 0 and block_size > 0:
-        demand_capacity = int(max_model_len) // block_size
-
-    # 显存上限值
-    gpu_total_gb = _estimate_gpu_total_memory_gb()
-    mem_limit_capacity = _estimate_memory_limit_capacity(
-        params, engine_config, block_size, gpu_total_gb,
-    )
-
-    total_budget = float(params.get("total_budget", 0) or 0)
-    capacity = _select_sparse_capacity(
-        demand_capacity, mem_limit_capacity,
-        max_model_len, block_size, total_budget,
-    )
-    return max(capacity, 1)
-
-
-def _build_sparse_config(params: Dict[str, Any], config: List[str]) -> str:
-    """构建 sparse-config 参数"""
-    config.append('"enable_sparse": true')
-    config.append('"sparse_algo_type": "BMSA"')
-    config.append(f'"total_budget": {params.get("total_budget")}')
-    config.append(f'"max_num_seqs": {params.get("max_num_seqs", 1)}')
-    config.append(f'"lc_sparse_threshold": {params.get("lc_sparse_threshold")}')
-    return " --sparse-config '{" + ", ".join(config) + "}'"
-
-
-def _build_kv_transfer_config(params: Dict[str, Any], config: List[str]) -> str:
-    """构建 kv-transfer-config 参数。
-
-    capacity 由 _resolve_sparse_capacity 负责解析：
-    优先使用 local_kvstore_capacity，未设置时按 max_model_len / block_size 自动计算。
-    """
-    capacity = _resolve_sparse_capacity(params)
-    config.append('"kv_connector" : "SparseConnector"')
-    config.append('"kv_role" : "kv_both"')
-    config.append('"kv_connector_module_path": "vsparse.connectors.sparse_connector"')
-    config.append(
-        '"kv_connector_extra_config": {"sparse_connectors": '
-        '[{"connector_name": "LocalStoreKVStore", "connector_config": {'
-        f'"capacity": {capacity}'
-        '}}]}')
-    return " --kv-transfer-config '{" + ", ".join(config) + "}'"
-
-
-def _build_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
-    """构建 Sparse KV 完整命令参数。
-
-    仅 vllm (NVIDIA) 支持 Sparse KV 特性。
-    自动追加 --compilation-config '{"cudagraph_mode": "PIECEWISE"}'
-    （用户显式设置 compilation_config 时使用用户值）。
+    仅 vllm (NVIDIA) 支持 KV 稀疏特性。
+    根据模型架构决定策略：
+      - IndexCache 架构（GlmMoeDsa/DeepseekV32）：追加 --hf-overrides
+      - 其他架构：追加 --kv-cache-dtype fp8 --calculate-kv-scales
 
     Args:
         params: 参数字典
         engine: 引擎类型
 
     Returns:
-        str: 拼接后的完整 sparse 参数字符串
+        str: 拼接后的命令参数字符串，未启用或引擎不支持时返回空字符串
     """
-    if engine not in ("vllm",):
+    if engine != "vllm":
         return ""
 
-    # 参数校验：total_budget 必须为正数（浮点，表示显存比例）
-    total_budget = params.get("total_budget", 0)
-    if not total_budget or float(total_budget) <= 0:
-        logger.warning(
-            "[Sparse KV] total_budget=%s is invalid (must be > 0); "
-            "sparse KV may not allocate any KV blocks",
-            total_budget,
-        )
-    # capacity 由 _resolve_sparse_capacity 负责：显式设置 > 自动推算 > 兜底默认值
-
-    config_sparse_tmp = []
-    config_sparse = _build_sparse_config(params, config_sparse_tmp)
-    config_kv_transfer_tmp = []
-    config_kv_transfer = _build_kv_transfer_config(params, config_kv_transfer_tmp)
-
-    # Sparse KV 需要 PIECEWISE cudagraph 模式才能正常工作
-    # 如果用户未显式配置 compilation_config，则自动追加默认值
-    # 如果用户已配置，则由主命令 (engine_config) 输出，此处不重复追加
-    user_compilation = (
-        str(params.get("compilation_config", "") or "").strip()
-        or str(params.get("engine_config", {}).get("compilation_config", "") or "").strip()
+    model_info = ModelIdentifier(
+        params.get("model_name"),
+        params.get("model_path"),
+        params.get("model_type"),
     )
-    if user_compilation:
-        # 用户显式配置的值已在 engine_config → _build_vllm_cmd_parts 中输出
-        config_compilation = ""
-        logger.info(
-            "[Sparse KV] Using user-specified compilation_config: %s",
-            user_compilation,
-        )
-    else:
-        config_compilation = ' --compilation-config \'{"cudagraph_mode": "PIECEWISE"}\''
-        logger.info(
-            "[Sparse KV] Auto-appending compilation-config: %s",
-            '{"cudagraph_mode": "PIECEWISE"}',
-        )
+    arch = model_info.model_architecture
 
-    return config_kv_transfer + config_compilation + config_sparse
+    if arch in INDEXCACHE_ARCHS:
+        logger.info("[KV Sparse] Architecture %s → IndexCache strategy (--hf-overrides)", arch)
+        return " --hf-overrides '{\"index_topk_freq\": 4}'"
+    else:
+        logger.info("[KV Sparse] Architecture %s → FP8 KV CACHE strategy (--kv-cache-dtype fp8)", arch)
+        return " --kv-cache-dtype fp8 --calculate-kv-scales"
 
 
 def build_start_command(params: Dict[str, Any]) -> str:
@@ -1575,7 +1339,7 @@ def _build_ray_head_commands(
 
     eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
     speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
-    sparse_args = _build_sparse_cmd(params, ctx.engine) if params.get("enable_sparse") else ""
+    sparse_args = _build_kv_sparse_cmd(params, ctx.engine) if params.get("enable_sparse") else ""
 
     ray_pp_extra = ""
     model_info_ray = ModelIdentifier(
@@ -1808,7 +1572,7 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     cmds: List[str] = []
     cmds.extend(_build_base_env_commands(params, engine, root_dir))
     cmds.extend(_build_cache_env_commands(engine))
-    cmds.extend(_build_sparse_lib_env_commands(params, engine))
+
     cmds.extend(_build_qat_env_commands(engine))
     cmds.extend(_build_pd_role_env_commands(engine, current_ip, net_if))
     return cmds
@@ -1855,7 +1619,7 @@ def _build_vllm_single_script(
     """组装单机模式的 bash 脚本体并返回。"""
     env_prefix = "\n".join(common_env_cmds) + "\n" if common_env_cmds else ""
     speculative_extra = _build_speculative_cmd(params, engine) if params.get("enable_speculative_decode") else ""
-    sparse_args = _build_sparse_cmd(params, engine) if params.get("enable_sparse") else ""
+    sparse_args = _build_kv_sparse_cmd(params, engine) if params.get("enable_sparse") else ""
     # A+X 环境下需要 --enforce-eager 绕过 triton 版本冲突（与 Ray 路径一致）
     eager_flag = " --enforce-eager" if _need_enforce_eager(engine) else ""
 

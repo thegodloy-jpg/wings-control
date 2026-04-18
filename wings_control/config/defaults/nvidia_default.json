@@ -24,14 +24,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "deepseek_v3",
             "reasoning_parser": "deepseek_r1"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "deepseek_v3",
             "reasoning_parser": "deepseek_r1"
           },
@@ -50,14 +48,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "deepseek_v3",
             "reasoning_parser": "deepseek_r1"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "deepseek_v3",
             "reasoning_parser": "deepseek_r1"
           },
@@ -99,14 +95,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "deepseek_v31",
             "reasoning_parser": "deepseek_r1"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "deepseek_v31",
             "reasoning_parser": "deepseek_r1"
           },
@@ -150,14 +144,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -176,13 +168,11 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "qwen3_xml"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "qwen3_xml"
           },
           "sglang": {
@@ -200,13 +190,11 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "qwen3_xml"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "qwen3_xml"
           },
           "sglang": {
@@ -276,13 +264,11 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "deepseekv32"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "deepseekv32"
           },
           "sglang": {
@@ -302,14 +288,36 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "glm47",
             "reasoning_parser": "glm45"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
+            "tool_call_parser": "glm47",
+            "reasoning_parser": "glm45"
+          },
+          "sglang": {
+            "trust_remote_code": true,
+            "context_length": 4096
+          },
+          "sglang_distributed": {
+            "trust_remote_code": true,
+            "context_length": 4096
+          }
+        }
+      },
+      "GlmMoeDsaForCausalLM": {
+        "default": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "glm47",
+            "reasoning_parser": "glm45"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
             "tool_call_parser": "glm47",
             "reasoning_parser": "glm45"
           },
@@ -329,7 +337,6 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -337,7 +344,6 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -359,8 +365,6 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "enable_expert_parallel": true,
-            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -368,8 +372,6 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "enable_expert_parallel": true,
-            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -390,14 +392,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "minimax_m2",
             "reasoning_parser": "minimax_m2_reasoning"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
             "tool_call_parser": "minimax_m2",
             "reasoning_parser": "minimax_m2_reasoning"
           },
@@ -462,16 +462,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
-            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
-            "tool_call_parser": "hermes",
+           "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "enable_expert_parallel": true,
-            "compilation_config": "{\"cudagraph_mode\":\"PIECEWISE\"}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },

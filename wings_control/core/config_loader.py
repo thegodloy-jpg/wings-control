@@ -256,8 +256,7 @@ def _build_engine_cmd_parameter(cmd_known_params: Dict[str, Any]) -> Dict[str, A
         "max_num_batched_tokens", "enable_prefix_caching", "enable_speculative_decode",
         "speculative_decode_model_path",
         "enable_rag_acc", "enable_auto_tool_choice",
-        "enable_sparse", "lc_sparse_threshold", "total_budget", "local_kvstore_capacity",
-        "compilation_config",
+        "enable_sparse", "compilation_config",
     ]
     return {k: cmd_known_params.get(k) for k in keys}
 

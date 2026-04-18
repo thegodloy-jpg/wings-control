@@ -201,9 +201,6 @@ class LaunchArgs:
         enable_rag_acc: 是否启用 RAG 加速
         enable_auto_tool_choice: 是否自动选择工具调用
         enable_sparse:  是否启用 Sparse KV Cache (v2 新增)
-        lc_sparse_threshold: LC Sparse 阈值 (v2 新增)
-        total_budget:   KV Cache 预算 (v2 新增)
-        local_kvstore_capacity: 本地 KVStore 容量 (v2 新增)
         distributed:    是否启用多节点分布式推理
         nnodes:         分布式节点总数
         node_rank:      当前节点编号（0 为 head 节点）
@@ -241,9 +238,6 @@ class LaunchArgs:
     enable_rag_acc: bool
     enable_auto_tool_choice: bool
     enable_sparse: bool
-    lc_sparse_threshold: float
-    total_budget: float
-    local_kvstore_capacity: int
     compilation_config: str
     distributed: bool
     nnodes: int
@@ -302,9 +296,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- v2 新增: Sparse KV / KVStore 参数 ---
     _add_bool(p, "--enable-sparse", "ENABLE_SPARSE", False)
-    p.add_argument("--lc-sparse-threshold", type=float, default=_env_float("LC_SPARSE_THRESHOLD", 0.0))
-    p.add_argument("--total-budget", type=float, default=_env_float("TOTAL_BUDGET", 0.0))
-    p.add_argument("--local-kvstore-capacity", type=int, default=_env_int("LOCAL_KVSTORE_CAPACITY", 0))
 
     # --- v2 新增: Compilation Config (CUDA Graph 模式) ---
     p.add_argument("--compilation-config", default=_env("COMPILATION_CONFIG", ""))
@@ -359,9 +350,6 @@ def _map_args_to_launch_kwargs(args, engine: str) -> dict:
         "enable_rag_acc": bool(args.enable_rag_acc),
         "enable_auto_tool_choice": bool(args.enable_auto_tool_choice),
         "enable_sparse": bool(args.enable_sparse),
-        "lc_sparse_threshold": float(args.lc_sparse_threshold),
-        "total_budget": float(args.total_budget),
-        "local_kvstore_capacity": int(args.local_kvstore_capacity),
         "compilation_config": str(args.compilation_config),
         "distributed": bool(args.distributed),
         "nnodes": int(args.nnodes),

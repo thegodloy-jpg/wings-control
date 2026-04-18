@@ -126,7 +126,7 @@ DEFAULT_ENABLE_PREFIX_CACHING=""
 DEFAULT_INPUT_LENGTH=""
 DEFAULT_OUTPUT_LENGTH=""
 DEFAULT_SAVE_PATH="/opt/wings/outputs"
-DEFAULT_LOG_ANALYZER="/opt/wings-control/log_analyzer"
+DEFAULT_LOG_ANALYZER="/opt/log_analyzer"
 
 # ===== 解析命令行参数（与 A 完全一致） =====
 while [[ $# -gt 0 ]]; do
@@ -211,15 +211,6 @@ while [[ $# -gt 0 ]]; do
             SPECULATIVE_DECODE_MODEL_PATH="$2"; shift 2 ;;
         --enable-sparse)
             ENABLE_SPARSE=true; shift ;;
-        --lc-sparse-threshold)
-            [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --lc-sparse-threshold requires a value"; usage; }
-            LC_SPARSE_THRESHOLD="$2"; shift 2 ;;
-        --total-budget)
-            [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --total-budget requires a value"; usage; }
-            TOTAL_BUDGET="$2"; shift 2 ;;
-        --local-kvstore-capacity)
-            [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --local-kvstore-capacity requires a value"; usage; }
-            LOCAL_KVSTORE_CAPACITY="$2"; shift 2 ;;
         --enable-rag-acc)
             ENABLE_RAG_ACC=true; shift ;;
         --enable-auto-tool-choice)
@@ -295,9 +286,6 @@ fi
 [ -n "${DEVICE_COUNT:-}" ]            && export DEVICE_COUNT
 [ -n "${MODEL_TYPE:-}" ]              && export MODEL_TYPE
 [ -n "${SPECULATIVE_DECODE_MODEL_PATH:-}" ] && export SPECULATIVE_DECODE_MODEL_PATH
-[ -n "${LC_SPARSE_THRESHOLD:-}" ]            && export LC_SPARSE_THRESHOLD
-[ -n "${TOTAL_BUDGET:-}" ]                   && export TOTAL_BUDGET
-[ -n "${LOCAL_KVSTORE_CAPACITY:-}" ]         && export LOCAL_KVSTORE_CAPACITY
 
 # 布尔参数
 [ "${TRUST_REMOTE_CODE:-}" = true ]          && export TRUST_REMOTE_CODE="true"
@@ -353,9 +341,6 @@ APP_ARGS=("--model-name" "$MODEL_NAME" "--model-path" "$MODEL_PATH")
 [ "${ENABLE_SPECULATIVE_DECODE:-}" = true ] && APP_ARGS+=("--enable-speculative-decode")
 [ -n "${SPECULATIVE_DECODE_MODEL_PATH:-}" ] && APP_ARGS+=("--speculative-decode-model-path" "$SPECULATIVE_DECODE_MODEL_PATH")
 [ "${ENABLE_SPARSE:-}" = true ]       && APP_ARGS+=("--enable-sparse")
-[ -n "${LC_SPARSE_THRESHOLD:-}" ]      && APP_ARGS+=("--lc-sparse-threshold" "$LC_SPARSE_THRESHOLD")
-[ -n "${TOTAL_BUDGET:-}" ]             && APP_ARGS+=("--total-budget" "$TOTAL_BUDGET")
-[ -n "${LOCAL_KVSTORE_CAPACITY:-}" ]   && APP_ARGS+=("--local-kvstore-capacity" "$LOCAL_KVSTORE_CAPACITY")
 [ "${ENABLE_RAG_ACC:-}" = true ]      && APP_ARGS+=("--enable-rag-acc")
 [ "${ENABLE_AUTO_TOOL_CHOICE:-}" = true ] && APP_ARGS+=("--enable-auto-tool-choice")
 

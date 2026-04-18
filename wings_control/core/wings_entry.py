@@ -28,6 +28,7 @@ from core.start_args_compat import LaunchArgs
 from core.version_util import normalize_engine_version
 from engines.vllm_adapter import build_modelslim_quarot_patch_preamble, build_triton_patch_preamble
 from utils.env_utils import get_master_ip
+from utils.model_utils import ModelIdentifier, INDEXCACHE_ARCHS
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 #
 # features 列表由以下高级特性环境变量决定（名称与 supported_features.json 对齐）：
 #   ENABLE_SPECULATIVE_DECODE → adaptive_draft_model（已改为 --install-runtime-deps 独立安装）
-#   ENABLE_SPARSE             → sparse_kv
+#   ENABLE_SPARSE             → indexcache（仅 IndexCache 架构，通过独立安装片段处理）
 #
 # 注意：LMCACHE_OFFLOAD（KV 卸载）通过 --lmcache-target 独立安装，
 # 不走 --features 路径，而是使用专用的 install.py --lmcache-target 参数。
@@ -59,8 +60,9 @@ _ENGINE_PATCH_KEY_MAP = {
 # 高级特性环境变量 → features 名称映射（与 supported_features.json 中的 feature key 对齐）
 # 注意：投机推理（ENABLE_SPECULATIVE_DECODE）已从此映射中移除，
 # 改为通过 --install-runtime-deps 独立安装，不再走 --features 路径。
-_FEATURE_SWITCH_MAP = {
-    "ENABLE_SPARSE": "sparse_kv",
+_FEATURE_SWITCH_MAP: dict[str, str] = {
+    # ENABLE_SPARSE 已从此映射移除，IndexCache 补丁通过
+    # _build_indexcache_install_snippet() 独立安装
 }
 
 # 引擎到 LMCache 安装目标的映射
@@ -299,6 +301,63 @@ def _build_lmcache_install_snippet(engine: str) -> str:
     )
 
 
+def _build_indexcache_install_snippet(engine: str, merged: dict) -> str:
+    """为 IndexCache 架构生成 accel 安装片段。
+
+    当 ENABLE_SPARSE=true 且模型架构属于 IndexCache 支持列表时，
+    通过 install.py --features 安装 indexcache 补丁。
+    非 IndexCache 架构使用 FP8 KV CACHE（仅命令行参数，无需 accel 补丁）。
+
+    Returns:
+        str: shell 脚本片段；不需要时返回空字符串。
+    """
+    if not merged.get("enable_sparse"):
+        return ""
+    if engine not in ("vllm",):
+        return ""
+
+    model_info = ModelIdentifier(
+        merged.get("model_name"), merged.get("model_path"), merged.get("model_type"),
+    )
+    arch = model_info.model_architecture
+    if arch not in INDEXCACHE_ARCHS:
+        logger.info(
+            "[IndexCache] Architecture %s not in IndexCache list; "
+            "FP8 KV CACHE path needs no accel patch.", arch,
+        )
+        return ""
+
+    patch_key = _ENGINE_PATCH_KEY_MAP.get(engine)
+    if not patch_key:
+        return ""
+
+    accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
+    engine_version = normalize_engine_version(os.getenv("ENGINE_VERSION", ""))
+    options = json.dumps({patch_key: {"version": engine_version, "features": ["indexcache"]}})
+    update_json = _shell_update_feature_json("sparse_kv", False)
+
+    return (
+        "# --- wings-accel: install IndexCache patches (fault-tolerant) ---\n"
+        f"if [ -f \"{accel_dir}/install.py\" ]; then\n"
+        f"    echo '[wings-accel] Installing IndexCache patches for {arch}...'\n"
+        "    set +e\n"
+        f"    python3 {accel_dir}/install.py --features '{options}'\n"
+        "    IC_RC=$?\n"
+        "    set -e\n"
+        "    if [ $IC_RC -ne 0 ]; then\n"
+        '        echo "[wings-accel] WARNING: IndexCache patch install failed'
+        ' (exit=$IC_RC), skipping."\n'
+        + update_json
+        + "    else\n"
+        "        echo '[wings-accel] IndexCache patches installed successfully.'\n"
+        "    fi\n"
+        "else\n"
+        f"    echo '[wings-accel] WARNING: {accel_dir}/install.py not found, "
+        "skipping IndexCache patch install.'\n"
+        "fi\n"
+    )
+
+
 def _build_per_feature_fallback_code(patch_key: str, engine_version: str, features: list[str]) -> str:
     """Build per-feature fallback shell code block for fault-tolerant accel install."""
     accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
@@ -356,17 +415,18 @@ def _build_accel_auto_snippet(patch_key: str, features: list[str]) -> str:
     )
 
 
-def _build_accel_preamble(engine: str) -> str:
+def _build_accel_preamble(engine: str, merged: dict) -> str:
     """若 Accel 加速功能已开启，生成容错的 shell 安装片段；否则返回空字符串。
 
     安装策略（容错）：
       1. 投机推理（ENABLE_SPECULATIVE_DECODE）使用 --install-runtime-deps 独立安装
       2. LMCache KV 卸载（LMCACHE_OFFLOAD）使用 --lmcache-target 独立安装
-      3. 其他高级特性（sparse_kv）继续走 --features 路径
-      4. 先尝试批量安装所有特性
-      5. 若批量安装失败（install.py exit 非零），回退到逐特性安装
-      6. 单个特性安装失败时记录警告并跳过，继续安装其余特性
-      7. 无论安装结果如何，始终继续拉起引擎服务
+      3. IndexCache（KV 稀疏 + IndexCache 架构）使用 --features indexcache 安装
+      4. 其他高级特性继续走 --features 路径
+      5. 先尝试批量安装所有特性
+      6. 若批量安装失败（install.py exit 非零），回退到逐特性安装
+      7. 单个特性安装失败时记录警告并跳过，继续安装其余特性
+      8. 无论安装结果如何，始终继续拉起引擎服务
     """
     if not settings.ENABLE_ACCEL:
         logger.debug("Accel disabled: skipping WINGS_ENGINE_PATCH_OPTIONS injection")
@@ -385,6 +445,12 @@ def _build_accel_preamble(engine: str) -> str:
     if lmcache_snippet:
         logger.info("Accel: injecting LMCache patch install (--lmcache-target)")
         preamble_parts.append(lmcache_snippet)
+
+    # ── IndexCache（KV 稀疏 + IndexCache 架构）：独立安装 ──
+    indexcache_snippet = _build_indexcache_install_snippet(engine, merged)
+    if indexcache_snippet:
+        logger.info("Accel: injecting IndexCache patch install (--features indexcache)")
+        preamble_parts.append(indexcache_snippet)
 
     # ── 路径 A：用户直接通过环境变量覆盖（仅影响非投机推理特性） ──
     user_override = _validate_accel_user_override()
@@ -944,14 +1010,16 @@ def _log_advanced_feature_config(
         logger.info("[AdvFeature] │ [speculative_decode]")
         logger.info("[AdvFeature] │   model_path = %s",
                     spec_model_path or "(none, using auto strategy)")
-    # KV 稀疏
+    # KV 稀疏（IndexCache / FP8 KV CACHE）
     if merged.get("enable_sparse"):
+        model_info = ModelIdentifier(
+            merged.get("model_name"), merged.get("model_path"), merged.get("model_type"),
+        )
+        arch = model_info.model_architecture
+        _ic_archs = INDEXCACHE_ARCHS
+        strategy = "IndexCache" if arch in _ic_archs else "FP8 KV CACHE"
         logger.info("[AdvFeature] │ [sparse_kv]")
-        logger.info("[AdvFeature] │   total_budget = %s", merged.get("total_budget", 0))
-        logger.info("[AdvFeature] │   lc_sparse_threshold = %s",
-                    merged.get("lc_sparse_threshold", 0))
-        logger.info("[AdvFeature] │   local_kvstore_capacity = %s",
-                    merged.get("local_kvstore_capacity", 0))
+        logger.info("[AdvFeature] │   strategy = %s (arch=%s)", strategy, arch)
     # KV 卸载
     if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true":
         logger.info("[AdvFeature] │ [lmcache_offload]")
@@ -1080,7 +1148,7 @@ def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> Launche
     faulthandler_patch = _build_faulthandler_patch_preamble(engine)
     triton_patch = build_triton_patch_preamble(engine)
     modelslim_patch = build_modelslim_quarot_patch_preamble(engine)
-    accel_preamble = _build_accel_preamble(engine)
+    accel_preamble = _build_accel_preamble(engine, merged)
     env_overrides = _build_env_overrides_preamble()
     rag_configured = os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true"
     monitor_script = _build_monitor_script(

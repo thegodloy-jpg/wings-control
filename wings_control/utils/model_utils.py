@@ -10,6 +10,7 @@
 
 支持的模型架构:
     - LLM:       DeepseekV3ForCausalLM, DeepseekV32ForCausalLM,
+                 GlmMoeDsaForCausalLM,
                  Glm4ForCausalLM, Glm4MoeForCausalLM,
                  Qwen2ForCausalLM, Qwen3ForCausalLM, Qwen3MoeForCausalLM,
                  Qwen3NextForCausalLM, Qwen3_5ForConditionalGeneration,
@@ -32,6 +33,13 @@ from typing import Optional
 from utils.file_utils import load_json_config
 
 logger = logging.getLogger(__name__)
+
+# IndexCache 支持的模型架构列表
+# 当 KV 稀疏开启时，这些架构使用 IndexCache 策略；其他架构使用 FP8 KV CACHE
+INDEXCACHE_ARCHS: frozenset[str] = frozenset({
+    "GlmMoeDsaForCausalLM",
+    "DeepseekV32ForCausalLM",
+})
 
 #
 _LLM_MODELS = {
@@ -58,6 +66,12 @@ _LLM_MODELS = {
         ],
     "Glm4ForCausalLM": [
         "GLM-4-9B-0414"
+        ],
+    "GlmMoeDsaForCausalLM": [
+        "GLM-5",
+        "GLM-5-FP8",
+        "GLM-5.1",
+        "GLM-5.1-FP8"
         ],
     "Glm4MoeForCausalLM": [
         "GLM-4.7",
