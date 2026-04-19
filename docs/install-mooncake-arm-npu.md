@@ -110,19 +110,10 @@ apt-get install -y -qq \
     libgrpc++-dev libgrpc-dev libgtest-dev \
     libpython3-dev
 
-# ========== 4. 运行官方依赖脚本 ==========
-echo "[4/8] 运行 dependencies.sh..."
-cd /tmp/Mooncake
-
-# 可选：国内网络加速 Go 下载
-# sed -i 's|https://go.dev/dl/|https://golang.google.cn/dl/|g' dependencies.sh
-
-bash dependencies.sh -y || true
-# yalantinglibs 下载可能因网络失败，下一步手动处理
-
-# ========== 5. 手动安装 yalantinglibs（如果上一步失败） ==========
+# ========== 4. 安装 yalantinglibs ==========
+# 先于 dependencies.sh 安装，避免其内部下载失败导致报错
 if ! find /usr/local/include -name "coro_rpc" -type d 2>/dev/null | grep -q .; then
-    echo "[5/8] 手动安装 yalantinglibs..."
+    echo "[4/8] 安装 yalantinglibs..."
     cd /tmp
     wget -q https://github.com/alibaba/yalantinglibs/archive/refs/tags/0.5.7.zip || \
         curl -L -o 0.5.7.zip https://github.com/alibaba/yalantinglibs/archive/refs/tags/0.5.7.zip
@@ -132,8 +123,18 @@ if ! find /usr/local/include -name "coro_rpc" -type d 2>/dev/null | grep -q .; t
     cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release
     make -j$(nproc) && make install
 else
-    echo "[5/8] yalantinglibs 已安装，跳过"
+    echo "[4/8] yalantinglibs 已安装，跳过"
 fi
+
+# ========== 5. 运行官方依赖脚本 ==========
+echo "[5/8] 运行 dependencies.sh（安装 Go、git submodules 等）..."
+cd /tmp/Mooncake
+
+# 可选：国内网络加速 Go 下载
+# sed -i 's|https://go.dev/dl/|https://golang.google.cn/dl/|g' dependencies.sh
+
+# yalantinglibs 已在上一步安装，dependencies.sh 会检测到并跳过
+bash dependencies.sh -y || true
 
 # ========== 6. 编译 Mooncake（Ascend Direct） ==========
 echo "[6/8] 编译 Mooncake（-DUSE_ASCEND_DIRECT=ON）..."
