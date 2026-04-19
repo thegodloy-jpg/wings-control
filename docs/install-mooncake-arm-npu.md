@@ -85,6 +85,13 @@ rm -rf /tmp/Mooncake /tmp/yalantinglibs-0.5.7 /tmp/0.5.7.zip
 # ========== 2. 克隆源码 ==========
 echo "[2/8] 克隆 Mooncake 源码..."
 cd /tmp
+
+# 如果需要代理访问 GitHub（K8s Pod 常见场景）：
+# export http_proxy=http://<PROXY_HOST>:<PROXY_PORT>
+# export https_proxy=$http_proxy
+# export GIT_SSL_NO_VERIFY=1          # 代理导致 SSL 证书验证失败时使用
+# git config --global http.sslVerify false
+
 git clone -b v0.3.9 --depth 1 https://github.com/kvcache-ai/Mooncake.git
 cd Mooncake
 git submodule update --init --recursive
@@ -320,6 +327,8 @@ mooncake_master \
 | `Failed to download yalantinglibs` | Pod 网络无法访问 GitHub releases | 手动下载 0.5.7.zip 并编译安装（见脚本步骤 5） |
 | `_mm_pause` 编译错误 | Intel 专有指令，ARM 不支持 | Mooncake >= v0.3.8.post1 已修复（PR#1313） |
 | `dependencies.sh` 需要 Go 1.20+ | etcd 编译需要 | 可跳过：`-DUSE_ETCD=OFF` |
+| `Could not resolve host: github.com` | Pod 内 DNS 无法解析外网地址 | 配置 `http_proxy` / `https_proxy` 环境变量 |
+| `server certificate verification failed` | 代理导致 SSL 中间人验证失败 | `export GIT_SSL_NO_VERIFY=1` + `git config --global http.sslVerify false` |
 
 ### 9.2 运行期问题
 
