@@ -95,10 +95,11 @@ def _get_ray_resource_flag(engine: str, params: dict) -> str:
 
     ver = _parse_engine_version()
     if ver >= _ASCEND_NPU_RESOURCE_MIN_VERSION:
-        device_count = params.get("device_count", 1)
-        nnodes = params.get("nnodes", 1)
-        npu_per_node = max(1, device_count // nnodes)
-        logger.info("[ray] Ascend engine version %s >= 0.14, using --resources NPU=%d (tp=%d, nnodes=%d)", ver, npu_per_node, device_count, nnodes)
+        # device_count 已经是每节点的设备数（DEVICE_COUNT 环境变量），
+        # 全局 TP = device_count * nnodes 在 _adjust_tensor_parallelism 中计算。
+        # 此处直接用 device_count 作为每节点 NPU 资源数。
+        npu_per_node = max(1, params.get("device_count", 1))
+        logger.info("[ray] Ascend engine version %s >= 0.14, using --resources NPU=%d", ver, npu_per_node)
         return f"--resources='{{\"NPU\": {npu_per_node}}}'"
     else:
         tp_size = params.get("device_count", 1)
