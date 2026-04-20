@@ -1778,22 +1778,6 @@ def _validate_user_engine(engine: str, device_name: str, gpu_usage_mode: str, mo
             logger.warning("operator_acceleration is enabled, "
                            "automatically switched to VLLM_Ascend engine")
             return "vllm_ascend"
-    elif engine == 'sglang':
-        if get_lmcache_env():
-            logger.warning("[KVCache Offload] KVCache Offload enabled, automatically switched to VLLM engine")
-            return vllm
-        elif get_pd_role_env():
-            logger.warning("PD enabled, automatically switched to VLLM engine")
-            return vllm
-        elif get_router_env():
-            logger.warning("Wings router enabled, automatically switched to VLLM engine")
-            return vllm
-        elif gpu_usage_mode == "mig":
-            logger.warning("Device is Mig, automatically switched to VLLM engine")
-            return vllm
-        elif model_type in ["embedding", "rerank"]:
-            logger.warning("model type is %s, automatically switched to VLLM engine", model_type)
-            return vllm
     return engine
 
 
