@@ -95,8 +95,11 @@ def _get_ray_resource_flag(engine: str, params: dict) -> str:
 
     ver = _parse_engine_version()
     if ver >= _ASCEND_NPU_RESOURCE_MIN_VERSION:
-        logger.info("[ray] Ascend engine version %s >= 0.14, using --resources NPU", ver)
-        return "--resources='{\"NPU\": 1}'"
+        device_count = params.get("device_count", 1)
+        nnodes = params.get("nnodes", 1)
+        npu_per_node = max(1, device_count // nnodes)
+        logger.info("[ray] Ascend engine version %s >= 0.14, using --resources NPU=%d (tp=%d, nnodes=%d)", ver, npu_per_node, device_count, nnodes)
+        return f"--resources='{{\"NPU\": {npu_per_node}}}'"
     else:
         tp_size = params.get("device_count", 1)
         logger.info("[ray] Ascend engine version %s < 0.14, using --num-gpus=%d (V1 compat)", ver, tp_size)
