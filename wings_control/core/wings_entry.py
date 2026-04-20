@@ -1025,7 +1025,7 @@ def _log_advanced_feature_config(
         logger.info("[AdvFeature] │ [lmcache_offload]")
         logger.info("[AdvFeature] │   kv_transfer_config = %s",
                     merged.get("kv_transfer_config", "(not set)"))
-    logger.info("[AdvFeature] │ 回退策略 = 一刀切 (崩溃即回退)")
+    logger.info("[AdvFeature] │ fallback_strategy = all-or-nothing (crash triggers full rollback)")
     logger.info("[AdvFeature] └── Advanced features injected into engine start command")
 
 
