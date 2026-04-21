@@ -1,35 +1,35 @@
 # =============================================================================
-#  三容器架构 Docker Compose — MiniMax-M2.7 基础测试版
+#  三容器架构 Docker Compose — DeepSeek-V3.2 高级特性测试版
 #  容器: wings-accel (init) + wings-control (sidecar) + engine (推理)
 #
-#  适用场景: MiniMax-M2.7 MoE 单机推理部署 (NVIDIA GPU)
-#            不开启 KV 卸载、KV 稀疏、投机推理，用作基础对照测试
+#  适用场景: DeepSeek-V3.2 单机推理部署 (NVIDIA GPU)
+#            开启 KV 内存卸载、KV 稀疏、无草稿模型投机推理，用作高级特性测试
 #  默认引擎: vLLM
-#  默认模型: MiniMax-M2.7 (TP=4, MoE 架构 MiniMaxM2ForCausalLM)
+#  默认模型: DeepSeek-V3.2 (TP=8, DeepseekV32ForCausalLM)
 #
-#  注意: M2.7 为大型 MoE 模型, 建议使用 4×GPU (80GB+) 或更多
-#        FP8 量化权重在 TP=8 下 MoE 层尺寸不对齐 (192%128≠0)，推荐 TP=4
+#  注意: 本文件默认使用 GPU 8,9,10,11,12,13,14,15，端口与基础测试版错开。
+#        可与 docker-compose-3c-deepseek-v32.yml 同时启动做对照测试。
 #
 #  使用方法:
 #    1. 根据实际环境修改下方 x-user-config 中的模型路径、镜像版本、设备数
 #
 #    2. 启动:
-#       docker compose -f docker-compose-3c-minimax-m27.yml up -d
+#       docker compose -f docker-compose-3c-deepseek-v32-advanced.yml up -d
 #
 #    3. 查看 control 生成的启动脚本:
-#       docker compose -f docker-compose-3c-minimax-m27.yml exec wings-control-minimax-m27-basic \
+#       docker compose -f docker-compose-3c-deepseek-v32-advanced.yml exec wings-control-deepseek-v32-advanced \
 #         cat /shared-volume/start_command.sh
 #
 #    4. 查看日志:
-#       docker compose -f docker-compose-3c-minimax-m27.yml logs -f
+#       docker compose -f docker-compose-3c-deepseek-v32-advanced.yml logs -f
 #
 #    5. 测试推理:
-#       curl http://localhost:18000/v1/chat/completions \
+#       curl http://localhost:18001/v1/chat/completions \
 #         -H "Content-Type: application/json" \
-#         -d '{"model":"MiniMax-M2.7","messages":[{"role":"user","content":"hello"}],"max_tokens":32}'
+#         -d '{"model":"DeepSeek-V3.2","messages":[{"role":"user","content":"hello"}],"max_tokens":32}'
 #
 #    6. 停止:
-#       docker compose -f docker-compose-3c-minimax-m27.yml down
+#       docker compose -f docker-compose-3c-deepseek-v32-advanced.yml down
 #
 # =============================================================================
 version: "3.8"
@@ -44,25 +44,25 @@ x-user-config:
   engine-image:  &engine-image  "wings-vllm:v0.19.0-202604162107"
 
   # -- 模型配置 --
-  model-name:      &model-name    "MiniMax-M2.7"
-  model-path:      &model-path    "/models/MiniMax-M2.7"
+  model-name:      &model-name    "DeepSeek-V3.2"
+  model-path:      &model-path    "/models/DeepSeek-V3.2"
   # 宿主机上模型文件的实际路径（修改后需同步更新 x-model-volume）
-  host-model-dir:  "/var/aispace/model/ai-storage/ai-prod/platform/MiniMax-M2.7"
+  host-model-dir:  "/var/aispace/model/ai-storage/ai-prod/platform/DeepSeek-V3.2"
 
   # -- 设备配置 --
   device-type:     "nvidia"                     # nvidia | ascend
-  device-count:    &device-count  "4"
+  device-count:    &device-count  "8"
   # NVIDIA: 逗号分隔的 GPU ID；Ascend: NPU ID
-  visible-devices: &visible-devices "0,1,2,3"
+  visible-devices: &visible-devices "0,1,2,3,4,5,6,7"
 
 # 模型挂载卷（修改模型路径时，同步修改此处的 宿主路径:容器路径）
-x-model-volume: &model-volume "/var/aispace/model/ai-storage/ai-prod/platform/MiniMax-M2.7:/models/MiniMax-M2.7:ro"
+x-model-volume: &model-volume "/var/aispace/model/ai-storage/ai-prod/platform/DeepSeek-V3.2:/models/DeepSeek-V3.2:ro"
 
 services:
   # ==================== 1. Accel Init 容器 ====================
-  accel-init-minimax-m27-basic:
+  accel-init-deepseek-v32-advanced:
     image: *accel-image
-    container_name: wings-accel-init-minimax-m27-basic
+    container_name: wings-accel-init-deepseek-v32-advanced
     restart: "no"
     entrypoint: /bin/sh
     command:
@@ -74,32 +74,32 @@ services:
         ls -la /accel-volume/;
         echo '[accel-init] Exiting.'
     volumes:
-      - accel-vol-minimax-m27-basic:/accel-volume
+      - accel-vol-deepseek-v32-advanced:/accel-volume
 
   # ==================== 2. Wings Control 容器 ====================
-  wings-control-minimax-m27-basic:
+  wings-control-deepseek-v32-advanced:
     image: *control-image
-    container_name: wings-control-minimax-m27-basic
+    container_name: wings-control-deepseek-v32-advanced
     network_mode: "host"
     restart: "no"
     command: ["sleep", "infinity"]
     depends_on:
-      accel-init-minimax-m27-basic:
+      accel-init-deepseek-v32-advanced:
         condition: service_completed_successfully
     volumes:
-      - shared-vol-minimax-m27-basic:/shared-volume
-      - accel-vol-minimax-m27-basic:/accel-volume:ro
+      - shared-vol-deepseek-v32-advanced:/shared-volume
+      - accel-vol-deepseek-v32-advanced:/accel-volume:ro
       - *model-volume
 
   # ==================== 3. Engine 容器 ====================
-  engine-minimax-m27-basic:
+  engine-deepseek-v32-advanced:
     image: *engine-image
-    container_name: wings-engine-minimax-m27-basic
+    container_name: wings-engine-deepseek-v32-advanced
     network_mode: "host"
     shm_size: "16g"
     restart: "no"
     depends_on:
-      accel-init-minimax-m27-basic:
+      accel-init-deepseek-v32-advanced:
         condition: service_completed_successfully
     entrypoint: ["/bin/sh", "-c"]
     # -- NVIDIA GPU 配置 --
@@ -123,10 +123,10 @@ services:
         echo '===============================================';
         bash /shared-volume/start_command.sh
     volumes:
-      - shared-vol-minimax-m27-basic:/shared-volume
-      - accel-vol-minimax-m27-basic:/accel-volume:ro
+      - shared-vol-deepseek-v32-advanced:/shared-volume
+      - accel-vol-deepseek-v32-advanced:/accel-volume:ro
       - *model-volume
 
 volumes:
-  shared-vol-minimax-m27-basic:
-  accel-vol-minimax-m27-basic:
+  shared-vol-deepseek-v32-advanced:
+  accel-vol-deepseek-v32-advanced:

@@ -113,6 +113,57 @@ GLM-5.1-FP8 的 `ENABLE_SPARSE=true` 会走 IndexCache 路径，当前代码会�
 - `--block-size 64`
 - `--hf-overrides '{"index_topk_freq": 4}'`
 
+### Docker Compose 对照测试
+
+GLM-5.1 提供两份 compose 文件用于同机对照测试。两份文件都使用 8 张 H20-141G，但 GPU 编号、端口、容器名和 volume 名互相错开。端口规则固定为：基础版使用 `17000/18000/19000/19100`，高级版在此基础上全部加一。compose 只负责拉起容器，`wings-control` 使用 `command: ["sleep", "infinity"]` 保持运行，需要进入 control 容器后手动执行上面的基础或高级启动命令。
+
+基础测试版：
+
+- 文件：`docker-compose-3c-glm51.yml`
+- GPU：`0,1,2,3,4,5,6,7`
+- OpenAI API 端口：`18000`
+- engine backend 端口：`17000`
+- health 端口：`19000`
+- monitor proxy 端口：`19100`
+- 高级特性：全部关闭；compose 不设置启动环境变量，进入 `wings-control` 后手动执行 GLM 基础命令
+
+```bash
+docker compose -f docker-compose-3c-glm51.yml up -d
+
+curl http://localhost:18000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"GLM-5.1","messages":[{"role":"user","content":"hello"}],"max_tokens":32}'
+```
+
+高级特性测试版：
+
+- 文件：`docker-compose-3c-glm51-advanced.yml`
+- GPU：`8,9,10,11,12,13,14,15`
+- OpenAI API 端口：`18001`
+- engine backend 端口：`17001`
+- health 端口：`19001`
+- monitor proxy 端口：`19101`
+- 高级特性：compose 不设置启动环境变量，进入 `wings-control` 后手动执行 GLM 全部高级特性命令
+- KV 卸载：只启用内存卸载，`LMCACHE_LOCAL_CPU=true`，`LMCACHE_MAX_LOCAL_CPU_SIZE=64`，不设置磁盘卸载
+
+```bash
+docker compose -f docker-compose-3c-glm51-advanced.yml up -d
+
+curl http://localhost:18001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"GLM-5.1","messages":[{"role":"user","content":"hello"}],"max_tokens":32}'
+```
+
+手动拉起后查看生成的启动脚本：
+
+```bash
+docker compose -f docker-compose-3c-glm51.yml exec wings-control-glm51-basic \
+  cat /shared-volume/start_command.sh
+
+docker compose -f docker-compose-3c-glm51-advanced.yml exec wings-control-glm51-advanced \
+  cat /shared-volume/start_command.sh
+```
+
 ## MiniMax-M2.7
 
 硬件：4 张 H20。
@@ -195,6 +246,59 @@ python -m wings_control \
 ```
 
 MiniMax-M2.7 不属于当前 IndexCache 架构列表，`ENABLE_SPARSE=true` 会按当前代码走 FP8 KV Cache 路径；上线前建议先小流量验证输出质量和稳定性。
+
+### Docker Compose 对照测试
+
+MiniMax-M2.7 提供两份 compose 文件用于同机对照测试。两份文件都使用 4 张卡，但 GPU 编号、端口、容器名和 volume 名互相错开，可以同时启动。端口规则固定为：基础版使用 `17000/18000/19000/19100`，高级版在此基础上全部加一。compose 只负责拉起容器，`wings-control` 使用 `command: ["sleep", "infinity"]` 保持运行，需要进入 control 容器后手动执行上面的基础或高级启动命令。
+
+两份 MiniMax compose 的 service、container 和 volume 名都带 `minimax-m27-basic` 或 `minimax-m27-advanced` 后缀，不存在同名资源。并行测试时不要对其中一个文件执行带 `--remove-orphans` 的 `docker compose down/up`，避免同一目录默认 project 下误清理另一个版本。
+
+基础测试版：
+
+- 文件：`docker-compose-3c-minimax-m27.yml`
+- GPU：`0,1,2,3`
+- OpenAI API 端口：`18000`
+- engine backend 端口：`17000`
+- health 端口：`19000`
+- monitor proxy 端口：`19100`
+- 高级特性：全部关闭；compose 不设置启动环境变量，进入 `wings-control` 后手动执行 MiniMax 基础命令
+
+```bash
+docker compose -f docker-compose-3c-minimax-m27.yml up -d
+
+curl http://localhost:18000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"MiniMax-M2.7","messages":[{"role":"user","content":"hello"}],"max_tokens":32}'
+```
+
+高级特性测试版：
+
+- 文件：`docker-compose-3c-minimax-m27-advanced.yml`
+- GPU：`4,5,6,7`
+- OpenAI API 端口：`18001`
+- engine backend 端口：`17001`
+- health 端口：`19001`
+- monitor proxy 端口：`19101`
+- 高级特性：compose 不设置启动环境变量，进入 `wings-control` 后手动执行 MiniMax 全部高级特性命令
+- KV 卸载：只启用内存卸载，`LMCACHE_LOCAL_CPU=true`，`LMCACHE_MAX_LOCAL_CPU_SIZE=64`，不设置磁盘卸载
+
+```bash
+docker compose -f docker-compose-3c-minimax-m27-advanced.yml up -d
+
+curl http://localhost:18001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"MiniMax-M2.7","messages":[{"role":"user","content":"hello"}],"max_tokens":32}'
+```
+
+手动拉起后查看生成的启动脚本：
+
+```bash
+docker compose -f docker-compose-3c-minimax-m27.yml exec wings-control-minimax-m27-basic \
+  cat /shared-volume/start_command.sh
+
+docker compose -f docker-compose-3c-minimax-m27-advanced.yml exec wings-control-minimax-m27-advanced \
+  cat /shared-volume/start_command.sh
+```
 
 ## DeepSeek-V3.2
 
@@ -288,6 +392,59 @@ DeepSeek-V3.2 的 `ENABLE_SPARSE=true` 会走 IndexCache 路径，当前代码�
 
 - `--block-size 64`
 - `--hf-overrides '{"index_topk_freq": 4}'`
+
+### Docker Compose 对照测试
+
+DeepSeek-V3.2 提供两份 compose 文件用于同机对照测试。两份文件都使用 8 张 H20-141G，但 GPU 编号、端口、容器名和 volume 名互相错开。端口规则固定为：基础版使用 `17000/18000/19000/19100`，高级版在此基础上全部加一。compose 只负责拉起容器，`wings-control` 使用 `command: ["sleep", "infinity"]` 保持运行，需要进入 control 容器后手动执行上面的基础或高级启动命令。
+
+基础测试版：
+
+- 文件：`docker-compose-3c-deepseek-v32.yml`
+- GPU：`0,1,2,3,4,5,6,7`
+- OpenAI API 端口：`18000`
+- engine backend 端口：`17000`
+- health 端口：`19000`
+- monitor proxy 端口：`19100`
+- 高级特性：全部关闭；compose 不设置启动环境变量，进入 `wings-control` 后手动执行 DeepSeek 基础命令
+- DeepSeek tokenizer：手动启动命令中使用 `--config-file '{"tokenizer_mode":"deepseek_v32"}'`
+
+```bash
+docker compose -f docker-compose-3c-deepseek-v32.yml up -d
+
+curl http://localhost:18000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"DeepSeek-V3.2","messages":[{"role":"user","content":"hello"}],"max_tokens":32}'
+```
+
+高级特性测试版：
+
+- 文件：`docker-compose-3c-deepseek-v32-advanced.yml`
+- GPU：`8,9,10,11,12,13,14,15`
+- OpenAI API 端口：`18001`
+- engine backend 端口：`17001`
+- health 端口：`19001`
+- monitor proxy 端口：`19101`
+- 高级特性：compose 不设置启动环境变量，进入 `wings-control` 后手动执行 DeepSeek 全部高级特性命令
+- KV 卸载：只启用内存卸载，`LMCACHE_LOCAL_CPU=true`，`LMCACHE_MAX_LOCAL_CPU_SIZE=64`，不设置磁盘卸载
+- DeepSeek tokenizer：手动启动命令中使用 `--config-file '{"tokenizer_mode":"deepseek_v32"}'`
+
+```bash
+docker compose -f docker-compose-3c-deepseek-v32-advanced.yml up -d
+
+curl http://localhost:18001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"DeepSeek-V3.2","messages":[{"role":"user","content":"hello"}],"max_tokens":32}'
+```
+
+手动拉起后查看生成的启动脚本：
+
+```bash
+docker compose -f docker-compose-3c-deepseek-v32.yml exec wings-control-deepseek-v32-basic \
+  cat /shared-volume/start_command.sh
+
+docker compose -f docker-compose-3c-deepseek-v32-advanced.yml exec wings-control-deepseek-v32-advanced \
+  cat /shared-volume/start_command.sh
+```
 
 ## 通用说明
 
