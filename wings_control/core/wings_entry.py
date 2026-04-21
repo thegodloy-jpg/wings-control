@@ -218,7 +218,7 @@ def _is_speculative_decode_enabled() -> bool:
     return os.getenv("ENABLE_SPECULATIVE_DECODE", "").strip().lower() == "true"
 
 
-def _build_speculative_runtime_deps_snippet() -> str:
+def _build_speculative_runtime_deps_snippet(enabled: bool | None = None) -> str:
     """为投机推理生成 --install-runtime-deps 的容错 shell 片段。
 
     当 ENABLE_SPECULATIVE_DECODE=true 时，不再通过 --features 传递
@@ -228,7 +228,9 @@ def _build_speculative_runtime_deps_snippet() -> str:
     Returns:
         str: shell 脚本片段；投机推理未启用时返回空字符串。
     """
-    if not _is_speculative_decode_enabled():
+    if enabled is None:
+        enabled = _is_speculative_decode_enabled()
+    if not enabled:
         return ""
 
     accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
@@ -436,7 +438,9 @@ def _build_accel_preamble(engine: str, merged: dict) -> str:
     preamble_parts: list[str] = []
 
     # ── 投机推理：独立使用 --install-runtime-deps ──
-    spec_snippet = _build_speculative_runtime_deps_snippet()
+    spec_snippet = _build_speculative_runtime_deps_snippet(
+        bool(merged.get("enable_speculative_decode")),
+    )
     if spec_snippet:
         logger.info("Accel: injecting speculative decoding runtime deps (--install-runtime-deps)")
         preamble_parts.append(spec_snippet)

@@ -70,7 +70,7 @@ python -m wings_control \
 
 ### 全部高级特性
 
-开启 KV 内存卸载、KV 稀疏、无草稿模型投机推理。KV 卸载只做内存卸载，不设置 `LMCACHE_LOCAL_DISK` 或 `LMCACHE_MAX_LOCAL_DISK_SIZE`。
+通过环境变量开启 KV 内存卸载、KV 稀疏、无草稿模型投机推理，并触发对应补丁安装。KV 卸载只做内存卸载，不设置 `LMCACHE_LOCAL_DISK` 或 `LMCACHE_MAX_LOCAL_DISK_SIZE`。
 
 ```bash
 export WINGS_SKIP_PID_CHECK=true
@@ -81,6 +81,8 @@ export WINGS_DEVICE_COUNT=8
 export WINGS_DEVICE_MEMORY=141
 export ENABLE_ACCEL=true
 export WINGS_ACCEL_DIR=/accel-volume
+export ENABLE_SPARSE=true
+export ENABLE_SPECULATIVE_DECODE=true
 export LMCACHE_OFFLOAD=true
 export LMCACHE_LOCAL_CPU=true
 export LMCACHE_MAX_LOCAL_CPU_SIZE=64
@@ -103,12 +105,10 @@ python -m wings_control \
   --input-length 4096 \
   --enable-chunked-prefill \
   --gpu-usage-mode full \
-  --device-count 8 \
-  --enable-sparse \
-  --enable-speculative-decode
+  --device-count 8
 ```
 
-GLM-5.1-FP8 的 `--enable-sparse` 会走 IndexCache 路径，当前代码会自动追加：
+GLM-5.1-FP8 的 `ENABLE_SPARSE=true` 会走 IndexCache 路径，当前代码会自动追加：
 
 - `--block-size 64`
 - `--hf-overrides '{"index_topk_freq": 4}'`
@@ -158,7 +158,7 @@ python -m wings_control \
 
 ### 全部高级特性
 
-开启 KV 内存卸载、KV 稀疏、无草稿模型投机推理。KV 卸载只做内存卸载，不设置 `LMCACHE_LOCAL_DISK` 或 `LMCACHE_MAX_LOCAL_DISK_SIZE`。
+通过环境变量开启 KV 内存卸载、KV 稀疏、无草稿模型投机推理，并触发对应补丁安装。KV 卸载只做内存卸载，不设置 `LMCACHE_LOCAL_DISK` 或 `LMCACHE_MAX_LOCAL_DISK_SIZE`。
 
 ```bash
 export WINGS_SKIP_PID_CHECK=true
@@ -167,6 +167,8 @@ export SAFETENSORS_FAST_GPU=1
 export WINGS_DEVICE_COUNT=4
 export ENABLE_ACCEL=true
 export WINGS_ACCEL_DIR=/accel-volume
+export ENABLE_SPARSE=true
+export ENABLE_SPECULATIVE_DECODE=true
 export LMCACHE_OFFLOAD=true
 export LMCACHE_LOCAL_CPU=true
 export LMCACHE_MAX_LOCAL_CPU_SIZE=64
@@ -189,12 +191,10 @@ python -m wings_control \
   --input-length 196000 \
   --enable-chunked-prefill \
   --gpu-usage-mode full \
-  --device-count 4 \
-  --enable-sparse \
-  --enable-speculative-decode
+  --device-count 4
 ```
 
-MiniMax-M2.7 不属于当前 IndexCache 架构列表，`--enable-sparse` 会按当前代码走 FP8 KV Cache 路径；上线前建议先小流量验证输出质量和稳定性。
+MiniMax-M2.7 不属于当前 IndexCache 架构列表，`ENABLE_SPARSE=true` 会按当前代码走 FP8 KV Cache 路径；上线前建议先小流量验证输出质量和稳定性。
 
 ## DeepSeek-V3.2
 
@@ -245,7 +245,7 @@ python -m wings_control \
 
 ### 全部高级特性
 
-开启 KV 内存卸载、KV 稀疏、无草稿模型投机推理。KV 卸载只做内存卸载，不设置 `LMCACHE_LOCAL_DISK` 或 `LMCACHE_MAX_LOCAL_DISK_SIZE`。
+通过环境变量开启 KV 内存卸载、KV 稀疏、无草稿模型投机推理，并触发对应补丁安装。KV 卸载只做内存卸载，不设置 `LMCACHE_LOCAL_DISK` 或 `LMCACHE_MAX_LOCAL_DISK_SIZE`。
 
 ```bash
 export WINGS_SKIP_PID_CHECK=true
@@ -256,6 +256,8 @@ export WINGS_DEVICE_COUNT=8
 export WINGS_DEVICE_MEMORY=141
 export ENABLE_ACCEL=true
 export WINGS_ACCEL_DIR=/accel-volume
+export ENABLE_SPARSE=true
+export ENABLE_SPECULATIVE_DECODE=true
 export LMCACHE_OFFLOAD=true
 export LMCACHE_LOCAL_CPU=true
 export LMCACHE_MAX_LOCAL_CPU_SIZE=64
@@ -279,12 +281,10 @@ python -m wings_control \
   --input-length 131072 \
   --enable-chunked-prefill \
   --gpu-usage-mode full \
-  --device-count 8 \
-  --enable-sparse \
-  --enable-speculative-decode
+  --device-count 8
 ```
 
-DeepSeek-V3.2 的 `--enable-sparse` 会走 IndexCache 路径，当前代码会自动追加：
+DeepSeek-V3.2 的 `ENABLE_SPARSE=true` 会走 IndexCache 路径，当前代码会自动追加：
 
 - `--block-size 64`
 - `--hf-overrides '{"index_topk_freq": 4}'`
