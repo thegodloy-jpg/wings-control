@@ -1378,12 +1378,15 @@ def _build_ray_head_commands(
     parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
 
     ray_head_resource = _get_ray_resource_flag(ctx.engine, params)
-    parts.append(
+    ray_head_cmd = (
         f"ray start --head --port={ctx.ray_port}"
         f" --node-ip-address=$VLLM_HOST_IP"
         f" {ray_head_resource}"
         f" --dashboard-host=$VLLM_HOST_IP\n"
     )
+    logger.info("[ray] head start command: %s", ray_head_cmd.strip())
+    parts.append(f'echo "[ray] head start command: {ray_head_cmd.strip()}"')
+    parts.append(ray_head_cmd)
     parts.extend(_build_ray_wait_loop(ctx.nnodes))
 
     eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
@@ -1501,12 +1504,15 @@ def _build_ray_worker_commands(
         ])
     parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
     ray_worker_resource = _get_ray_resource_flag(ctx.engine, params)
-    parts.append(
+    ray_worker_cmd = (
         f"exec ray start"
         f" --address=$HEAD_IP:{ctx.ray_port}"
         f" --node-ip-address=$VLLM_HOST_IP"
         f" {ray_worker_resource} --block"
     )
+    logger.info("[ray] worker start command: %s", ray_worker_cmd)
+    parts.append(f'echo "[ray] worker start command: {ray_worker_cmd}"')
+    parts.append(ray_worker_cmd)
     return parts
 
 
