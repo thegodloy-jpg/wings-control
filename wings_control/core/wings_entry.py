@@ -178,6 +178,16 @@ def _prepare_merged_params(launch_args: LaunchArgs, port_plan: PortPlan, hardwar
         engine_cfg["port"] = port_plan.backend_port
         if merged.get("engine") == "mindie":
             engine_cfg["ipAddress"] = engine_host
+        logger.info(
+            "Engine listener host resolved: host=%s port=%s "
+            "(distributed=%s node_rank=%s POD_IP=%s RANK_IP=%s)",
+            engine_host,
+            port_plan.backend_port,
+            is_distributed,
+            node_rank,
+            os.getenv("POD_IP", ""),
+            os.getenv("RANK_IP", ""),
+        )
     else:
         # 非 0 号节点一般只承担计算，不直接对外提供 engine 监听地址。
         merged.pop("host", None)

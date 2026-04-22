@@ -1382,7 +1382,7 @@ def _build_ray_head_commands(
         f"ray start --head --port={ctx.ray_port}"
         f" --node-ip-address=$VLLM_HOST_IP"
         f" {ray_head_resource}"
-        f" --dashboard-host=0.0.0.0\n"
+        f" --dashboard-host=$VLLM_HOST_IP\n"
     )
     parts.extend(_build_ray_wait_loop(ctx.nnodes))
 
