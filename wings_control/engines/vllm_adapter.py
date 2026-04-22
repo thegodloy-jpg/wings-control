@@ -580,6 +580,8 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
                     f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
                     "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
                     "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
+                    # Ascend NPU 首次推理 JIT 编译算子耗时可能远超 Ray 编译DAG默认 300s 超时
+                    "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
                 ])
         elif backend == "dp_deployment":
             if engine == "vllm":
@@ -718,6 +720,21 @@ def _build_glm4moe_ascend_env(arch: str) -> List[str]:
     ]
 
 
+def _build_qwen3_ascend_env(arch: str) -> List[str]:
+    """构建 Qwen3 密集模型 (Qwen3ForCausalLM) Ascend 环境变量命令。
+
+    适用于 Qwen3-32B 等密集架构。
+    """
+    logger.info("[Qwen3] Set Ascend environment variables for %s", arch)
+    return [
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export HCCL_BUFFSIZE=512",
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=1",
+        "export TASK_QUEUE_ENABLE=1",
+    ]
+
+
 def _build_qwen35_ascend_env(arch: str) -> List[str]:
     """构建 Qwen3.5 (Qwen3_5ForConditionalGeneration) Ascend 环境变量命令。"""
     logger.info("[Qwen3.5] Set Ascend environment variables for %s", arch)
@@ -827,6 +844,7 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     if engine == "vllm_ascend":
         _arch_env_builders = {
             "Glm4MoeForCausalLM": _build_glm4moe_ascend_env,
+            "Qwen3ForCausalLM": _build_qwen3_ascend_env,
             "Qwen3_5ForConditionalGeneration": _build_qwen35_ascend_env,
             "Qwen3_5MoeForConditionalGeneration": _build_qwen35moe_ascend_env,
             "MiniMaxM2ForCausalLM": _build_minimaxm2_ascend_env,
@@ -1298,6 +1316,9 @@ def _build_comm_env_commands(is_ascend: bool) -> List[str]:
     if is_ascend:
         hccl_connect_timeout = os.getenv('HCCL_CONNECT_TIMEOUT', '1800')
         hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
+        # Ascend NPU 首次推理需 JIT 编译算子，耗时可能超过 Ray 编译DAG默认 300s 超时。
+        # 设置较大值避免 RayChannelTimeoutError；可通过环境变量覆盖。
+        ray_cgraph_get_timeout = os.getenv('RAY_CGRAPH_get_timeout', '3600')
         return [
             "export HCCL_WHITELIST_DISABLE=1",
             "export HCCL_IF_IP=$VLLM_HOST_IP",
@@ -1307,6 +1328,7 @@ def _build_comm_env_commands(is_ascend: bool) -> List[str]:
             "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
             f"export HCCL_CONNECT_TIMEOUT={hccl_connect_timeout}",
             f"export HCCL_EXEC_TIMEOUT={hccl_exec_timeout}",
+            f"export RAY_CGRAPH_get_timeout={ray_cgraph_get_timeout}",
         ]
     nccl_if = os.getenv('NCCL_SOCKET_IFNAME', 'eth0')
     return [
@@ -1434,6 +1456,8 @@ def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = 
         "export TP_SOCKET_IFNAME=" + _SH_IF_DETECT,
         "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
         "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
+        # Ascend NPU 首次推理需 JIT 编译算子，耗时可能超过 Ray 编译DAG默认 300s 超时。
+        "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
         _SH_VLLM_HOST,
     ]
 
