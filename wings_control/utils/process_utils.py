@@ -18,6 +18,7 @@ import subprocess
 import threading
 import time
 import logging
+import re
 from typing import Union
 
 from utils.file_utils import safe_write_file
@@ -26,6 +27,25 @@ logger = logging.getLogger(__name__)
 
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _LOG_DIR = os.path.join(root_dir, 'logs')
+
+_LOG_LEVEL_PATTERNS = (
+    (logging.CRITICAL, re.compile(r"\b(CRITICAL|FATAL)\b", re.IGNORECASE)),
+    (
+        logging.ERROR,
+        re.compile(r"\b(ERROR|ERR|EXCEPTION|TRACEBACK|FAILED|FAILURE)\b|Error:", re.IGNORECASE),
+    ),
+    (logging.WARNING, re.compile(r"\b(WARNING|WARN)\b", re.IGNORECASE)),
+    (logging.DEBUG, re.compile(r"\bDEBUG\b", re.IGNORECASE)),
+    (logging.INFO, re.compile(r"\bINFO\b", re.IGNORECASE)),
+)
+
+
+def infer_log_level(line: str, default_level: int = logging.INFO) -> int:
+    """Infer a logging level from a captured process output line."""
+    for level, pattern in _LOG_LEVEL_PATTERNS:
+        if pattern.search(line):
+            return level
+    return default_level
 
 
 def wait_for_process_startup(
@@ -57,11 +77,12 @@ def wait_for_process_startup(
 
     started = threading.Event()
 
-    def _log_stream(stream, level):
+    def _log_stream(stream, default_level):
         for line in stream:
-            if line.strip():
-                _logger.log(level, line.strip())
-                if success_message in line.strip():
+            stripped = line.strip()
+            if stripped:
+                _logger.log(infer_log_level(stripped, default_level), stripped)
+                if success_message in stripped:
                     started.set()
 
     #
@@ -72,7 +93,7 @@ def wait_for_process_startup(
     )
     stderr_thread = threading.Thread(
         target=_log_stream,
-        args=(process.stderr, logging.INFO),
+        args=(process.stderr, logging.ERROR),
         daemon=True
     )
     stdout_thread.start()
@@ -151,16 +172,18 @@ def log_stream(process):
     def _log_stdout():
         try:
             for line in process.stdout:
-                if line.strip():
-                    logger.info(line.strip())
+                stripped = line.strip()
+                if stripped:
+                    logger.log(infer_log_level(stripped, logging.INFO), stripped)
         except Exception as e:
             logger.error("Log stdout error: %s", e)
 
     def _log_stderr():
         try:
             for line in process.stderr:
-                if line.strip():
-                    logger.error(line.strip())
+                stripped = line.strip()
+                if stripped:
+                    logger.log(infer_log_level(stripped, logging.ERROR), stripped)
         except Exception as e:
             logger.error("Log stderr error: %s", e)
 

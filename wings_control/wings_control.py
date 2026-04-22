@@ -66,7 +66,6 @@ import dataclasses
 import json
 import logging
 import os
-import re
 import signal
 import socket
 import stat
@@ -89,6 +88,7 @@ from utils.env_utils import get_local_ip, get_master_ip, get_node_ips
 from utils.file_utils import safe_write_file, WriteOptions
 from utils.log_config import setup_root_logging, LOGGER_LAUNCHER
 from utils.noise_filter import install_noise_filters
+from utils.process_utils import infer_log_level
 
 setup_root_logging()
 logger = logging.getLogger(LOGGER_LAUNCHER)
@@ -166,24 +166,33 @@ def _start_output_filter_thread(proc: ManagedProc) -> None:
     所有 INFO 及以下级别（含 uvicorn worker 启动日志、proxy 应用日志）静默丢弃。
     这显著减少了多 worker 场景下的日志噪声。
     """
-    _severity_re = re.compile(
-        r'\[(WARNING|ERROR|CRITICAL)\]'
-        r'|^(WARNING|ERROR|CRITICAL):'
-        r'|\b(Traceback|Exception|Error:)',
-        re.IGNORECASE,
-    )
-
-    def _relay() -> None:
+    def _relay(stream, stream_name: str, default_level: int) -> None:
         try:
-            for raw in iter(proc.proc.stdout.readline, b""):
+            for raw in iter(stream.readline, b""):
                 line = raw.decode("utf-8", errors="replace")
-                if _severity_re.search(line):
-                    logger.warning("[%s] %s", proc.name, line.rstrip())
+                stripped = line.rstrip()
+                if not stripped:
+                    continue
+                level = infer_log_level(stripped, default_level)
+                if level >= logging.WARNING:
+                    logger.log(level, "[%s:%s] %s", proc.name, stream_name, stripped)
         except (ValueError, OSError):
             pass
 
-    t = threading.Thread(target=_relay, name=f"filter-{proc.name}", daemon=True)
-    t.start()
+    stdout_thread = threading.Thread(
+        target=_relay,
+        args=(proc.proc.stdout, "stdout", logging.INFO),
+        name=f"filter-{proc.name}-stdout",
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_relay,
+        args=(proc.proc.stderr, "stderr", logging.ERROR),
+        name=f"filter-{proc.name}-stderr",
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
 
 
 def _start(proc: ManagedProc) -> None:
@@ -208,7 +217,7 @@ def _start(proc: ManagedProc) -> None:
             # 多 worker 场景：管道化输出并通过过滤线程去重
             proc.proc = subprocess.Popen(
                 proc.argv, env=proc.env,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
             _start_output_filter_thread(proc)
         else:
