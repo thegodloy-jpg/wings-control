@@ -26,8 +26,12 @@ from core.hardware_detect import detect_hardware
 from core.port_plan import PortPlan
 from core.start_args_compat import LaunchArgs
 from core.version_util import normalize_engine_version
-from engines.vllm_adapter import build_modelslim_quarot_patch_preamble, build_triton_patch_preamble
-from utils.env_utils import get_master_ip
+from engines.vllm_adapter import (
+    build_modelslim_quarot_patch_preamble,
+    build_triton_patch_preamble,
+    resolve_speculative_strategy,
+)
+from utils.env_utils import get_local_ip, get_master_ip, validate_ip
 from utils.model_utils import ModelIdentifier, INDEXCACHE_ARCHS
 
 logger = logging.getLogger(__name__)
@@ -61,8 +65,12 @@ _ENGINE_PATCH_KEY_MAP = {
 # 注意：投机推理（ENABLE_SPECULATIVE_DECODE）已从此映射中移除，
 # 改为通过 --install-runtime-deps 独立安装，不再走 --features 路径。
 _FEATURE_SWITCH_MAP: dict[str, str] = {
-    # ENABLE_SPARSE 已从此映射移除，IndexCache 补丁通过
-    # _build_indexcache_install_snippet() 独立安装
+    # ENABLE_SPARSE 已从此映射移除，IndexCache 补丁通过动态 feature 聚合安装。
+}
+
+_PATCH_FEATURE_STATUS_KEYS: dict[str, str] = {
+    "ears": "speculative_decode",
+    "indexcache": "sparse_kv",
 }
 
 # 引擎到 LMCache 安装目标的映射
@@ -111,6 +119,23 @@ def _inject_legacy_distributed_aliases(merged: dict, launch_args: LaunchArgs) ->
             merged["mindie_master_addr"] = merged.get("mindie_master_addr") or master_ip
 
 
+def _resolve_engine_service_host() -> str:
+    """Return the concrete Pod IP used by the engine API listener."""
+    for env_key in ("POD_IP", "RANK_IP"):
+        candidate = os.getenv(env_key, "").strip()
+        if validate_ip(candidate) and candidate != "0.0.0.0":
+            return candidate
+
+    local_ip = get_local_ip()
+    if validate_ip(local_ip) and local_ip != "0.0.0.0":
+        return local_ip
+
+    logger.warning(
+        "Unable to resolve Pod IP for engine listener; falling back to 127.0.0.1"
+    )
+    return "127.0.0.1"
+
+
 @dataclass(frozen=True)
 class LauncherPlan:
     """launcher 生成的最终计划。
@@ -146,16 +171,20 @@ def _prepare_merged_params(launch_args: LaunchArgs, port_plan: PortPlan, hardwar
     engine_cfg = dict(merged.get("engine_config", {}))
     # rank0 或单机场景需要显式注入 host/port，让 backend engine 真正提供服务。
     if not is_distributed or node_rank == 0:
-        merged["host"] = "0.0.0.0"
+        engine_host = _resolve_engine_service_host()
+        merged["host"] = engine_host
         merged["port"] = port_plan.backend_port
-        engine_cfg["host"] = "0.0.0.0"
+        engine_cfg["host"] = engine_host
         engine_cfg["port"] = port_plan.backend_port
+        if merged.get("engine") == "mindie":
+            engine_cfg["ipAddress"] = engine_host
     else:
         # 非 0 号节点一般只承担计算，不直接对外提供 engine 监听地址。
         merged.pop("host", None)
         merged.pop("port", None)
         engine_cfg.pop("host", None)
         engine_cfg.pop("port", None)
+        engine_cfg.pop("ipAddress", None)
     merged["engine_config"] = engine_cfg
     return merged
 
@@ -196,6 +225,42 @@ def _build_accel_user_override_snippet(safe_value: str) -> str:
         f"    echo '[wings-accel] WARNING: {accel_dir}/install.py not found, skipping.'\n"
         "fi\n"
     )
+
+
+def _dedupe_features(features: list[str]) -> list[str]:
+    """Return features in first-seen order without duplicates."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for feature in features:
+        if not feature or feature in seen:
+            continue
+        seen.add(feature)
+        result.append(feature)
+    return result
+
+
+def _merge_patch_options(raw_options: str, patch_key: str, engine_version: str, features: list[str]) -> str:
+    """Merge required features into a WINGS_ENGINE_PATCH_OPTIONS JSON string."""
+    try:
+        options = json.loads(raw_options) if raw_options else {}
+    except json.JSONDecodeError:
+        options = {}
+    if not isinstance(options, dict):
+        options = {}
+
+    engine_options = options.get(patch_key)
+    if not isinstance(engine_options, dict):
+        engine_options = {}
+        options[patch_key] = engine_options
+
+    existing_features = engine_options.get("features")
+    if not isinstance(existing_features, list):
+        existing_features = []
+    engine_options["features"] = _dedupe_features(
+        [str(feature) for feature in existing_features] + features
+    )
+    engine_options["version"] = str(engine_options.get("version") or engine_version)
+    return json.dumps(options)
 
 
 def _collect_enabled_features() -> list[str]:
@@ -303,20 +368,17 @@ def _build_lmcache_install_snippet(engine: str) -> str:
     )
 
 
-def _build_indexcache_install_snippet(engine: str, merged: dict) -> str:
-    """为 IndexCache 架构生成 accel 安装片段。
+def _collect_indexcache_patch_features(engine: str, merged: dict) -> list[str]:
+    """Return IndexCache accel features required by the current config.
 
     当 ENABLE_SPARSE=true 且模型架构属于 IndexCache 支持列表时，
-    通过 install.py --features 安装 indexcache 补丁。
-    非 IndexCache 架构使用 FP8 KV CACHE（仅命令行参数，无需 accel 补丁）。
-
-    Returns:
-        str: shell 脚本片段；不需要时返回空字符串。
+    需要通过 install.py --features 安装 indexcache 补丁。
+    非 IndexCache 架构使用 FP8 KV CACHE，无需 accel 补丁。
     """
     if not merged.get("enable_sparse"):
-        return ""
+        return []
     if engine not in ("vllm",):
-        return ""
+        return []
 
     model_info = ModelIdentifier(
         merged.get("model_name"), merged.get("model_path"), merged.get("model_type"),
@@ -327,48 +389,45 @@ def _build_indexcache_install_snippet(engine: str, merged: dict) -> str:
             "[IndexCache] Architecture %s not in IndexCache list; "
             "FP8 KV CACHE path needs no accel patch.", arch,
         )
-        return ""
+        return []
 
-    patch_key = _ENGINE_PATCH_KEY_MAP.get(engine)
-    if not patch_key:
-        return ""
+    logger.info("[IndexCache] Architecture %s requires indexcache patch", arch)
+    return ["indexcache"]
 
-    accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
-    engine_version = normalize_engine_version(os.getenv("ENGINE_VERSION", ""))
-    options = json.dumps({patch_key: {"version": engine_version, "features": ["indexcache"]}})
-    update_json = _shell_update_feature_json("sparse_kv", False)
 
-    return (
-        "# --- wings-accel: install IndexCache patches (fault-tolerant) ---\n"
-        f"if [ -f \"{accel_dir}/install.py\" ]; then\n"
-        f"    echo '[wings-accel] Installing IndexCache patches for {arch}...'\n"
-        "    set +e\n"
-        f"    python3 {accel_dir}/install.py --features '{options}'\n"
-        "    IC_RC=$?\n"
-        "    set -e\n"
-        "    if [ $IC_RC -ne 0 ]; then\n"
-        '        echo "[wings-accel] WARNING: IndexCache patch install failed'
-        ' (exit=$IC_RC), skipping."\n'
-        + update_json
-        + "    else\n"
-        "        echo '[wings-accel] IndexCache patches installed successfully.'\n"
-        f"        export WINGS_ENGINE_PATCH_OPTIONS='{options}'\n"
-        "    fi\n"
-        "else\n"
-        f"    echo '[wings-accel] WARNING: {accel_dir}/install.py not found, "
-        "skipping IndexCache patch install.'\n"
-        "fi\n"
-    )
+def _collect_ears_patch_features(engine: str, merged: dict) -> list[str]:
+    """Return EARS accel feature when speculative suffix/MTP is selected."""
+    if engine not in ("vllm", "vllm_ascend"):
+        return []
+    if not merged.get("enable_speculative_decode"):
+        return []
+    if merged.get("speculative_decode_model_path"):
+        return []
+
+    strategy = resolve_speculative_strategy(merged, engine)
+    if strategy == "suffix" or strategy.endswith("_mtp"):
+        logger.info("[EARS] Speculative strategy %s requires ears patch", strategy)
+        return ["ears"]
+    return []
+
+
+def _collect_required_patch_features(engine: str, merged: dict) -> list[str]:
+    """Collect all install.py --features entries that must be installed together."""
+    features = []
+    features.extend(_collect_enabled_features())
+    features.extend(_collect_ears_patch_features(engine, merged))
+    features.extend(_collect_indexcache_patch_features(engine, merged))
+    return _dedupe_features(features)
 
 
 def _build_per_feature_fallback_code(patch_key: str, engine_version: str, features: list[str]) -> str:
     """Build per-feature fallback shell code block for fault-tolerant accel install."""
     accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
-    # features 名称与 advanced_features.json 中的 key 一致（如 sparse_kv）
     blocks = []
     for feat in features:
         single_options = json.dumps({patch_key: {"version": engine_version, "features": [feat]}})
-        update_json = _shell_update_feature_json(feat, False).lstrip()
+        status_key = _PATCH_FEATURE_STATUS_KEYS.get(feat, feat)
+        update_json = _shell_update_feature_json(status_key, False).lstrip()
         blocks.append(
             f"        echo \"[wings-accel] Trying feature: {feat}\"\n"
             f"        set +e\n"
@@ -451,39 +510,43 @@ def _build_accel_preamble(engine: str, merged: dict) -> str:
         logger.info("Accel: injecting LMCache patch install (--lmcache-target)")
         preamble_parts.append(lmcache_snippet)
 
-    # ── IndexCache（KV 稀疏 + IndexCache 架构）：独立安装 ──
-    indexcache_snippet = _build_indexcache_install_snippet(engine, merged)
-    if indexcache_snippet:
-        logger.info("Accel: injecting IndexCache patch install (--features indexcache)")
-        preamble_parts.append(indexcache_snippet)
+    patch_key = _ENGINE_PATCH_KEY_MAP.get(engine)
+    required_features = _collect_required_patch_features(engine, merged)
 
-    # ── 路径 A：用户直接通过环境变量覆盖（仅影响非投机推理特性） ──
+    # ── 路径 A：用户直接通过环境变量覆盖；动态必需 features 会合并进去 ──
     user_override = _validate_accel_user_override()
     if user_override:
         logger.info("Accel: using user-provided WINGS_ENGINE_PATCH_OPTIONS (fault-tolerant)")
+        if patch_key and required_features:
+            engine_version = normalize_engine_version()
+            user_override = _merge_patch_options(
+                user_override, patch_key, engine_version, required_features,
+            )
+            logger.info(
+                "Accel: merged required features into user override: %s",
+                ", ".join(required_features),
+            )
         preamble_parts.append(
             _build_accel_user_override_snippet(_shell_escape_single_quote(user_override))
         )
         return "\n".join(preamble_parts) if preamble_parts else ""
 
-    # ── 路径 B：根据特性开关自动构建（不含投机推理） ──
-    patch_key = _ENGINE_PATCH_KEY_MAP.get(engine)
+    # ── 路径 B：根据特性开关和动态策略自动构建 --features ──
     if not patch_key:
         if not preamble_parts:
             logger.warning("Engine '%s' has no known accel patch mapping; skipping.", engine)
         return "\n".join(preamble_parts) if preamble_parts else ""
 
-    features = _collect_enabled_features()
-    if not features:
+    if not required_features:
         if not preamble_parts:
             logger.info("Accel enabled but no advanced features active; skipping patch injection")
         return "\n".join(preamble_parts) if preamble_parts else ""
 
     logger.info(
         "Accel enabled (fault-tolerant): injecting %d features for engine '%s'",
-        len(features), engine,
+        len(required_features), engine,
     )
-    preamble_parts.append(_build_accel_auto_snippet(patch_key, features))
+    preamble_parts.append(_build_accel_auto_snippet(patch_key, required_features))
     return "\n".join(preamble_parts)
 
 

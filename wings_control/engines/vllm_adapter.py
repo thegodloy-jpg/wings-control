@@ -1019,6 +1019,44 @@ def _handle_suffix_case(config: List[str]) -> None:
     config.append('"suffix_decoding_max_cached_requests": 1000')
 
 
+def _resolve_mtp_method(model_architecture: str) -> str:
+    mtp_methods_by_arch = {
+        "DeepseekV3ForCausalLM": "deepseek_mtp",
+        "DeepseekV32ForCausalLM": "deepseek_mtp",
+        "Qwen3NextForCausalLM": "qwen3_next_mtp",
+        "Glm4MoeForCausalLM": "glm4_moe_mtp",
+        "Qwen3_5ForConditionalGeneration": "qwen3_5_mtp",
+        "Qwen3_5MoeForConditionalGeneration": "qwen3_5_mtp",
+    }
+    return mtp_methods_by_arch.get(model_architecture, "")
+
+
+def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
+    """Return the speculative decoding strategy selected for vLLM."""
+    if engine not in ("vllm", "vllm_ascend"):
+        return ""
+
+    if params.get("speculative_decode_model_path"):
+        draft_model_info = ModelIdentifierDraft(params.get("speculative_decode_model_path"))
+        if 'eagle3' in draft_model_info.draft_model_architecture.lower():
+            return "eagle3"
+        return "draft_model"
+
+    model_info = ModelIdentifier(
+        params.get("model_name"),
+        params.get("model_path"),
+        params.get("model_type"),
+    )
+    if model_info.model_architecture == "Qwen3NextForCausalLM" and engine == "vllm_ascend":
+        return "suffix"
+
+    mtp_method = _resolve_mtp_method(model_info.model_architecture)
+    if mtp_method:
+        return "suffix" if get_lmcache_env() else mtp_method
+
+    return "suffix"
+
+
 def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
     """推测解码方案的自动选取。
 
@@ -1041,22 +1079,10 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
     logger.info("[AdvFeature-SpecDecode] Model architecture detection: %s (model_name=%s)",
                 model_info.model_architecture, params.get("model_name"))
 
-    mtp_types = [
-        "deepseek_mtp",
-        "qwen3_next_mtp",
-        "glm4_moe_mtp",
-        "qwen3_5_mtp",
-    ]
-    mtp_support_models = [
-        ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"],
-        ["Qwen3NextForCausalLM"],
-        ["Glm4MoeForCausalLM"],
-        ["Qwen3_5ForConditionalGeneration", "Qwen3_5MoeForConditionalGeneration"],
-    ]
-
     speculative_config_temp = []
 
-    if engine not in ("vllm", "vllm_ascend"):
+    strategy = resolve_speculative_strategy(params, engine)
+    if not strategy:
         logger.info("[AdvFeature-SpecDecode] engine='%s' does not support speculative decode, skipping", engine)
         return ""
 
@@ -1066,30 +1092,20 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         _handle_draft_model_case(params, speculative_config_temp)
         return _format_speculative_result(speculative_config_temp)
 
-    # Qwen3NextForCausalLM + vllm_ascend 使用 suffix
-    if model_info.model_architecture == "Qwen3NextForCausalLM" and engine == "vllm_ascend":
-        logger.info("[AdvFeature-SpecDecode] Qwen3Next + vllm_ascend → suffix strategy")
+    if strategy == "suffix":
+        logger.info("[AdvFeature-SpecDecode] Architecture %s → suffix strategy",
+                    model_info.model_architecture)
         _handle_suffix_case(speculative_config_temp)
         return _format_speculative_result(speculative_config_temp)
 
-    if any(model_info.model_architecture in group for group in mtp_support_models):
-        if get_lmcache_env():
-            logger.info("[AdvFeature-SpecDecode] Architecture %s matches MTP model group, "
-                        "but KV offload (LMCache) is enabled → downgrade to suffix strategy",
-                        model_info.model_architecture)
-            _handle_suffix_case(speculative_config_temp)
-        else:
-            logger.info("[AdvFeature-SpecDecode] Architecture %s matches MTP model group → MTP strategy",
-                        model_info.model_architecture)
-            _handle_mtp_case(model_info, mtp_support_models, mtp_types, speculative_config_temp)
+    if strategy.endswith("_mtp"):
+        logger.info("[AdvFeature-SpecDecode] Architecture %s → MTP strategy (%s)",
+                    model_info.model_architecture, strategy)
+        speculative_config_temp.append(f'"method": "{strategy}"')
+        speculative_config_temp.append('"num_speculative_tokens": 1')
         return _format_speculative_result(speculative_config_temp)
 
-    logger.info(
-        "[AdvFeature-SpecDecode] Architecture %s has no specific strategy match → falling back to suffix strategy",
-        model_info.model_architecture,
-    )
-    _handle_suffix_case(speculative_config_temp)
-    return _format_speculative_result(speculative_config_temp)
+    return ""
 
 
 # ── KV Sparse（IndexCache / FP8 KV CACHE）───────────────────────────────
@@ -1129,9 +1145,6 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
 
     if arch in INDEXCACHE_ARCHS:
         logger.info("[KV Sparse] Architecture %s → IndexCache strategy (--hf-overrides)", arch)
-        # FLASHMLA_SPARSE 后端仅支持 block_size=64（vLLM 0.19+）
-        engine_config = params.setdefault("engine_config", {})
-        engine_config["block_size"] = 64
         return " --hf-overrides '{\"index_topk_freq\": 4}'"
     else:
         logger.info("[KV Sparse] Architecture %s → FP8 KV CACHE strategy (kv_cache_dtype=fp8)", arch)

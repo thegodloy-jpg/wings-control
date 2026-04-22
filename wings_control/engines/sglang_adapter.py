@@ -17,12 +17,31 @@ import os
 import shlex
 from typing import Dict, Any, List
 
+from utils.env_utils import get_local_ip, validate_ip
+
 
 # 日志记录器
 logger = logging.getLogger(__name__)
 
 # 模块根目录：用于定位环境脚本文件
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _resolve_sglang_node_host() -> str:
+    """Return the concrete node/Pod IP for SGLang distributed communication."""
+    for env_key in ("POD_IP", "RANK_IP"):
+        candidate = os.getenv(env_key, "").strip()
+        if validate_ip(candidate) and candidate != "0.0.0.0":
+            return candidate
+
+    local_ip = get_local_ip()
+    if validate_ip(local_ip) and local_ip != "0.0.0.0":
+        return local_ip
+
+    logger.warning(
+        "[SGLang] Unable to resolve Pod IP for --host; falling back to 127.0.0.1"
+    )
+    return "127.0.0.1"
 
 
 def _build_base_env_commands(params: Dict[str, Any], root: str) -> List[str]:
@@ -148,12 +167,12 @@ def build_start_command(params: Dict[str, Any]) -> str:
             )
             cmd += f" --dist-init-addr {shlex.quote(head_node_addr)}:{sglang_dist_port}"
         # 非 master 节点需要绑定所有地址（对齐 A）
-        # 说明：rank=0 的 --host 由 engine_config 注入（通常已设为 0.0.0.0），
+        # 说明：rank=0 的 --host 由 engine_config 注入（通常已设为 Pod IP），
         # rank>0 显式追加以确保 master 可达 worker 的内部通信端口。
         # SGLang 对 worker 节点的 --host 参数不影响 HTTP API（仅 rank=0 启动 HTTP），
         # 但部分版本用它绑定 gRPC/NCCL 通信，因此保留此逻辑。
         if node_rank != 0:
-            cmd += " --host 0.0.0.0"
+            cmd += f" --host {shlex.quote(_resolve_sglang_node_host())}"
 
     return cmd
 
