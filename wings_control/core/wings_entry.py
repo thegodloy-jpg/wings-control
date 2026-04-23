@@ -30,6 +30,7 @@ from engines.vllm_adapter import (
     build_modelslim_quarot_patch_preamble,
     build_triton_patch_preamble,
     resolve_speculative_strategy,
+    _inject_env_echo,
 )
 from utils.env_utils import get_local_ip, get_master_ip, validate_ip
 from utils.model_utils import ModelIdentifier, INDEXCACHE_ARCHS
@@ -1262,7 +1263,7 @@ def _assemble_startup_command(
     accel_preamble = _build_accel_preamble(engine, merged)
     env_overrides = _build_env_overrides_preamble()
 
-    return (
+    full_script = (
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         "mkdir -p /var/log/wings\n"
         # Prometheus multi-process metrics directory: ensure a clean dir
@@ -1293,6 +1294,7 @@ def _assemble_startup_command(
         + script_body
         + monitor_script
     )
+    return _inject_env_echo(full_script)
 
 
 def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> LauncherPlan:

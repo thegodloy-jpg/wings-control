@@ -16,6 +16,7 @@ vLLM 引擎适配器。
     - dp_deployment: 数据并行模式，支持多节点 DP
 """
 
+import json
 import logging
 import os
 import re
@@ -953,8 +954,13 @@ def _format_cli_arg(arg_name: str, value) -> List[str]:
     if isinstance(value, list):
         str_items = [shlex.quote(str(item)) for item in value]
         return [arg_name] + str_items
+    if isinstance(value, dict):
+        # dict 透传：序列化为紧凑 JSON 后用 shlex.quote 做 shell 转义，
+        # 避免 str(dict) 输出 Python repr（单引号 key），导致 vLLM JSON 解析失败。
+        # shlex.quote 会自动用单引号包裹并转义其中的单引号，保证 shell 安全。
+        return [arg_name, shlex.quote(json.dumps(value, ensure_ascii=False, separators=(',', ':')))]
     if isinstance(value, str) and value.strip().startswith('{') and value.strip().endswith('}'):
-        return [arg_name, f"'{value}'"]
+        return [arg_name, shlex.quote(value)]
     return [arg_name, shlex.quote(str(value))]
 
 
@@ -1786,8 +1792,37 @@ def build_start_script(params: Dict[str, Any]) -> str:
     common_env_cmds = _build_vllm_common_env_cmds(params, engine)
 
     if is_distributed and nnodes > 1:
-        return _build_vllm_distributed_script(params, cmd, common_env_cmds, engine, sparse_args)
-    return _build_vllm_single_script(params, cmd, common_env_cmds, engine, sparse_args)
+        script = _build_vllm_distributed_script(params, cmd, common_env_cmds, engine, sparse_args)
+    else:
+        script = _build_vllm_single_script(params, cmd, common_env_cmds, engine, sparse_args)
+
+    return script
+
+
+def _inject_env_echo(script: str) -> str:
+    """在脚本中每条 'export VAR=...' 语句前插入 echo 打印，方便排查环境变量注入情况。
+
+    只打印变量名（不打印值），避免敏感信息（如 token/key）泄露到日志。
+    跳过以 'export ' 开头但包含换行/heredoc 风险的多行语句（source 等）。
+
+    Args:
+        script: 原始 bash 脚本字符串
+
+    Returns:
+        str: 插入 echo 打印后的脚本字符串
+    """
+    import re as _re
+    lines = script.splitlines(keepends=True)
+    result = []
+    for line in lines:
+        stripped = line.lstrip()
+        m = _re.match(r'^export\s+([A-Za-z_][A-Za-z0-9_]*)', stripped)
+        if m:
+            var_name = m.group(1)
+            indent = line[: len(line) - len(stripped)]
+            result.append(f'{indent}echo "[wings-env] export {var_name}"\n')
+        result.append(line)
+    return "".join(result)
 
 
 def start_vllm_distributed(params: Dict):
