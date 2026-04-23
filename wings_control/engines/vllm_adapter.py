@@ -1028,7 +1028,10 @@ def _format_cli_arg(arg_name: str, value) -> List[str]:
 
 # ── GLM-4.7-W8A8 引擎参数注入（仅针对量化变体，避免污染同架构 BF16 模型）──
 # 触发条件：架构 == Glm4MoeForCausalLM 且 config.json 量化字段命中 W8A8 别名表
-# 合并策略：用户 engine_config 已有的 key **不会被覆盖**（用户优先）
+# 合并策略：
+#   * 标量字段：用户已显式给出则不覆盖（user > injected）
+#   * dict 字段（additional_config / speculative_config / compilation_config）：
+#       做 **深合并**，用户给出的 sub-key 优先，未给出的 sub-key 注入
 _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
     "enable_expert_parallel": True,
     "async_scheduling": True,
@@ -1036,7 +1039,27 @@ _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
     "additional_config": {
         "ascend_scheduler_config": {"enabled": True},
         "expert_tensor_parallel_size": 1,
+        # 官方 GLM-4.7-W8A8 强推荐
+        "enable_shared_expert_dp": True,
+        "ascend_fusion_config": {"fusion_ops_gmmswigluquant": False},
     },
+    # 推测解码：使用 vllm-ascend 专用 method 名 glm4_moe_mtp
+    "speculative_config": {
+        "method": "glm4_moe_mtp",
+        "num_speculative_tokens": 1,
+    },
+    # 编译图：cudagraph 全量解码模式，覆盖常用并发档位
+    "compilation_config": {
+        "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+        "cudagraph_mode": "FULL_DECODE_ONLY",
+    },
+}
+
+# 需要做 dict 深合并的字段（不能整体覆盖）
+_GLM47_W8A8_DEEP_MERGE_KEYS = {
+    "additional_config",
+    "speculative_config",
+    "compilation_config",
 }
 
 # W8A8 量化别名白名单 + 子串匹配（兼容 quantize / quantization_config.quant_method 字段值多样命名）
@@ -1060,12 +1083,28 @@ def _is_w8a8_quantize(quantize: Optional[str]) -> bool:
     return "w8a8" in q
 
 
+def _deep_merge_user_priority(user: Any, default: Any) -> Any:
+    """递归深合并：user 有则保留 user，user 没有的 sub-key 用 default 填充。
+
+    仅对 dict 做递归；其他类型（含 list / 标量）用户优先。
+    """
+    if not isinstance(user, dict) or not isinstance(default, dict):
+        return user if user is not None else default
+    merged = dict(user)
+    for k, v in default.items():
+        if k not in merged or merged[k] is None:
+            merged[k] = v
+        else:
+            merged[k] = _deep_merge_user_priority(merged[k], v)
+    return merged
+
+
 def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
     """检测 GLM-4.7-W8A8 模型，**就地**向 engine_config 追加调优默认字段。
 
     设计要点：
       * 仅当 (架构 == Glm4MoeForCausalLM) 且 (quantize 命中 W8A8) 时触发
-      * 用户已显式给出的字段不被覆盖（user > injected default）
+      * 标量字段：用户优先；dict 字段：深合并，用户的 sub-key 优先
       * BF16 / 同架构非量化变体（如 GLM-4.5）不会被影响
       * 仅对 vllm / vllm_ascend 引擎生效
     """
@@ -1094,16 +1133,32 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
 
     engine_config = params.setdefault("engine_config", {})
     injected: List[str] = []
+    deep_merged: List[str] = []
     for key, default_val in _GLM47_W8A8_ENGINE_DEFAULTS.items():
-        if key in engine_config and engine_config[key] is not None:
-            continue  # 用户优先
-        engine_config[key] = default_val
-        injected.append(key)
+        existing = engine_config.get(key)
+        if key in _GLM47_W8A8_DEEP_MERGE_KEYS and isinstance(default_val, dict):
+            # dict 深合并（用户优先）
+            if existing is None:
+                engine_config[key] = dict(default_val)
+                injected.append(key)
+            elif isinstance(existing, dict):
+                merged = _deep_merge_user_priority(existing, default_val)
+                if merged != existing:
+                    engine_config[key] = merged
+                    deep_merged.append(key)
+            else:
+                # 用户给了非 dict 值，不动
+                continue
+        else:
+            if existing is not None:
+                continue  # 标量字段：用户优先
+            engine_config[key] = default_val
+            injected.append(key)
 
-    if injected:
+    if injected or deep_merged:
         logger.info(
-            "[GLM-4.7-W8A8] Injected engine_config defaults for arch=%s quantize=%s: %s",
-            info.model_architecture, info.model_quantize, injected,
+            "[GLM-4.7-W8A8] Engine config tuning for arch=%s quantize=%s | injected=%s | deep_merged=%s",
+            info.model_architecture, info.model_quantize, injected, deep_merged,
         )
 
 
