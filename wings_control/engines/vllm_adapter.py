@@ -16,6 +16,7 @@ vLLM 引擎适配器。
     - dp_deployment: 数据并行模式，支持多节点 DP
 """
 
+import ast
 import json
 import logging
 import os
@@ -989,8 +990,39 @@ def _format_cli_arg(arg_name: str, value) -> List[str]:
         # 避免 str(dict) 输出 Python repr（单引号 key），导致 vLLM JSON 解析失败。
         # shlex.quote 会自动用单引号包裹并转义其中的单引号，保证 shell 安全。
         return [arg_name, shlex.quote(json.dumps(value, ensure_ascii=False, separators=(',', ':')))]
-    if isinstance(value, str) and value.strip().startswith('{') and value.strip().endswith('}'):
-        return [arg_name, shlex.quote(value)]
+    if isinstance(value, str):
+        stripped = value.strip()
+        # 防御性处理 dict/list 形态字符串：上游某些路径可能将 dict 误用 str() 转换，
+        # 产生 Python repr（单引号 key），这种字符串不是合法 JSON，会导致 vLLM
+        # --compilation-config / --speculative-config / --additional-config 等
+        # 期望 JSON 的参数解析失败。这里统一兜底：
+        #   1. 优先按 JSON 解析（已经合法则直接紧凑序列化）；
+        #   2. 失败时按 Python literal 解析（兼容 str(dict) 单引号 key 形态）；
+        #   3. 仍失败则原样透传。
+        if (stripped.startswith('{') and stripped.endswith('}')) or \
+           (stripped.startswith('[') and stripped.endswith(']')):
+            normalized: Optional[str] = None
+            try:
+                parsed = json.loads(stripped)
+                normalized = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+            except (json.JSONDecodeError, ValueError):
+                try:
+                    parsed = ast.literal_eval(stripped)
+                    normalized = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+                    logger.warning(
+                        "[vLLM] %s value is Python-repr str (single-quoted keys); "
+                        "auto-normalized to JSON. Upstream stringification suspected.",
+                        arg_name,
+                    )
+                except (ValueError, SyntaxError):
+                    logger.warning(
+                        "[vLLM] %s value looks like dict/list but neither JSON nor "
+                        "Python literal; passing through as-is: %r",
+                        arg_name, stripped[:120],
+                    )
+            if normalized is not None:
+                return [arg_name, shlex.quote(normalized)]
+            return [arg_name, shlex.quote(value)]
     return [arg_name, shlex.quote(str(value))]
 
 

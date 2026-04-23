@@ -12,10 +12,12 @@ SGLang 引擎适配器。
   - build_start_script(params)  -> str : 生成完整 bash 脚本（不含 shebang）
 """
 
+import ast
+import json
 import logging
 import os
 import shlex
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from utils.env_utils import get_local_ip, validate_ip
 
@@ -113,8 +115,33 @@ def _build_sglang_cmd_parts(params: Dict[str, Any]) -> str:
         if isinstance(value, bool):
             if value:
                 cmd_parts.append(arg_name)
-        elif isinstance(value, str) and value.strip().startswith('{') and value.strip().endswith('}'):
-            cmd_parts.extend([arg_name, f"'{value}'"])
+        elif isinstance(value, dict):
+            # dict 透传：紧凑 JSON + shlex.quote，避免 str(dict) 产生单引号 key
+            cmd_parts.extend([arg_name, shlex.quote(json.dumps(value, ensure_ascii=False, separators=(',', ':')))])
+        elif isinstance(value, str) and (
+            (value.strip().startswith('{') and value.strip().endswith('}')) or
+            (value.strip().startswith('[') and value.strip().endswith(']'))
+        ):
+            stripped = value.strip()
+            normalized: Optional[str] = None
+            try:
+                parsed = json.loads(stripped)
+                normalized = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+            except (json.JSONDecodeError, ValueError):
+                try:
+                    parsed = ast.literal_eval(stripped)
+                    normalized = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+                    logger.warning(
+                        "[sglang] %s value is Python-repr str (single-quoted keys); "
+                        "auto-normalized to JSON.",
+                        arg_name,
+                    )
+                except (ValueError, SyntaxError):
+                    pass
+            if normalized is not None:
+                cmd_parts.extend([arg_name, shlex.quote(normalized)])
+            else:
+                cmd_parts.extend([arg_name, shlex.quote(value)])
         else:
             cmd_parts.extend([arg_name, shlex.quote(str(value))])
 
