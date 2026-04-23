@@ -1,0 +1,243 @@
+# ============================================================================
+# 当前文档角色：配置示例（What）—— 三套 Helm Profile 直接复制
+# 受众：运维
+#
+# ----------------------------------------------------------------------------
+# 文档资产列表（Ascend + Ray 系列）
+# ----------------------------------------------------------------------------
+#   📘 分析:   ./ascend-vllm014-ray-adag-issue.md     研发/架构 - 根因+策略
+#   📗 实施:   ./ascend-vllm014-ray-adag-runbook.md   运维/SRE  - 操作步骤
+#   📙 配置:   ./ascend-values-examples.yaml          运维      - 本文件
+#
+# 两条独立链路：
+#   - 链路 A: 0.14+ aDAG 卡死（应用层 env 软回退）
+#   - 链路 B: 0.12 去特权（K8s 最小权限替换）
+# ============================================================================
+#
+# 本文件提供三套可直接复制粘贴的 Helm values.yaml 片段：
+#   [Profile A] 链路 A：0.14+ aDAG 软回退（仅环境变量层面，不动 K8s 安全策略）
+#   [Profile B] 链路 B：0.12 去特权（K8s securityContext 最小权限替换）
+#   [Profile C] A + B 合并（0.14+ 同时去特权时使用）
+#
+# 使用方式：
+#   - 按你的 chart 实际结构对齐缩进（下方以常见 engine.* 命名为例）
+#   - 占位符 <...> 必须替换
+#   - apply: helm upgrade <release> <chart> -f values-ascend.yaml -n <ns>
+
+# ============================================================================
+# [Profile A] 0.14+ aDAG 软回退（最常用，立即可上）
+# 适用：vllm-ascend >= 0.14 + Ray 多机 + 卡 compile / cgraph communication 错
+# 风险：低；可被用户/上游显式覆盖
+# 性能影响：单 token 延迟 +5~15%（换稳定性）
+# ============================================================================
+
+engine:
+  # 关键：所有这些 env 都允许 wings-control / 用户后续覆盖
+  extraEnvs:
+    # ---- 应用层回退（主方案）----
+    # 2025-12 更新： vllm 主分支已不存在 VLLM_USE_RAY_COMPILED_DAG，
+    # 改用 V2 executor backend 完全绕开 aDAG（控制面走 MQ、数据面走 NCCL）
+    - name: VLLM_USE_RAY_V2_EXECUTOR_BACKEND
+      value: "1"                   # 0.14+ 推荐主方案
+    - name: VLLM_USE_RAY_SPMD_WORKER
+      value: "0"                   # 关 SPMD，避免与 HCCL init 竞态
+    # 老版本（≤ 0.13）兼容写法：
+    # - name: VLLM_USE_RAY_COMPILED_DAG
+    #   value: "0"
+    # 备选调优：换个通道（单机可试 shm，跨机仍是 nccl）
+    # - name: VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE
+    #   value: "shm"
+    # - name: VLLM_USE_RAY_WRAPPED_PP_COMM
+    #   value: "0"
+
+    # ---- NPU 友好的超时默认 ----
+    - name: RAY_CGRAPH_get_timeout
+      value: "1800"                # 默认 10s 太短；910C 双机首跑 compile 可达 600s+
+    - name: HCCL_CONNECT_TIMEOUT
+      value: "600"                 # RoCE 抖动重试余量
+    - name: HCCL_EXEC_TIMEOUT
+      value: "1800"                # 与 RAY_CGRAPH_get_timeout 对齐
+    - name: HCCL_OP_BASE_FFTS_MODE_ENABLE
+      value: "TRUE"                # 减少 HCCL 算子调度抖动
+
+    # ---- Ascend 调度 ----
+    - name: RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES
+      value: "1"                   # head/worker 上 Ray actor 不被改写设备号
+    - name: ASCEND_PROCESS_LOG_PATH
+      value: /tmp/ray_vllm010      # 便于事后定位
+
+    # ---- 兜底回退（默认不开，排障时再加） ----
+    # - name: VLLM_USE_V1
+    #   value: "0"                 # 极端情况退到 V0 引擎
+
+# ============================================================================
+# [Profile B] 0.12 去特权（K8s 最小权限替换）
+# 适用：当前用 privileged: true，希望收敛到最小必要权限
+# 前置：集群已装 ascend-device-plugin + rdma-shared-dev-plugin
+#       节点 containerd 已配 default_ulimits memlock=-1
+# 风险：低；需测试集群灰度验证
+# ============================================================================
+
+engine:
+  securityContext:
+    privileged: false                       # 关键：关掉特权
+    allowPrivilegeEscalation: false
+    runAsUser: 0                            # NPU driver 强依赖 root，不可避
+    capabilities:
+      drop: ["ALL"]
+      add:
+        - IPC_LOCK                          # HCCL pin 内存（必需）
+        - NET_ADMIN                         # 配置 RoCE GID / route
+        - NET_RAW                           # RDMA raw socket
+        - SYS_PTRACE                        # 部分 NPU 调试路径
+        # - SYS_NICE                        # 可选：HCCL 线程优先级
+
+  # 资源声明走 device plugin
+  resources:
+    limits:
+      huawei.com/Ascend910: 8               # 由 ascend-device-plugin 自动注入设备
+      rdma/hca_shared_devices_a: 1          # 由 rdma-shared-dev-plugin 自动注入 RDMA
+      memory: "256Gi"
+      cpu: "32"
+    requests:
+      memory: "128Gi"
+      cpu: "16"
+
+  # entrypoint 里需要 ulimit -l unlimited（配合 IPC_LOCK 才生效）
+  command:
+    - /bin/bash
+    - -c
+  args:
+    - |
+      ulimit -l unlimited
+      ulimit -n 65535
+      exec /your/entrypoint.sh
+
+  # hostPath 最小集（推荐用 ascend-operator 自动注入；下面是手工版）
+  volumeMounts:
+    - name: ascend-driver
+      mountPath: /usr/local/Ascend/driver
+      readOnly: true
+    - name: dcmi
+      mountPath: /usr/local/dcmi
+      readOnly: true
+    - name: npu-smi
+      mountPath: /usr/local/bin/npu-smi
+      readOnly: true
+    - name: ascend-install
+      mountPath: /etc/ascend_install.info
+      readOnly: true
+    - name: hccn-conf
+      mountPath: /etc/hccn.conf
+      readOnly: true
+    - name: shm
+      mountPath: /dev/shm
+
+# Pod 级 volumes（与 containers 同级，对应上面的 volumeMounts）
+volumes:
+  - name: ascend-driver
+    hostPath: { path: /usr/local/Ascend/driver, type: Directory }
+  - name: dcmi
+    hostPath: { path: /usr/local/dcmi, type: Directory }
+  - name: npu-smi
+    hostPath: { path: /usr/local/bin/npu-smi, type: File }
+  - name: ascend-install
+    hostPath: { path: /etc/ascend_install.info, type: File }
+  - name: hccn-conf
+    hostPath: { path: /etc/hccn.conf, type: File }
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 32Gi
+
+# ============================================================================
+# [Profile C] A + B 合并（推荐生产终态）
+# 适用：vllm-ascend 0.14+ 且希望同时去特权
+# ============================================================================
+
+engine:
+  # ---- A 部分：env 软回退 ----
+  extraEnvs:
+    - name: VLLM_USE_RAY_V2_EXECUTOR_BACKEND
+      value: "1"                   # 0.14+ 主方案：绕开 aDAG
+    - name: VLLM_USE_RAY_SPMD_WORKER
+      value: "0"
+    # 老版本兼容：
+    # - name: VLLM_USE_RAY_COMPILED_DAG
+    #   value: "0"
+    - name: RAY_CGRAPH_get_timeout
+      value: "1800"
+    - name: HCCL_CONNECT_TIMEOUT
+      value: "600"
+    - name: HCCL_EXEC_TIMEOUT
+      value: "1800"
+    - name: HCCL_OP_BASE_FFTS_MODE_ENABLE
+      value: "TRUE"
+    - name: RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES
+      value: "1"
+    - name: ASCEND_PROCESS_LOG_PATH
+      value: /tmp/ray_vllm010
+
+  # ---- B 部分：最小权限 ----
+  securityContext:
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsUser: 0
+    capabilities:
+      drop: ["ALL"]
+      add: [IPC_LOCK, NET_ADMIN, NET_RAW, SYS_PTRACE]
+
+  resources:
+    limits:
+      huawei.com/Ascend910: 8
+      rdma/hca_shared_devices_a: 1
+      memory: "256Gi"
+      cpu: "32"
+
+  command: ["/bin/bash", "-c"]
+  args:
+    - |
+      ulimit -l unlimited
+      ulimit -n 65535
+      exec /your/entrypoint.sh
+
+  volumeMounts:
+    - { name: ascend-driver,  mountPath: /usr/local/Ascend/driver, readOnly: true }
+    - { name: dcmi,           mountPath: /usr/local/dcmi,          readOnly: true }
+    - { name: npu-smi,        mountPath: /usr/local/bin/npu-smi,   readOnly: true }
+    - { name: ascend-install, mountPath: /etc/ascend_install.info, readOnly: true }
+    - { name: hccn-conf,      mountPath: /etc/hccn.conf,           readOnly: true }
+    - { name: shm,            mountPath: /dev/shm }
+
+volumes:
+  - { name: ascend-driver,  hostPath: { path: /usr/local/Ascend/driver, type: Directory } }
+  - { name: dcmi,           hostPath: { path: /usr/local/dcmi,          type: Directory } }
+  - { name: npu-smi,        hostPath: { path: /usr/local/bin/npu-smi,   type: File } }
+  - { name: ascend-install, hostPath: { path: /etc/ascend_install.info, type: File } }
+  - { name: hccn-conf,      hostPath: { path: /etc/hccn.conf,           type: File } }
+  - { name: shm,            emptyDir: { medium: Memory, sizeLimit: 32Gi } }
+
+# ============================================================================
+# 验证命令（Profile 应用后执行）
+# ============================================================================
+#
+# 1) Pod 起来：
+#    kubectl -n <ns> rollout status deploy/<dep> --timeout=10m
+#
+# 2) env 已注入（链路 A 验证）：
+#    kubectl -n <ns> exec <master-pod> -c engine -- env | \
+#      grep -E "VLLM_USE_RAY_V2_EXECUTOR_BACKEND|VLLM_USE_RAY_COMPILED_DAG|RAY_CGRAPH_get_timeout|HCCL_CONNECT_TIMEOUT"
+#
+# 3) cap 收敛（链路 B 验证）：
+#    kubectl -n <ns> exec <master-pod> -c engine -- bash -c "capsh --print | grep Current"
+#    kubectl -n <ns> exec <master-pod> -c engine -- bash -c "ulimit -l"
+#
+# 4) NPU + RDMA 可见：
+#    kubectl -n <ns> exec <master-pod> -c engine -- npu-smi info
+#    kubectl -n <ns> exec <master-pod> -c engine -- ibv_devices
+#
+# 5) 推理冒烟：
+#    kubectl -n <ns> port-forward <master-pod> 8000:8000
+#    curl http://127.0.0.1:8000/v1/completions -d '{"model":"...","prompt":"hi","max_tokens":10}'
+#
+# 完整 Runbook 见 ascend-vllm014-ray-adag-runbook.md
