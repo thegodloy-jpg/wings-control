@@ -1048,7 +1048,7 @@ _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
     },
     # 编译图：cudagraph 全量解码模式，覆盖常用并发档位
     "compilation_config": {
-        "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+        "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 64, 128],
         "cudagraph_mode": "FULL_DECODE_ONLY",
     },
 }
@@ -1270,7 +1270,8 @@ def _handle_mtp_case(model_info: ModelIdentifier, mtp_support_models: List[Any],
         if model_info.model_architecture in model_group:
             config.append(f'"method": "{mtp_types[i]}"')
             break
-    config.append('"num_speculative_tokens": 1')
+    # MTP 强制 num_speculative_tokens=3（官方 GLM-4.7 / DeepSeek-V3 推荐值）
+    config.append('"num_speculative_tokens": 3')
 
 
 def _handle_suffix_case(config: List[str]) -> None:
@@ -1364,7 +1365,8 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         logger.info("[AdvFeature-SpecDecode] Architecture %s → MTP strategy (%s)",
                     model_info.model_architecture, strategy)
         speculative_config_temp.append(f'"method": "{strategy}"')
-        speculative_config_temp.append('"num_speculative_tokens": 1')
+        # MTP 强制 num_speculative_tokens=3（官方 GLM-4.7 / DeepSeek-V3 推荐值）
+        speculative_config_temp.append('"num_speculative_tokens": 3')
         return _format_speculative_result(speculative_config_temp)
 
     return ""
