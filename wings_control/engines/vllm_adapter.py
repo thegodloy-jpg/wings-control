@@ -1937,6 +1937,12 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
 
     cmds.extend(_build_qat_env_commands(engine))
     cmds.extend(_build_pd_role_env_commands(engine, current_ip, net_if))
+    # 架构专用环境变量（GLM-4.7 / Qwen3 / Qwen3.5 / MiniMax-M2.5 / DeepSeek V3.2 / LLaMA 等）
+    # 之前只在未被引用的 _build_env_commands 里调用，导致架构专用 env 一行都没进 start_command.sh
+    cmds.extend(_build_model_env_commands(params, engine))
+    # DeepSeek FP8 / Ascend910_9362 专用 env 也一并挂上，保持与 _build_env_commands 等价
+    cmds.extend(_build_deepseek_fp8_env_commands(params, engine))
+    cmds.extend(_build_ascend910_9362_env_commands(params, engine))
     return cmds
 
 
