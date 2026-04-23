@@ -1026,6 +1026,87 @@ def _format_cli_arg(arg_name: str, value) -> List[str]:
     return [arg_name, shlex.quote(str(value))]
 
 
+# ── GLM-4.7-W8A8 引擎参数注入（仅针对量化变体，避免污染同架构 BF16 模型）──
+# 触发条件：架构 == Glm4MoeForCausalLM 且 config.json 量化字段命中 W8A8 别名表
+# 合并策略：用户 engine_config 已有的 key **不会被覆盖**（用户优先）
+_GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
+    "enable_expert_parallel": True,
+    "async_scheduling": True,
+    "quantization": "ascend",
+    "additional_config": {
+        "ascend_scheduler_config": {"enabled": True},
+        "expert_tensor_parallel_size": 1,
+    },
+}
+
+# W8A8 量化别名白名单 + 子串匹配（兼容 quantize / quantization_config.quant_method 字段值多样命名）
+_W8A8_QUANT_METHOD_ALIASES = {
+    "w8a8", "w8a8_int8", "w8a8int8",
+    "smoothquant", "smooth_quant",
+    "ascend_w8a8", "ascend-w8a8",
+}
+
+
+def _is_w8a8_quantize(quantize: Optional[str]) -> bool:
+    """判定模型是否为 W8A8 量化变体（容忍命名差异）。"""
+    if not quantize:
+        return False
+    q = str(quantize).strip().lower()
+    if not q:
+        return False
+    if q in _W8A8_QUANT_METHOD_ALIASES:
+        return True
+    # 子串匹配：覆盖未来可能出现的 ascend-w8a8-int8 / xxx_w8a8_yyy 等命名
+    return "w8a8" in q
+
+
+def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
+    """检测 GLM-4.7-W8A8 模型，**就地**向 engine_config 追加调优默认字段。
+
+    设计要点：
+      * 仅当 (架构 == Glm4MoeForCausalLM) 且 (quantize 命中 W8A8) 时触发
+      * 用户已显式给出的字段不被覆盖（user > injected default）
+      * BF16 / 同架构非量化变体（如 GLM-4.5）不会被影响
+      * 仅对 vllm / vllm_ascend 引擎生效
+    """
+    engine = params.get("engine", "vllm")
+    if engine not in ("vllm", "vllm_ascend"):
+        return
+
+    model_path = params.get("model_path")
+    if not model_path:
+        return
+
+    try:
+        info = ModelIdentifier(
+            params.get("model_name", ""),
+            model_path,
+            params.get("model_type", "auto"),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[GLM-4.7-W8A8] Skip injection, ModelIdentifier failed: %s", e)
+        return
+
+    if info.model_architecture != "Glm4MoeForCausalLM":
+        return
+    if not _is_w8a8_quantize(info.model_quantize):
+        return
+
+    engine_config = params.setdefault("engine_config", {})
+    injected: List[str] = []
+    for key, default_val in _GLM47_W8A8_ENGINE_DEFAULTS.items():
+        if key in engine_config and engine_config[key] is not None:
+            continue  # 用户优先
+        engine_config[key] = default_val
+        injected.append(key)
+
+    if injected:
+        logger.info(
+            "[GLM-4.7-W8A8] Injected engine_config defaults for arch=%s quantize=%s: %s",
+            info.model_architecture, info.model_quantize, injected,
+        )
+
+
 def _build_vllm_cmd_parts(params: Dict[str, Any]) -> str:
     """构建 vLLM 核心启动命令字符串。
 
@@ -1848,6 +1929,8 @@ def build_start_script(params: Dict[str, Any]) -> str:
     # KV 稀疏：必须在 _build_vllm_cmd_parts 之前调用，
     # FP8 路径会就地修改 engine_config，避免 --kv-cache-dtype 重复
     sparse_args = _build_kv_sparse_cmd(params, engine) if params.get("enable_sparse") else ""
+    # GLM-4.7-W8A8 引擎参数注入（必须在 _build_vllm_cmd_parts 之前，且只动 W8A8 量化变体）
+    _inject_glm47_w8a8_engine_config(params)
     cmd = _build_vllm_cmd_parts(params)
     is_distributed = params.get("distributed", False)
     nnodes = params.get("nnodes", 1)
