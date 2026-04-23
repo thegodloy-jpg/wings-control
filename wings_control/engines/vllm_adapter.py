@@ -375,19 +375,40 @@ def _build_lmcache_yaml_dict(engine: str) -> dict:
 def _need_lmcache_config_yaml() -> bool:
     """判断是否需要生成 LMCache YAML 配置文件。
 
-    仅在 cold_start 或 QAT 特性启用时才需要 YAML 文件。
-    纯内存/磁盘卸载场景由环境变量控制，不需要 YAML。
+    触发条件（任一满足即生成）：
+      1. cold_start 或 QAT 特性启用（功能性段落）
+      2. 配置了 CPU 内存卸载相关 env：
+         - LMCACHE_LOCAL_CPU=true
+         - LMCACHE_MAX_LOCAL_CPU_SIZE 非空
+      3. 配置了本地磁盘卸载相关 env：
+         - LMCACHE_LOCAL_DISK 非空
+         - LMCACHE_MAX_LOCAL_DISK_SIZE 非空
+
+    说明：LMCache 的容量类字段（max_size 等）在多数版本下仅识别
+    YAML 文件，不保证从同名 env 自动注入；因此只要用户传了容量
+    配置，就必须落盘 YAML，否则会沉默失效（参数丢失 bug）。
 
     Returns:
         bool: 需要生成返回 True
     """
-    return get_cold_start_env() or get_qat_env()
+    if get_cold_start_env() or get_qat_env():
+        return True
+    if os.getenv("LMCACHE_LOCAL_CPU", "").strip().lower() == "true":
+        return True
+    if os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip():
+        return True
+    if os.getenv("LMCACHE_LOCAL_DISK", "").strip():
+        return True
+    if os.getenv("LMCACHE_MAX_LOCAL_DISK_SIZE", "").strip():
+        return True
+    return False
 
 
 def _write_lmcache_config_yaml(engine: str) -> Optional[str]:
     """生成并写入 LMCache YAML 配置文件到共享卷。
 
-    条件：仅在 cold_start 或 QAT 启用时触发。
+    条件：见 _need_lmcache_config_yaml()，覆盖 cold_start / QAT /
+    CPU 卸载 / 磁盘卸载 等所有需要落盘的场景。
     写入路径：/shared-volume/lmcache_config.yaml
 
     Args:
@@ -427,8 +448,9 @@ def _build_cache_env_commands(engine: str) -> List[str]:
     LMCache 所需的共享库已在 accel-volume 安装阶段通过
     ``install.py --lmcache-target`` 注入，无需再手动设置 LD_LIBRARY_PATH。
 
-    当 cold_start 或 QAT 特性启用时，还会生成 LMCache YAML 配置文件
-    并通过 ``LMCACHE_CONFIG_FILE`` 环境变量告知 LMCache 配置路径。
+    只要传入了任何容量/路径类配置（CPU/Disk/cold_start/QAT），就会
+    生成 LMCache YAML 配置文件并通过 ``LMCACHE_CONFIG_FILE`` 环境变量
+    告知 LMCache，避免容量参数被沉默丢弃。
 
     Args:
         engine: 引擎类型
@@ -447,10 +469,18 @@ def _build_cache_env_commands(engine: str) -> List[str]:
     # 跨实例Hash一致
     env_commands.append('export PYTHONHASHSEED=0')
 
-    # 当 cold_start 或 QAT 启用时，生成 YAML 配置文件并导出路径
+    # 任何 LMCache 容量/功能段配置都会触发 YAML 生成并导出路径
     yaml_path = _write_lmcache_config_yaml(engine)
     if yaml_path:
         env_commands.append(f'export LMCACHE_CONFIG_FILE={shlex.quote(yaml_path)}')
+        logger.info("[KVCache Offload] LMCACHE_CONFIG_FILE exported -> %s", yaml_path)
+    else:
+        logger.warning(
+            "[KVCache Offload] LMCACHE_OFFLOAD enabled but no LMCache config "
+            "yaml generated. Capacity envs (LMCACHE_MAX_LOCAL_CPU_SIZE / "
+            "LMCACHE_MAX_LOCAL_DISK_SIZE) may not take effect. "
+            "Set LMCACHE_LOCAL_CPU=true (or any capacity env) to enable."
+        )
 
     return env_commands
 
