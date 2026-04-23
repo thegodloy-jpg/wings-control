@@ -913,6 +913,31 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     return engine_config
 
 
+def _strip_cli_flag(cmd: str, flag: str) -> str:
+    """从已构建的 vLLM CLI 命令字符串中移除指定的 ``--xxx <value>`` 片段。
+
+    用于 Ray 分布式 head 端在 MoE PP 自动注入路径下，避免与 engine_config
+    生成的同名参数（如 ``--tensor-parallel-size``）形成重复传参。
+
+    Args:
+        cmd:  ``_build_vllm_cmd_parts`` 生成的命令字符串
+        flag: 需要移除的 CLI 参数名（如 ``--tensor-parallel-size``）
+
+    Returns:
+        str: 移除该 flag 及其紧随值后的命令字符串（值若不存在则原样返回）
+    """
+    tokens = cmd.split()
+    out: List[str] = []
+    i = 0
+    while i < len(tokens):
+        if tokens[i] == flag and i + 1 < len(tokens):
+            i += 2  # 跳过 flag 与其值
+            continue
+        out.append(tokens[i])
+        i += 1
+    return " ".join(out)
+
+
 def _format_cli_arg(arg_name: str, value) -> List[str]:
     """将单个引擎参数值格式化为 CLI 参数片段。
 
@@ -1186,7 +1211,9 @@ _SH_DETECT_IP = (
     "finally: s.close()\""
     " 2>/dev/null || hostname -i)"
 )
-_SH_VLLM_HOST = "export VLLM_HOST_IP=${POD_IP:-" + _SH_DETECT_IP + "}"
+# VLLM_HOST_IP 优先级：POD_IP（K8s downward API） > RANK_IP（上层调度注入）> 路由探测。
+# 与 HCCL_IF_IP 走同一来源，避免多网卡场景下两者落到不同网卡。
+_SH_VLLM_HOST = "export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-" + _SH_DETECT_IP + "}}"
 _SH_IF_DETECT = (
     "$(awk '$2==\"00000000\"{print $1;exit}'"
     " /proc/net/route 2>/dev/null || echo eth0)"
@@ -1351,8 +1378,18 @@ def _build_comm_env_commands(is_ascend: bool) -> List[str]:
 
 
 def _build_ray_wait_loop(nnodes: int) -> List[str]:
-    """返回等待所有 Ray 节点加入的 shell 循环命令。"""
+    """返回等待所有 Ray 节点加入的 shell 循环命令。
+
+    行为：最多轮询 60 次 × 5s = 300s，每次用 python 读取 ray.nodes() 中 alive
+    节点数；达到 ``nnodes`` 立即跳出循环。
+
+    Fail-fast：超时仍未达标时直接 ``exit 1``，避免后续 ``exec vllm`` 在
+    ray 集群未就绪的情况下进入卡 compile 路径——那种隐性卡死非常难定位，
+    显式 ``exit 1`` + 明确错误日志可以让 K8s 立刻 CrashLoopBackOff，
+    运维通过 ``kubectl logs`` 1 秒就能看到根因。
+    """
     return [
+        "RAY_WAIT_OK=0",
         "for i in $(seq 1 60); do",
         "  COUNT=$(python3 -c \"import ray;"
         " ray.init(address='auto',"
@@ -1361,9 +1398,16 @@ def _build_ray_wait_loop(nnodes: int) -> List[str]:
         " if n['alive']]));"
         " ray.shutdown()\""
         " 2>/dev/null || echo 0)",
-        f"  [ \"$COUNT\" -ge \"{nnodes}\" ] && break",
+        f"  if [ \"$COUNT\" -ge \"{nnodes}\" ]; then RAY_WAIT_OK=1; break; fi",
+        f"  echo \"[ray-wait] iter=$i count=$COUNT expected={nnodes}, sleep 5s...\"",
         "  sleep 5",
-        "done\n",
+        "done",
+        "if [ \"$RAY_WAIT_OK\" != \"1\" ]; then",
+        f"  echo \"[ray-wait] FATAL: only $COUNT/{nnodes} ray nodes joined after"
+        " 300s. Check worker pod status / network / RAY_PORT reachability.\" >&2",
+        "  exit 1",
+        "fi",
+        "echo \"[ray-wait] OK: $COUNT ray nodes joined.\"\n",
     ]
 
 
@@ -1376,6 +1420,22 @@ def _build_ray_head_commands(
     parts: List[str] = [_SH_VLLM_HOST]
     parts.extend(_build_comm_env_commands(ctx.is_ascend))
     parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
+
+    # Ascend Ray 场景：head 同时承担 driver 与本地 actor 的角色，需要与 worker
+    # 保持一致的环境，否则会出现两类典型崩溃：
+    #   1) 未设 RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1 时，Ray 会
+    #      自动给 head 上的 actor 注入 ASCEND_RT_VISIBLE_DEVICES，但 vllm-ascend
+    #      仍按物理卡 ID 选卡 (set_device(local_rank))，多卡场景下会触发
+    #      "invalid device ordinal" 或 HCCL rank-table 不匹配。
+    #   2) RAY_CGRAPH_get_timeout 是 driver 端读取的超时（默认 300s），
+    #      Ascend 首推 JIT 编译耗时常超过 5 分钟，必须在 head（driver）上 export，
+    #      仅在 worker 上 export 完全不起作用。
+    if ctx.is_ascend:
+        parts.extend([
+            "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
+            "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
+            "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
+        ])
 
     ray_head_resource = _get_ray_resource_flag(ctx.engine, params)
     ray_head_cmd = (
@@ -1400,20 +1460,26 @@ def _build_ray_head_commands(
         "Qwen3_5MoeForConditionalGeneration",
         "MiniMaxM2ForCausalLM",
     ]
+    cmd_for_exec = ctx.cmd
     if getattr(model_info_ray, "model_architecture", None) in _ray_auto_pp_archs:
         nodes_list = ctx.node_ips.split(",") if ctx.node_ips else []
         num_nodes = len(nodes_list) if nodes_list else 1
         tp_size = params.get("device_count", 1)
         ray_pp_extra = f" --pipeline-parallel-size {num_nodes} --tensor-parallel-size {tp_size}"
+        # engine_config 已带 --tensor-parallel-size <device_count*nnodes>，
+        # MoE 自动 PP 路径需用 device_count 覆盖，必须先剥离原有参数避免重复。
+        cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--tensor-parallel-size")
+        cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--pipeline-parallel-size")
         logger.info("[vllm_ascend ray] Set parallel parameters: "
                     "pipeline_parallel_size=%s, tensor_parallel_size=%s",
                     num_nodes, tp_size)
 
+    # engine_config 中已包含 --distributed-executor-backend ray（来自 config_loader），
+    # 此处不再重复追加，避免 CLI 出现两次同名参数。
     base_exec = (
-        f"exec {ctx.cmd}{eager_flag}"
+        f"exec {cmd_for_exec}{eager_flag}"
         f"{speculative_extra}{sparse_args}"
         f"{ray_pp_extra}"
-        f" --distributed-executor-backend ray"
     )
     parts.append(base_exec)
     return parts
@@ -1440,6 +1506,9 @@ def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = 
         )
     return [
         "export HCCL_WHITELIST_DISABLE=1",
+        # 先确定 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），后续 HCCL_IF_IP 与 Ray
+        # node-ip-address 都复用此值，保证多网卡场景下走同一张网卡。
+        _SH_VLLM_HOST,
         ip_list_expr,
         "HEAD_IP=\"\"",
         f"echo \"[worker] Scanning for Ray head on port {ray_port}...\"",
@@ -1461,20 +1530,15 @@ def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = 
         "if [ -z \"$HEAD_IP\" ]; then "
         "echo '[worker] ERROR: Could not find Ray head'; "
         "exit 1; fi\n",
-        f"export HCCL_IF_IP=$(python3 -c \""
-        f"import socket;"
-        f" s=socket.socket(socket.AF_INET,"
-        f"socket.SOCK_DGRAM);"
-        f" s.connect(('$HEAD_IP',{ray_port}));"
-        f" print(s.getsockname()[0]); s.close()\""
-        f" 2>/dev/null || hostname -i)",
+        # 与 head 保持一致：HCCL_IF_IP 复用 VLLM_HOST_IP，避免与 8.8.8.8 路由探测/
+        # socket 出口探测落到不同网卡（业务网 vs 管理网），导致 HCCL 性能/稳定性问题。
+        "export HCCL_IF_IP=$VLLM_HOST_IP",
         "export HCCL_SOCKET_IFNAME=" + _SH_IF_DETECT,
         "export TP_SOCKET_IFNAME=" + _SH_IF_DETECT,
         "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
         "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
         # Ascend NPU 首次推理需 JIT 编译算子，耗时可能超过 Ray 编译DAG默认 300s 超时。
         "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
-        _SH_VLLM_HOST,
     ]
 
 
@@ -1521,7 +1585,10 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
     net_if = os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0"))
     if is_ascend:
         return [
-            "export HCCL_IF_IP=${POD_IP:-" + _SH_DETECT_IP + "}",
+            # 与 Ray 路径保持一致：先建立 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），
+            # HCCL_IF_IP 直接复用，避免多网卡场景下与 vLLM 通信走错网卡。
+            _SH_VLLM_HOST,
+            "export HCCL_IF_IP=$VLLM_HOST_IP",
             f"export GLOO_SOCKET_IFNAME={net_if}",
             f"export TP_SOCKET_IFNAME={net_if}",
             f"export HCCL_SOCKET_IFNAME={net_if}",
