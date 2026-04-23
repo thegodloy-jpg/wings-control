@@ -1037,8 +1037,6 @@ _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
     "async_scheduling": True,
     "quantization": "ascend",
     "additional_config": {
-        "ascend_scheduler_config": {"enabled": True},
-        "expert_tensor_parallel_size": 1,
         # 官方 GLM-4.7-W8A8 强推荐
         "enable_shared_expert_dp": True,
         "ascend_fusion_config": {"fusion_ops_gmmswigluquant": False},
