@@ -1160,6 +1160,15 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
             "[GLM-4.7-W8A8] Engine config tuning for arch=%s quantize=%s | injected=%s | deep_merged=%s",
             info.model_architecture, info.model_quantize, injected, deep_merged,
         )
+        # 摘要：打印 W8A8 影响的最终字段值，便于排查
+        try:
+            summary = {k: engine_config.get(k) for k in _GLM47_W8A8_ENGINE_DEFAULTS.keys()}
+            logger.info(
+                "[GLM-4.7-W8A8] Final engine_config for tuned keys:\n%s",
+                json.dumps(summary, ensure_ascii=False, indent=2),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[GLM-4.7-W8A8] Skip summary dump: %s", e)
 
 
 def _build_vllm_cmd_parts(params: Dict[str, Any]) -> str:
