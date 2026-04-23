@@ -1046,7 +1046,7 @@ _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
     # 推测解码：使用 vllm-ascend 专用 method 名 glm4_moe_mtp
     "speculative_config": {
         "method": "glm4_moe_mtp",
-        "num_speculative_tokens": 1,
+        "num_speculative_tokens": 3,
     },
     # 编译图：cudagraph 全量解码模式，覆盖常用并发档位
     "compilation_config": {
@@ -1131,15 +1131,32 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
     if not _is_w8a8_quantize(info.model_quantize):
         return
 
+    # 若上层已通过 enable_speculative_decode 走 _build_speculative_cmd 路径，
+    # 则我们不再向 engine_config 注入 speculative_config，避免命令行出现两份
+    # --speculative-config（一份来自 engine_config，一份来自 _build_speculative_cmd）
+    suppress_speculative = bool(params.get("enable_speculative_decode"))
+
     engine_config = params.setdefault("engine_config", {})
     injected: List[str] = []
     deep_merged: List[str] = []
+    skipped: List[str] = []
     for key, default_val in _GLM47_W8A8_ENGINE_DEFAULTS.items():
+        if key == "speculative_config" and suppress_speculative:
+            skipped.append(key + "(handled by _build_speculative_cmd)")
+            # 同时，从 engine_config 中移除任何已存在的 speculative_config，
+            # 避免 _build_vllm_cmd_parts 也输出一份。MTP 路径在尾部追加。
+            engine_config.pop("speculative_config", None)
+            continue
         existing = engine_config.get(key)
+        # 把"空"等价于"未设置"：None / 空字符串 / 空 dict / 空 list 都视为未提供
+        is_empty = (
+            existing is None
+            or (isinstance(existing, str) and not existing.strip())
+            or (isinstance(existing, (dict, list)) and len(existing) == 0)
+        )
         if key in _GLM47_W8A8_DEEP_MERGE_KEYS and isinstance(default_val, dict):
-            # dict 深合并（用户优先）
-            if existing is None:
-                engine_config[key] = dict(default_val)
+            if is_empty:
+                engine_config[key] = dict(default_val) if isinstance(default_val, dict) else default_val
                 injected.append(key)
             elif isinstance(existing, dict):
                 merged = _deep_merge_user_priority(existing, default_val)
@@ -1147,25 +1164,34 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
                     engine_config[key] = merged
                     deep_merged.append(key)
             else:
-                # 用户给了非 dict 值，不动
-                continue
+                # 用户给了非 dict 非空值（如 JSON 字符串）→ 强制覆盖以保证 JSON 正确性
+                # （上层 _merge_vllm_params 会把 dict 序列化为 str，导致 _format_cli_arg
+                #  走字符串规范化分支，可能丢失我们注入的子键。这里强制以 dict 覆盖。）
+                logger.warning(
+                    "[GLM-4.7-W8A8] %s already present as non-dict (%s); "
+                    "overriding with merged dict to ensure injection.",
+                    key, type(existing).__name__,
+                )
+                engine_config[key] = dict(default_val)
+                injected.append(key)
         else:
-            if existing is not None:
+            if not is_empty:
+                skipped.append(key)
                 continue  # 标量字段：用户优先
             engine_config[key] = default_val
             injected.append(key)
 
     if injected or deep_merged:
         logger.info(
-            "[GLM-4.7-W8A8] Engine config tuning for arch=%s quantize=%s | injected=%s | deep_merged=%s",
-            info.model_architecture, info.model_quantize, injected, deep_merged,
+            "[GLM-4.7-W8A8] Engine config tuning for arch=%s quantize=%s | injected=%s | deep_merged=%s | user_kept=%s",
+            info.model_architecture, info.model_quantize, injected, deep_merged, skipped,
         )
         # 摘要：打印 W8A8 影响的最终字段值，便于排查
         try:
             summary = {k: engine_config.get(k) for k in _GLM47_W8A8_ENGINE_DEFAULTS.keys()}
             logger.info(
                 "[GLM-4.7-W8A8] Final engine_config for tuned keys:\n%s",
-                json.dumps(summary, ensure_ascii=False, indent=2),
+                json.dumps(summary, ensure_ascii=False, indent=2, default=str),
             )
         except Exception as e:  # noqa: BLE001
             logger.debug("[GLM-4.7-W8A8] Skip summary dump: %s", e)
