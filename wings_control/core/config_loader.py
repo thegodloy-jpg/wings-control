@@ -1633,22 +1633,18 @@ def _select_nvidia_engine(gpu_usage_mode: str, model_info) -> str:
     """NVIDIA GPU 场景下的引擎自动选择逻辑。
 
     优先级（由高到低）：
-    1. 启用 KVCache Offload → vllm
-    2. 启用 PD 分离 → vllm
-    3. 启用 Wings Router → vllm
-    4. MIG 模式 → vllm
-    5. embedding/rerank 模型 → vllm
-    6. wings 已验证模型 → sglang（推荐高性能路径）
-    7. 其他未验证架构 → vllm（兜底）
+    1. 启用 PD 分离 → vllm
+    2. 启用 Wings Router → vllm
+    3. MIG 模式 → vllm
+    4. embedding/rerank 模型 → vllm
+    5. wings 已验证模型 → sglang（推荐高性能路径）
+    6. 其他未验证架构 → vllm（兜底）
     """
     model_architecture = model_info.model_architecture
     model_type = model_info.identify_model_type()
     is_wings_supported = model_info.is_wings_supported()
     vllm = 'vllm'
-    if get_lmcache_env():
-        logger.info("[KVCache Offload] KVCache Offload enabled, automatically switched to VLLM engine")
-        return vllm
-    elif get_pd_role_env():
+    if get_pd_role_env():
         logger.info("PD enabled, automatically switched to VLLM engine")
         return vllm
     elif get_router_env():
@@ -1676,11 +1672,10 @@ def _select_ascend_engine(device_name: str, model_info) -> str:
     1. Ascend310 → 强制 mindie（vllm_ascend 不支持 310 系列）
     2. embedding / rerank 模型 → vllm_ascend
     3. 算子加速（USE_KUNLUN_ATB）启用 → vllm_ascend
-    4. LMCache KV Offload 启用 → vllm_ascend
-    5. Wings Router 启用 → vllm_ascend
-    6. Soft FP8 量化启用 → vllm_ascend
-    7. Wings 已验证模型 → mindie（Ascend 上的推荐引擎）
-    8. 未验证架构 → vllm_ascend（兜底）
+    4. Wings Router 启用 → vllm_ascend
+    5. Soft FP8 量化启用 → vllm_ascend
+    6. Wings 已验证模型 → mindie（Ascend 上的推荐引擎）
+    7. 未验证架构 → vllm_ascend（兜底）
 
     Args:
         device_name: 设备型号名称，含 '310' 表示昇腾 310 系列
@@ -1706,9 +1701,6 @@ def _select_ascend_engine(device_name: str, model_info) -> str:
     elif get_operator_acceleration_env():
         logger.warning("operator_acceleration is enabled, "
                        "automatically switched to VLLM_Ascend engine")
-        return "vllm_ascend"
-    elif get_lmcache_env():
-        logger.info("[KVCache Offload] KVCache Offload enabled, automatically switched to VLLM_Ascend engine")
         return "vllm_ascend"
     elif get_router_env():
         logger.info("Wings router enabled, automatically switched to VLLM engine")
@@ -1762,10 +1754,6 @@ def _validate_user_engine(engine: str, device_name: str, gpu_usage_mode: str, mo
         # 310mindie
         if "310" in device_name:
             return 'mindie'
-        # LMCachevllm_ascend
-        elif get_lmcache_env():
-            logger.warning("[KVCache Offload] KVCache Offload enabled, automatically switched to VLLM_Ascend engine")
-            return "vllm_ascend"
         # embeddingrerankvllm_ascend
         elif model_type in ["embedding", "rerank"]:
             logger.warning("model type is %s, automatically switched to VLLM_Ascend engine", model_type)

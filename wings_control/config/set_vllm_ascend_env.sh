@@ -6,18 +6,18 @@
 #
 # 注意: 此脚本在 engine 容器内执行，不是在 wings-control 容器内。
 #       因此路径应指向 engine 镜像中实际存在的位置。
-#       engine 镜像预装 CANN toolkit，此处 source 加载其环境变量。
+#       engine 镜像预装 CANN toolkit，此处补充运行时环境变量。
 # =============================================================================
 
-# set +u: CANN 环境脚本引用未绑定变量 (CMAKE_PREFIX_PATH, ZSH_VERSION)
-set +u
-[ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] \
-    && source /usr/local/Ascend/ascend-toolkit/set_env.sh \
-    || echo 'WARN: ascend-toolkit/set_env.sh not found'
-[ -f /usr/local/Ascend/nnal/atb/set_env.sh ] \
-    && source /usr/local/Ascend/nnal/atb/set_env.sh \
-    || echo 'WARN: nnal/atb/set_env.sh not found'
-set -u
+# Source-based CANN env init is intentionally disabled for the current path.
+# set +u
+# [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] \
+#     && source /usr/local/Ascend/ascend-toolkit/set_env.sh \
+#     || echo 'WARN: ascend-toolkit/set_env.sh not found'
+# [ -f /usr/local/Ascend/nnal/atb/set_env.sh ] \
+#     && source /usr/local/Ascend/nnal/atb/set_env.sh \
+#     || echo 'WARN: nnal/atb/set_env.sh not found'
+# set -u
 
 # Ascend 驱动库路径（libascend_hal.so 等位于此目录）
 # 如果驱动目录不存在，说明宿主机驱动未挂载到容器

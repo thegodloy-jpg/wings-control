@@ -235,14 +235,18 @@ def _build_ascend_fallback_env(engine: str) -> List[str]:
     if engine not in ("vllm_ascend", "mindie"):
         return []
     return [
-        "set +u",
-        "[ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] "
-        "&& source /usr/local/Ascend/ascend-toolkit/set_env.sh "
-        "|| echo 'WARN: ascend-toolkit/set_env.sh not found'",
-        "[ -f /usr/local/Ascend/nnal/atb/set_env.sh ] "
-        "&& source /usr/local/Ascend/nnal/atb/set_env.sh "
-        "|| echo 'WARN: nnal/atb/set_env.sh not found'",
-        "set -u",
+        # "set +u",
+        # (
+        #     "[ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] "
+        #     "&& source /usr/local/Ascend/ascend-toolkit/set_env.sh "
+        #     "|| echo 'WARN: ascend-toolkit/set_env.sh not found'"
+        # ),
+        # (
+        #     "[ -f /usr/local/Ascend/nnal/atb/set_env.sh ] "
+        #     "&& source /usr/local/Ascend/nnal/atb/set_env.sh "
+        #     "|| echo 'WARN: nnal/atb/set_env.sh not found'"
+        # ),
+        # "set -u",
         "export LD_LIBRARY_PATH=\"/usr/local/Ascend/driver/lib64/driver"
         ":/usr/local/Ascend/driver/lib64/common:${LD_LIBRARY_PATH:-}\"",
     ]
