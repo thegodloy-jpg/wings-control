@@ -2081,8 +2081,9 @@ def _inject_env_echo(script: str) -> str:
     同时对关键命令行（python3 引擎启动 / ray start / source set_env）前置
     `echo "[wings-cmd] >>> ..."`，便于在 engine.log 里快速定位每条实际执行的命令。
 
-    只打印变量名（不打印值），避免敏感信息（如 token/key）泄露到日志。
-    跳过以 'export ' 开头但包含换行/heredoc 风险的多行语句（source 等）。
+    打印格式：`[wings-env] export VAR=<value>`，使用 `${VAR}` 在 bash 运行时
+    展开实际值。注意：值会原样进日志，不再脱敏；如有 token / API key 等敏感
+    变量，请避免通过 export 注入或在调用方自行脱敏后再传入。
 
     Args:
         script: 原始 bash 脚本字符串
@@ -2104,7 +2105,10 @@ def _inject_env_echo(script: str) -> str:
         if m:
             var_name = m.group(1)
             indent = line[: len(line) - len(stripped)]
-            result.append(f'{indent}echo "[wings-env] export {var_name}"\n')
+            # 同时打印变量名与运行时实际值（${VAR} 由 bash 展开）
+            result.append(
+                f'{indent}echo "[wings-env] export {var_name}=${{{var_name}}}"\n'
+            )
         elif cmd_prefix_re.match(stripped):
             indent = line[: len(line) - len(stripped)]
             # 截断到 800 字符，避免单行超长污染日志；shell 单引号转义
