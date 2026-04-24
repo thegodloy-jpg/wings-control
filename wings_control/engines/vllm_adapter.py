@@ -1747,12 +1747,24 @@ def _build_ray_head_commands(
                     "pipeline_parallel_size=%s, tensor_parallel_size=%s",
                     num_nodes, tp_size)
 
-    # engine_config 中已包含 --distributed-executor-backend ray（来自 config_loader），
-    # 此处不再重复追加，避免 CLI 出现两次同名参数。
+    # 显式注入 --distributed-executor-backend ray。
+    # 历史注释声称 engine_config 中已包含该 flag（来自 config_loader），实际上
+    # config_loader._handle_vllm_distributed 只把它写入 cmd_params 顶层，
+    # 而 _apply_cli_overrides 仅覆盖 engine_config 已有 key，从未注入新 key，
+    # 导致 CLI 缺失该参数 → vLLM 默认走 mp executor → 单节点本地起 N 个 worker
+    # → device id 越界（如 2 卡机器要 set_device(2/3) 报 EE1003 invalid devId）。
+    # 这里先剥离旧值（防止上游某天补上后重复），再统一追加 ray。
+    backend_extra = ""
+    backend = params.get("distributed_executor_backend", "ray")
+    if backend == "ray":
+        cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--distributed-executor-backend")
+        backend_extra = " --distributed-executor-backend ray"
+
     base_exec = (
         f"exec {cmd_for_exec}{eager_flag}"
         f"{speculative_extra}{sparse_args}"
         f"{ray_pp_extra}"
+        f"{backend_extra}"
     )
     parts.append(base_exec)
     return parts
