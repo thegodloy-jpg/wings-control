@@ -960,6 +960,20 @@ else
   echo "[Engine] │ Reason: Engine crashed (exit_code=$EXIT_CODE, runtime=${{ENGINE_DURATION}}s)"
   echo "[Engine] │ Action: Retrying engine startup with same parameters (attempt 2/2)"
   echo "[Engine] └── Retry command about to execute..."
+  # 清理上一次启动残留：ray head/worker 进程 + 端口占用
+  if command -v ray >/dev/null 2>&1; then
+    echo "[Engine] Stopping leftover Ray cluster before retry..."
+    ray stop --force >/dev/null 2>&1 || true
+  fi
+  # 兜底：杀掉残留的 vLLM EngineCore / WorkerProc（父进程已死但子进程可能还在）
+  pkill -9 -f 'vllm.*EngineCore' 2>/dev/null || true
+  pkill -9 -f 'vllm.*WorkerProc' 2>/dev/null || true
+  pkill -9 -f 'multiproc_executor' 2>/dev/null || true
+  # 一刀切：unset 所有补丁/加速层使能环境变量，退到最基本的启动命令
+  # （不动 VLLM_ASCEND_ENABLE_* / VLLM_USE_V1 等常规性能 flag，它们不是补丁）
+  echo "[Engine] Unsetting patch/accel env vars for retry: WINGS_ENGINE_PATCH_OPTIONS VLLM_EARS_TOLERANCE"
+  unset WINGS_ENGINE_PATCH_OPTIONS
+  unset VLLM_EARS_TOLERANCE
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
@@ -1027,6 +1041,21 @@ else
 }}
 FEATURES_EOF
   echo "[AdvFeature] Updated advanced_features.json: all engine features disabled"
+  # 清理上一次启动残留：ray head/worker 进程 + 端口占用
+  # （fallback 会重新执行 ray start --head，若旧 head 仍在则会因端口冲突失败）
+  if command -v ray >/dev/null 2>&1; then
+    echo "[AdvFeature] Stopping leftover Ray cluster before fallback restart..."
+    ray stop --force >/dev/null 2>&1 || true
+  fi
+  # 兜底：杀掉残留的 vLLM EngineCore / WorkerProc（父进程已死但子进程可能还在）
+  pkill -9 -f 'vllm.*EngineCore' 2>/dev/null || true
+  pkill -9 -f 'vllm.*WorkerProc' 2>/dev/null || true
+  pkill -9 -f 'multiproc_executor' 2>/dev/null || true
+  # 一刀切：unset 所有补丁/加速层使能环境变量，退到最基本的启动命令
+  # （不动 VLLM_ASCEND_ENABLE_* / VLLM_USE_V1 等常规性能 flag，它们不是补丁）
+  echo "[AdvFeature] Unsetting patch/accel env vars for fallback: WINGS_ENGINE_PATCH_OPTIONS VLLM_EARS_TOLERANCE"
+  unset WINGS_ENGINE_PATCH_OPTIONS
+  unset VLLM_EARS_TOLERANCE
   echo "[Engine] Waiting 5s for port release before restart..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
