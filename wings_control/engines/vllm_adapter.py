@@ -1282,6 +1282,40 @@ def _handle_suffix_case(config: List[str]) -> None:
     config.append('"suffix_decoding_max_cached_requests": 1000')
 
 
+def _is_mtp_or_suffix_strategy(params: Dict[str, Any], engine: str) -> bool:
+    """判断当前投机推理策略是否为 MTP 或 suffix（即非草稿模型方案）。
+
+    当启用投机推理且未指定草稿模型路径时，策略一定是 MTP 或 suffix。
+    """
+    if not params.get("enable_speculative_decode"):
+        return False
+    if engine not in ("vllm", "vllm_ascend"):
+        return False
+    if params.get("speculative_decode_model_path"):
+        return False
+    return True
+
+
+def _build_speculative_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
+    """构建 MTP / suffix 投机推理策略所需的环境变量命令。
+
+    当投机推理采用 MTP 或 suffix 策略时，默认注入
+    ``VLLM_EARS_TOLERANCE=0.5`` 环境变量以控制容忍度参数。
+
+    Args:
+        params: 参数字典
+        engine: 引擎类型
+
+    Returns:
+        List[str]: 环境变量设置命令列表，未启用时返回空列表
+    """
+    if not _is_mtp_or_suffix_strategy(params, engine):
+        return []
+    logger.info("[AdvFeature-SpecDecode] MTP/suffix strategy detected, "
+                "injecting VLLM_EARS_TOLERANCE=0.5")
+    return ['export VLLM_EARS_TOLERANCE=0.5']
+
+
 def _resolve_mtp_method(model_architecture: str) -> str:
     mtp_methods_by_arch = {
         "DeepseekV3ForCausalLM": "deepseek_mtp",
@@ -1937,6 +1971,7 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
 
     cmds.extend(_build_qat_env_commands(engine))
     cmds.extend(_build_pd_role_env_commands(engine, current_ip, net_if))
+    cmds.extend(_build_speculative_env_commands(params, engine))
     # 架构专用环境变量（GLM-4.7 / Qwen3 / Qwen3.5 / MiniMax-M2.5 / DeepSeek V3.2 / LLaMA 等）
     # 之前只在未被引用的 _build_env_commands 里调用，导致架构专用 env 一行都没进 start_command.sh
     cmds.extend(_build_model_env_commands(params, engine))
@@ -2043,6 +2078,9 @@ def build_start_script(params: Dict[str, Any]) -> str:
 def _inject_env_echo(script: str) -> str:
     """在脚本中每条 'export VAR=...' 语句前插入 echo 打印，方便排查环境变量注入情况。
 
+    同时对关键命令行（python3 引擎启动 / ray start / source set_env）前置
+    `echo "[wings-cmd] >>> ..."`，便于在 engine.log 里快速定位每条实际执行的命令。
+
     只打印变量名（不打印值），避免敏感信息（如 token/key）泄露到日志。
     跳过以 'export ' 开头但包含换行/heredoc 风险的多行语句（source 等）。
 
@@ -2055,6 +2093,11 @@ def _inject_env_echo(script: str) -> str:
     import re as _re
     lines = script.splitlines(keepends=True)
     result = []
+    # 命令前缀白名单：匹配到则在前面 echo 一行（截断超长以免日志爆炸）
+    cmd_prefix_re = _re.compile(
+        r'^(exec\s+python3?|python3?\s+-m\s+vllm|python3?\s+-m\s+sglang|'
+        r'ray\s+(start|stop|status)|source\s+/|nohup\s+|\./[A-Za-z0-9_./-]+\.sh)'
+    )
     for line in lines:
         stripped = line.lstrip()
         m = _re.match(r'^export\s+([A-Za-z_][A-Za-z0-9_]*)', stripped)
@@ -2062,6 +2105,14 @@ def _inject_env_echo(script: str) -> str:
             var_name = m.group(1)
             indent = line[: len(line) - len(stripped)]
             result.append(f'{indent}echo "[wings-env] export {var_name}"\n')
+        elif cmd_prefix_re.match(stripped):
+            indent = line[: len(line) - len(stripped)]
+            # 截断到 800 字符，避免单行超长污染日志；shell 单引号转义
+            preview = stripped.rstrip("\n").rstrip("&").rstrip()
+            if len(preview) > 800:
+                preview = preview[:800] + "...<truncated>"
+            preview_safe = preview.replace("'", "'\"'\"'")
+            result.append(f"{indent}echo '[wings-cmd] >>> {preview_safe}'\n")
         result.append(line)
     return "".join(result)
 
@@ -2089,4 +2140,3 @@ def start_engine(params: Dict[str, Any]):
         "start_engine 在 launcher 模式中已禁用。"
         "请使用 build_start_command() 并将结果写入共享卷。"
     )
-
