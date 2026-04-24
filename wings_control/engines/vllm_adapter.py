@@ -2115,17 +2115,25 @@ def _inject_env_echo(script: str) -> str:
         r'^(exec\s+python3?|python3?\s+-m\s+vllm|python3?\s+-m\s+sglang|'
         r'ray\s+(start|stop|status)|source\s+/|nohup\s+|\./[A-Za-z0-9_./-]+\.sh)'
     )
-    # 仅 echo 与 Ray / 分布式通信相关的关键变量，其它变量仍然 export 但不打印，
-    # 避免 LD_LIBRARY_PATH / PYTORCH_NPU_ALLOC_CONF / OMP_* 等噪声淹没日志。
+    # 仅 echo 与 Ray / 跨节点网络拓扑相关的关键变量，其它变量仍然 export 但不打印，
+    # 避免 LD_LIBRARY_PATH / PYTORCH_NPU_ALLOC_CONF / OMP_* / TASK_QUEUE_ENABLE /
+    # HCCL_BUFFSIZE / HCCL_OP_EXPANSION_MODE 等性能调优类变量噪声淹没日志。
+    # 注意：HCCL_*/NCCL_* 不再用通配，改为显式枚举，仅保留与"Worker 找不到对端 / 端口
+    # 选不到 / IP 接口绑错"这种分布式启动期常见排障相关的字段。
     env_echo_allowlist_re = _re.compile(
         r'^('
-        r'VLLM_HOST_IP|'
-        r'HCCL_[A-Z0-9_]+|'
-        r'NCCL_[A-Z0-9_]+|'
+        # Ray 全家桶（节点 IP、超时、忽略 NPU 自动注入等启动期关键开关）
         r'RAY_[A-Z0-9_]+|'
+        # vLLM / 分布式 master
+        r'VLLM_HOST_IP|MASTER_ADDR|MASTER_PORT|'
+        # HCCL / NCCL 仅保留网络拓扑 + 连接超时（与 Buffsize / 算子下发等性能调优无关）
+        r'HCCL_IF_IP|HCCL_SOCKET_IFNAME|HCCL_WHITELIST_DISABLE|'
+        r'HCCL_CONNECT_TIMEOUT|HCCL_EXEC_TIMEOUT|'
+        r'NCCL_SOCKET_IFNAME|NCCL_IB_DISABLE|NCCL_DEBUG|'
+        # PyTorch 分布式底座网卡选择
         r'GLOO_SOCKET_IFNAME|TP_SOCKET_IFNAME|'
+        # 多机角色信息（NODE_RANK / WORLD_SIZE 等）+ 昇腾日志路径（排障常用）
         r'ASCEND_PROCESS_LOG_PATH|'
-        r'MASTER_ADDR|MASTER_PORT|'
         r'NODE_IPS|NODE_RANK|WORLD_SIZE|LOCAL_RANK|RANK'
         r')$'
     )
