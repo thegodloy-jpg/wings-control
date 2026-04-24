@@ -1590,6 +1590,13 @@ def _auto_select_engine(hardware_env: Dict[str, Any],
 
     # 取升级后的最终引擎名称（可能已被 _handle_ascend_vllm 修改为 vllm_ascend）
     final_engine = cmd_known_params.get("engine", engine)
+    if get_lmcache_env() and final_engine not in {"vllm", "vllm_ascend"}:
+        logger.warning(
+            "[KVCache Offload] LMCACHE_OFFLOAD is enabled, but selected engine '%s' "
+            "does not support LMCache offload. Offload settings will be ignored unless "
+            "engine is explicitly set to vllm or vllm_ascend.",
+            final_engine,
+        )
 
     # 写入标记文件和全局环境变量 — 必须在 _handle_ascend_vllm 之后，
     # 确保记录的是最终实际使用的引擎名称
