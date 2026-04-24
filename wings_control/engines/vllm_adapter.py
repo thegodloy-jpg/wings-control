@@ -2088,34 +2088,26 @@ def build_start_script(params: Dict[str, Any]) -> str:
 
 
 def _inject_env_echo(script: str) -> str:
-    """对脚本做两件事：
-    1. **过滤 export**（默认行为）：只保留 Ray / 分布式通信白名单内的 `export VAR=...`，
-       其余 export 行整行剔除（替换为注释，方便回溯）。
-       开关：设置容器环境变量 `WINGS_ENV_KEEP_ALL=1` 可禁用过滤、恢复"全 export"旧行为。
-    2. **echo 标注**：保留下来的 export 前插一行 `echo "[wings-env] export VAR=<value>"`；
-       关键命令行（python3 引擎启动 / ray start / source / .sh）前插 `[wings-cmd] >>>`。
+    """在脚本中每条 'export VAR=...' 语句前插入 echo 打印，方便排查环境变量注入情况。
 
-    ⚠️ 风险提示：白名单只覆盖 Ray + 网络拓扑相关变量。LD_LIBRARY_PATH / LD_PRELOAD /
-    PYTORCH_NPU_ALLOC_CONF / OMP_* / HCCL_BUFFSIZE / TASK_QUEUE_ENABLE / PYTHONUNBUFFERED
-    等 vllm-ascend 推理依赖会被一并去掉，可能导致引擎起不来或性能/稳定性退化。
-    临时回滚方法（无需改代码、无需重建镜像）：在 wings-control 容器里 `export WINGS_ENV_KEEP_ALL=1`
-    后再启动实例即可。
+    同时对关键命令行（python3 引擎启动 / ray start / source set_env）前置
+    `echo "[wings-cmd] >>> ..."`，便于在 engine.log 里快速定位每条实际执行的命令。
 
-    打印格式：`[wings-env] export VAR=<value>`，使用 `${VAR}` 在 bash 运行时展开实际值。
-    注意：值会原样进日志，不再脱敏；token / API key 类变量请勿走 export 注入。
+    打印格式：`[wings-env] export VAR=<value>`，使用 `${VAR}` 在 bash 运行时
+    展开实际值。注意：值会原样进日志，不再脱敏；如有 token / API key 等敏感
+    变量，请避免通过 export 注入或在调用方自行脱敏后再传入。
+
+    出于日志噪声控制，仅 echo 与 Ray / HCCL / NCCL / 分布式通信相关的关键
+    变量（白名单）；其它变量（LD_LIBRARY_PATH、PYTORCH_NPU_ALLOC_CONF、
+    OMP_*、TASK_QUEUE_ENABLE 等）仍然正常 export，但不再打印 echo 行。
 
     Args:
         script: 原始 bash 脚本字符串
 
     Returns:
-        str: 处理后的脚本字符串
+        str: 插入 echo 打印后的脚本字符串
     """
-    import os as _os
     import re as _re
-    # 默认开启过滤，仅保留白名单 export；通过 WINGS_ENV_KEEP_ALL=1 一键恢复全量 export
-    keep_all = _os.environ.get("WINGS_ENV_KEEP_ALL", "").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
     lines = script.splitlines(keepends=True)
     result = []
     # 命令前缀白名单：匹配到则在前面 echo 一行（截断超长以免日志爆炸）
@@ -2123,25 +2115,17 @@ def _inject_env_echo(script: str) -> str:
         r'^(exec\s+python3?|python3?\s+-m\s+vllm|python3?\s+-m\s+sglang|'
         r'ray\s+(start|stop|status)|source\s+/|nohup\s+|\./[A-Za-z0-9_./-]+\.sh)'
     )
-    # 仅 echo 与 Ray / 跨节点网络拓扑相关的关键变量，其它变量仍然 export 但不打印，
-    # 避免 LD_LIBRARY_PATH / PYTORCH_NPU_ALLOC_CONF / OMP_* / TASK_QUEUE_ENABLE /
-    # HCCL_BUFFSIZE / HCCL_OP_EXPANSION_MODE 等性能调优类变量噪声淹没日志。
-    # 注意：HCCL_*/NCCL_* 不再用通配，改为显式枚举，仅保留与"Worker 找不到对端 / 端口
-    # 选不到 / IP 接口绑错"这种分布式启动期常见排障相关的字段。
+    # 仅 echo 与 Ray / 分布式通信相关的关键变量，其它变量仍然 export 但不打印，
+    # 避免 LD_LIBRARY_PATH / PYTORCH_NPU_ALLOC_CONF / OMP_* 等噪声淹没日志。
     env_echo_allowlist_re = _re.compile(
         r'^('
-        # Ray 全家桶（节点 IP、超时、忽略 NPU 自动注入等启动期关键开关）
+        r'VLLM_HOST_IP|'
+        r'HCCL_[A-Z0-9_]+|'
+        r'NCCL_[A-Z0-9_]+|'
         r'RAY_[A-Z0-9_]+|'
-        # vLLM / 分布式 master
-        r'VLLM_HOST_IP|MASTER_ADDR|MASTER_PORT|'
-        # HCCL / NCCL 仅保留网络拓扑 + 连接超时（与 Buffsize / 算子下发等性能调优无关）
-        r'HCCL_IF_IP|HCCL_SOCKET_IFNAME|HCCL_WHITELIST_DISABLE|'
-        r'HCCL_CONNECT_TIMEOUT|HCCL_EXEC_TIMEOUT|'
-        r'NCCL_SOCKET_IFNAME|NCCL_IB_DISABLE|NCCL_DEBUG|'
-        # PyTorch 分布式底座网卡选择
         r'GLOO_SOCKET_IFNAME|TP_SOCKET_IFNAME|'
-        # 多机角色信息（NODE_RANK / WORLD_SIZE 等）+ 昇腾日志路径（排障常用）
         r'ASCEND_PROCESS_LOG_PATH|'
+        r'MASTER_ADDR|MASTER_PORT|'
         r'NODE_IPS|NODE_RANK|WORLD_SIZE|LOCAL_RANK|RANK'
         r')$'
     )
@@ -2150,22 +2134,14 @@ def _inject_env_echo(script: str) -> str:
         m = _re.match(r'^export\s+([A-Za-z_][A-Za-z0-9_]*)', stripped)
         if m:
             var_name = m.group(1)
-            in_allow = bool(env_echo_allowlist_re.match(var_name))
-            indent = line[: len(line) - len(stripped)]
-            if in_allow:
-                # 在白名单内：先 echo，再原样保留 export
+            # 先输出 export 本身，再 echo（${VAR:-} 兜底，避免 `set -u` 触发
+            # unbound variable，且能反映 export 后的实际值——含 LD_LIBRARY_PATH
+            # 这种追加合并的最终结果）。
+            result.append(line)
+            if env_echo_allowlist_re.match(var_name):
+                indent = line[: len(line) - len(stripped)]
                 result.append(
-                    f'{indent}echo "[wings-env] export {var_name}=${{{var_name}}}"\n'
-                )
-                result.append(line)
-            elif keep_all:
-                # 不在白名单但用户显式要求恢复旧行为：保留 export，不 echo（噪声控制）
-                result.append(line)
-            else:
-                # 默认：剔除该 export，留一行注释方便排查"为什么没生效"
-                result.append(
-                    f"{indent}# [wings-env-skip] export {var_name} "
-                    f"(filtered; set WINGS_ENV_KEEP_ALL=1 to restore)\n"
+                    f'{indent}echo "[wings-env] export {var_name}=${{{var_name}:-}}"\n'
                 )
             continue
         if cmd_prefix_re.match(stripped):
