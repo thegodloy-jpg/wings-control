@@ -2099,9 +2099,8 @@ def _inject_env_echo(script: str) -> str:
     展开实际值。注意：值会原样进日志，不再脱敏；如有 token / API key 等敏感
     变量，请避免通过 export 注入或在调用方自行脱敏后再传入。
 
-    出于日志噪声控制，仅 echo 与 Ray / HCCL / NCCL / 分布式通信相关的关键
-    变量（白名单）；其它变量（LD_LIBRARY_PATH、PYTORCH_NPU_ALLOC_CONF、
-    OMP_*、TASK_QUEUE_ENABLE 等）仍然正常 export，但不再打印 echo 行。
+    为便于排查最终执行环境，脚本内显式 export 的变量都会追加一行
+    `[wings-env] export VAR=<value>` 日志。
 
     Args:
         script: 原始 bash 脚本字符串
@@ -2117,20 +2116,6 @@ def _inject_env_echo(script: str) -> str:
         r'^(exec\s+python3?|python3?\s+-m\s+vllm|python3?\s+-m\s+sglang|'
         r'ray\s+(start|stop|status)|source\s+/|nohup\s+|\./[A-Za-z0-9_./-]+\.sh)'
     )
-    # 仅 echo 与 Ray / 分布式通信相关的关键变量，其它变量仍然 export 但不打印，
-    # 避免 LD_LIBRARY_PATH / PYTORCH_NPU_ALLOC_CONF / OMP_* 等噪声淹没日志。
-    env_echo_allowlist_re = _re.compile(
-        r'^('
-        r'VLLM_HOST_IP|'
-        r'HCCL_[A-Z0-9_]+|'
-        r'NCCL_[A-Z0-9_]+|'
-        r'RAY_[A-Z0-9_]+|'
-        r'GLOO_SOCKET_IFNAME|TP_SOCKET_IFNAME|'
-        r'ASCEND_PROCESS_LOG_PATH|'
-        r'MASTER_ADDR|MASTER_PORT|'
-        r'NODE_IPS|NODE_RANK|WORLD_SIZE|LOCAL_RANK|RANK'
-        r')$'
-    )
     for line in lines:
         stripped = line.lstrip()
         m = _re.match(r'^export\s+([A-Za-z_][A-Za-z0-9_]*)', stripped)
@@ -2140,11 +2125,10 @@ def _inject_env_echo(script: str) -> str:
             # unbound variable，且能反映 export 后的实际值——含 LD_LIBRARY_PATH
             # 这种追加合并的最终结果）。
             result.append(line)
-            if env_echo_allowlist_re.match(var_name):
-                indent = line[: len(line) - len(stripped)]
-                result.append(
-                    f'{indent}echo "[wings-env] export {var_name}=${{{var_name}:-}}"\n'
-                )
+            indent = line[: len(line) - len(stripped)]
+            result.append(
+                f'{indent}echo "[wings-env] export {var_name}=${{{var_name}:-}}"\n'
+            )
             continue
         if cmd_prefix_re.match(stripped):
             indent = line[: len(line) - len(stripped)]
