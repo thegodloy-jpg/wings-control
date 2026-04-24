@@ -1,0 +1,5 @@
+{
+  "architectures": ["Glm4MoeForCausalLM"],
+  "torch_dtype": "bfloat16",
+  "num_hidden_layers": 46
+}

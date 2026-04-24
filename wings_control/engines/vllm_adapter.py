@@ -267,9 +267,11 @@ def _build_vllm_ascend_extensions(params) -> List[str]:
         params.get("model_type")
     )
     if model_info.model_architecture == "Qwen3NextForCausalLM":
-        commands.append(
-            "source /usr/local/Ascend/ascend-toolkit/8.3.RC2/bisheng_toolkit/set_env.sh"
-        )
+        commands.extend([
+            "set +u",
+            "source /usr/local/Ascend/ascend-toolkit/8.3.RC2/bisheng_toolkit/set_env.sh",
+            "set -u",
+        ])
         logger.info("Qwen3NextForCausalLM will source bisheng_toolkit")
     return commands
 

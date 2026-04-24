@@ -632,8 +632,10 @@ def _build_env_overrides_preamble() -> str:
             lines.extend(export_lines)
 
         elif suffix == ".sh":
-            # shell 脚本直接 source
+            # shell 脚本在全局 set -u 下执行时，允许引用暂未定义的变量。
+            lines.append("set +u")
             lines.append(f"source {shlex.quote(str(fpath))}")
+            lines.append("set -u")
 
         else:
             logger.debug("Ignoring unsupported file type: %s", fpath.name)

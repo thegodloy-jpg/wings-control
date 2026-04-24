@@ -1,0 +1,6 @@
+{
+  "architectures": ["Glm4MoeForCausalLM"],
+  "torch_dtype": "bfloat16",
+  "num_hidden_layers": 92,
+  "quantization_config": {"quant_method": "w8a8"}
+}

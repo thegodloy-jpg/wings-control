@@ -65,7 +65,7 @@ def _build_base_env_commands(params: Dict[str, Any], root: str) -> List[str]:
     """
     env_script = os.path.join(root, "wings", "config", "set_sglang_env.sh")
     if os.path.exists(env_script):
-        return [f"source {env_script}"]
+        return ["set +u", f"source {env_script}", "set -u"]
     logger.debug("SGLang env script not found at %s; starting without sourcing env script", env_script)
     return []
 

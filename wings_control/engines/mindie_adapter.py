@@ -175,7 +175,7 @@ def _build_env_commands(params: Dict[str, Any]) -> List[str]:
     # Dev environment: prefer local wings project env script if available
     env_script = os.path.join(root_dir, "wings", "config", "set_mindie_single_env.sh")
     if os.path.exists(env_script):
-        cmds.append(f"source {env_script}")
+        cmds.extend(["set +u", f"source {env_script}", "set -u"])
     else:
         cmds.extend(_build_ascend_env_source_commands())
 
