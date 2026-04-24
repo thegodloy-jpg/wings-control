@@ -2088,26 +2088,34 @@ def build_start_script(params: Dict[str, Any]) -> str:
 
 
 def _inject_env_echo(script: str) -> str:
-    """在脚本中每条 'export VAR=...' 语句前插入 echo 打印，方便排查环境变量注入情况。
+    """对脚本做两件事：
+    1. **过滤 export**（默认行为）：只保留 Ray / 分布式通信白名单内的 `export VAR=...`，
+       其余 export 行整行剔除（替换为注释，方便回溯）。
+       开关：设置容器环境变量 `WINGS_ENV_KEEP_ALL=1` 可禁用过滤、恢复"全 export"旧行为。
+    2. **echo 标注**：保留下来的 export 前插一行 `echo "[wings-env] export VAR=<value>"`；
+       关键命令行（python3 引擎启动 / ray start / source / .sh）前插 `[wings-cmd] >>>`。
 
-    同时对关键命令行（python3 引擎启动 / ray start / source set_env）前置
-    `echo "[wings-cmd] >>> ..."`，便于在 engine.log 里快速定位每条实际执行的命令。
+    ⚠️ 风险提示：白名单只覆盖 Ray + 网络拓扑相关变量。LD_LIBRARY_PATH / LD_PRELOAD /
+    PYTORCH_NPU_ALLOC_CONF / OMP_* / HCCL_BUFFSIZE / TASK_QUEUE_ENABLE / PYTHONUNBUFFERED
+    等 vllm-ascend 推理依赖会被一并去掉，可能导致引擎起不来或性能/稳定性退化。
+    临时回滚方法（无需改代码、无需重建镜像）：在 wings-control 容器里 `export WINGS_ENV_KEEP_ALL=1`
+    后再启动实例即可。
 
-    打印格式：`[wings-env] export VAR=<value>`，使用 `${VAR}` 在 bash 运行时
-    展开实际值。注意：值会原样进日志，不再脱敏；如有 token / API key 等敏感
-    变量，请避免通过 export 注入或在调用方自行脱敏后再传入。
-
-    出于日志噪声控制，仅 echo 与 Ray / HCCL / NCCL / 分布式通信相关的关键
-    变量（白名单）；其它变量（LD_LIBRARY_PATH、PYTORCH_NPU_ALLOC_CONF、
-    OMP_*、TASK_QUEUE_ENABLE 等）仍然正常 export，但不再打印 echo 行。
+    打印格式：`[wings-env] export VAR=<value>`，使用 `${VAR}` 在 bash 运行时展开实际值。
+    注意：值会原样进日志，不再脱敏；token / API key 类变量请勿走 export 注入。
 
     Args:
         script: 原始 bash 脚本字符串
 
     Returns:
-        str: 插入 echo 打印后的脚本字符串
+        str: 处理后的脚本字符串
     """
+    import os as _os
     import re as _re
+    # 默认开启过滤，仅保留白名单 export；通过 WINGS_ENV_KEEP_ALL=1 一键恢复全量 export
+    keep_all = _os.environ.get("WINGS_ENV_KEEP_ALL", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
     lines = script.splitlines(keepends=True)
     result = []
     # 命令前缀白名单：匹配到则在前面 echo 一行（截断超长以免日志爆炸）
@@ -2142,13 +2150,25 @@ def _inject_env_echo(script: str) -> str:
         m = _re.match(r'^export\s+([A-Za-z_][A-Za-z0-9_]*)', stripped)
         if m:
             var_name = m.group(1)
-            if env_echo_allowlist_re.match(var_name):
-                indent = line[: len(line) - len(stripped)]
-                # 同时打印变量名与运行时实际值（${VAR} 由 bash 展开）
+            in_allow = bool(env_echo_allowlist_re.match(var_name))
+            indent = line[: len(line) - len(stripped)]
+            if in_allow:
+                # 在白名单内：先 echo，再原样保留 export
                 result.append(
                     f'{indent}echo "[wings-env] export {var_name}=${{{var_name}}}"\n'
                 )
-        elif cmd_prefix_re.match(stripped):
+                result.append(line)
+            elif keep_all:
+                # 不在白名单但用户显式要求恢复旧行为：保留 export，不 echo（噪声控制）
+                result.append(line)
+            else:
+                # 默认：剔除该 export，留一行注释方便排查"为什么没生效"
+                result.append(
+                    f"{indent}# [wings-env-skip] export {var_name} "
+                    f"(filtered; set WINGS_ENV_KEEP_ALL=1 to restore)\n"
+                )
+            continue
+        if cmd_prefix_re.match(stripped):
             indent = line[: len(line) - len(stripped)]
             # 截断到 800 字符，避免单行超长污染日志；shell 单引号转义
             preview = stripped.rstrip("\n").rstrip("&").rstrip()
