@@ -44,6 +44,7 @@ MINDIE_CONFIG_PATH: str = os.getenv(
     "MINDIE_CONFIG_PATH",
     os.path.join(MINDIE_WORK_DIR, "conf/config.json")
 )
+DEFAULT_RANK_TABLE_PATH = "/workspace/rank_table_all.json"
 
 # 默认端口配置
 DEFAULT_SERVER_PORT = 18000              # MindIE HTTP API 端口
@@ -63,13 +64,18 @@ def _split_node_ips(node_ips: str | None) -> List[str]:
     return [ip.strip() for ip in node_ips.split(",") if ip.strip()]
 
 
+def _resolve_external_rank_table_path() -> str:
+    """Return the external rank table source path for copy-only startup."""
+    return os.getenv("RANK_TABLE_PATH", "").strip() or DEFAULT_RANK_TABLE_PATH
+
+
 def _resolve_distributed_topology(params: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve and validate the MindIE multi-node topology."""
     nnodes = int(params.get("nnodes", 1) or 1)
     node_rank = int(params.get("node_rank", 0) or 0)
     device_count = int(params.get("device_count", 1) or 1)
     node_ips_list = _split_node_ips(params.get("node_ips"))
-    external_rank_table = os.getenv("RANK_TABLE_PATH", "").strip()
+    external_rank_table = _resolve_external_rank_table_path()
 
     if nnodes > 1 and node_ips_list and len(node_ips_list) != nnodes:
         raise ValueError(
@@ -225,7 +231,7 @@ def _copy_external_rank_table(
 ) -> tuple:
     """策略 1: sidecar 可见外部文件 → 复制到共享卷并返回共享卷路径。
 
-    复制失败时 fallback 到原路径（需要 engine 容器也能访问）。
+    如果 sidecar 复制失败，则把 copy 逻辑延后到 engine 启动脚本执行。
     """
     logger.info(
         "[mindie] External RANK_TABLE_PATH found in sidecar: %s, "
@@ -240,10 +246,11 @@ def _copy_external_rank_table(
         logger.error(
             "[mindie] Failed to copy rank table to shared volume: %s", e
         )
-        return [
-            f"# ── HCCL rank table (external, copy failed: {e}) ──",
-            f"chmod 640 {shlex.quote(external_path)} 2>/dev/null || true",
-        ], external_path
+        return _build_runtime_rank_table_check(
+            external_path,
+            shared_path,
+            copy_error=str(e),
+        )
 
     return [
         f"# ── HCCL rank table (copied from {external_path} to shared volume) ──",
@@ -253,41 +260,40 @@ def _copy_external_rank_table(
 def _build_runtime_rank_table_check(
     external_path: str,
     shared_path: str,
-    node_ips_list: List[str],
-    master_addr: str,
-    device_count: int,
+    copy_error: str | None = None,
 ) -> tuple:
-    """策略 2: 外部路径已设但 sidecar 不可见 → 生成运行时 if/else 检查脚本。
-
-    engine 执行时尝试从原路径复制到共享卷，失败则使用动态生成的 fallback。
-    """
-    logger.warning(
-        "[mindie] RANK_TABLE_PATH=%s set but file not found in sidecar container. "
-        "Will generate runtime check in start_command.sh: "
-        "engine will try to copy from original path at execution time.",
-        external_path,
-    )
-    rank_table_nodes = node_ips_list if node_ips_list else [master_addr]
-    fallback_cmds = _build_rank_table_commands(
-        rank_table_nodes, device_count, "/tmp/hccl_ranktable_fallback.json",
-        node_offset=0,
-    )
+    """策略 2: sidecar 无法复制时，将 copy-only 逻辑写入启动脚本。"""
+    if copy_error:
+        logger.warning(
+            "[mindie] Deferring rank table copy to engine startup because sidecar copy failed: %s",
+            copy_error,
+        )
+    else:
+        logger.warning(
+            "[mindie] RANK_TABLE_PATH=%s not visible in sidecar container. "
+            "Will copy it at engine startup.",
+            external_path,
+        )
     safe_ext = shlex.quote(external_path)
     safe_shared = shlex.quote(shared_path)
+    reason = (
+        f"sidecar copy failed: {copy_error}"
+        if copy_error
+        else f"sidecar cannot access {external_path}"
+    )
 
     cmds = [
-        f"# ── HCCL rank table (runtime resolve: prefer {external_path}) ──",
+        f"# HCCL rank table (runtime copy from {external_path}; {reason})",
         f"if [ -f {safe_ext} ]; then",
         f"    cp {safe_ext} {safe_shared}",
         f"    chmod 640 {safe_shared}",
-        f"    echo '[mindie] Copied external rank table to shared volume'",
-    ] + [
+        "    echo '[mindie] Copied external rank table to shared volume'",
         "else",
-        f"    echo '[mindie] WARNING: {external_path} not found in engine container, "
-        f"using dynamically generated fallback'",
-    ] + [f"    {line}" for line in fallback_cmds] + [
-        f"    cp /tmp/hccl_ranktable_fallback.json {safe_shared}",
-        f"    chmod 640 {safe_shared}",
+        (
+            f"    echo '[mindie] ERROR: rank table source {external_path} not found; "
+            "expected a pre-generated file for copy-only startup' >&2"
+        ),
+        "    exit 1",
         "fi",
     ]
     return cmds, shared_path
@@ -295,43 +301,26 @@ def _build_runtime_rank_table_check(
 
 def _resolve_rank_table(
     topology: Dict[str, Any],
-    master_addr: str,
-    device_count: int,
 ) -> tuple:
-    """确定 rank table 策略并返回 (rank_table_cmds, ranktable_path)。
-
-    三段式策略:
-      1. sidecar 能看到外部文件 → 复制到共享卷 (_copy_external_rank_table)
-      2. RANK_TABLE_PATH 已设但 sidecar 看不到 → 运行时检查 (_build_runtime_rank_table_check)
-      3. 未设置外部路径 → 动态生成 rank table 内联到脚本中
-
-    关键设计: 最终 RANK_TABLE_FILE 始终指向 engine 容器可访问的路径
-    （共享卷或 /tmp），避免跨容器路径不可见问题。
-    """
+    """Resolve the copy-only rank table strategy and return script lines + target path."""
     external_rank_table = topology["external_rank_table"]
-    node_ips_list = topology["node_ips_list"]
 
     from config.settings import settings
     # 使用 posixpath 而非 os.path.join，因为生成的路径将在 Linux 容器中使用
     import posixpath
     shared_ranktable = posixpath.join(settings.SHARED_VOLUME_PATH, "hccl_ranktable.json")
 
-    # ── 策略 1: sidecar 容器能直接看到外部文件 ──
-    if external_rank_table and os.path.isfile(external_rank_table):
-        return _copy_external_rank_table(external_rank_table, shared_ranktable)
-
-    # ── 策略 2: RANK_TABLE_PATH 已设但 sidecar 无法看到文件 ──
-    if external_rank_table:
-        return _build_runtime_rank_table_check(
-            external_rank_table, shared_ranktable,
-            node_ips_list, master_addr, device_count,
+    if not external_rank_table:
+        raise ValueError(
+            "MindIE multi-node startup requires a pre-generated rank table source path"
         )
 
-    # ── 策略 3: 未设置外部路径，动态生成 ──
-    rank_table_nodes = node_ips_list if node_ips_list else [master_addr]
-    return _build_rank_table_commands(
-        rank_table_nodes, device_count, shared_ranktable, node_offset=0,
-    ), shared_ranktable
+    # ── 策略 1: sidecar 容器能直接看到外部文件 ──
+    if os.path.isfile(external_rank_table):
+        return _copy_external_rank_table(external_rank_table, shared_ranktable)
+
+    # ── 策略 2: sidecar 看不到文件，engine 启动时执行 cp ──
+    return _build_runtime_rank_table_check(external_rank_table, shared_ranktable)
 
 
 def _build_distributed_env_commands(params: Dict[str, Any]) -> List[str]:
@@ -385,7 +374,7 @@ def _build_distributed_env_commands(params: Dict[str, Any]) -> List[str]:
 
     hccl_if_ip_cmd = _resolve_hccl_if_ip(node_rank, node_ips_list, master_addr)
     container_ip = node_ips_list[node_rank] if node_rank < len(node_ips_list) else master_addr
-    rank_table_cmds, ranktable_path = _resolve_rank_table(topology, master_addr, device_count)
+    rank_table_cmds, ranktable_path = _resolve_rank_table(topology)
 
     return [
         "# ── Ascend HCCL distributed env vars (multi-node TP) ──",
