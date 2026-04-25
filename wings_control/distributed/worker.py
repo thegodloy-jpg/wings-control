@@ -43,8 +43,8 @@ from pydantic import BaseModel
 import requests
 
 from config.settings import settings
+from core.start_command_utils import write_start_command
 from utils.env_utils import get_local_ip, get_master_ip, get_master_port, get_worker_port
-from utils.file_utils import safe_write_file
 
 # 注意：不在模块级别调用 basicConfig，避免与 setup_root_logging 冲突
 logger = logging.getLogger(__name__)
@@ -72,6 +72,7 @@ class InferenceRequest(BaseModel):
 class EngineStartRequest(BaseModel):
     engine: str
     params: Dict[str, Any]
+    start_command: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +162,14 @@ async def start_engine_api(request: EngineStartRequest):
       - host/port 注入逻辑按 node_rank 自动处理（rank0 绑定端口，其余不绑定）
     """
     try:
+        if request.start_command:
+            script_path = write_start_command(request.start_command)
+            logger.info("Prebuilt engine start script written to %s", script_path)
+            return {
+                "status": "started",
+                "message": "Prebuilt engine start script written to shared volume",
+            }
+
         from core.start_args_compat import LaunchArgs
         from core.port_plan import derive_port_plan
         from core.wings_entry import build_launcher_plan
@@ -187,17 +196,7 @@ async def start_engine_api(request: EngineStartRequest):
         launcher_plan = build_launcher_plan(launch_args, port_plan)
 
         # ---- 4. 写入共享卷 ----
-        shared_dir = settings.SHARED_VOLUME_PATH
-        os.makedirs(shared_dir, exist_ok=True)
-        script_path = os.path.join(
-            shared_dir, settings.START_COMMAND_FILENAME
-        )
-        ok = safe_write_file(script_path, launcher_plan.command, is_json=False)
-        if not ok:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to write script to {script_path}",
-            )
+        script_path = write_start_command(launcher_plan.command)
 
         logger.info("Engine start script written to %s", script_path)
         return {
