@@ -336,22 +336,22 @@ def _build_lmcache_yaml_dict(engine: str) -> dict:
         config["chunk_size"] = 256
 
     # ── local_cpu ──
-    local_cpu_enabled = os.getenv("LMCACHE_LOCAL_CPU", "").lower() == "true"
-    max_cpu_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "")
+    local_cpu_enabled = os.getenv("LMCACHE_LOCAL_CPU", "").strip().lower() == "true"
+    max_cpu_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
     if local_cpu_enabled or max_cpu_size:
-        cpu_section: dict = {}
+        config["local_cpu"] = True
         if max_cpu_size:
-            cpu_section["max_size"] = max_cpu_size
-        config["local_cpu"] = cpu_section
+            config["max_local_cpu_size"] = float(max_cpu_size)
 
     # ── local_disk ──
-    local_disk_path = os.getenv("LMCACHE_LOCAL_DISK", "")
-    max_disk_size = os.getenv("LMCACHE_MAX_LOCAL_DISK_SIZE", "")
+    local_disk_path = os.getenv("LMCACHE_LOCAL_DISK", "").strip()
+    max_disk_size = os.getenv("LMCACHE_MAX_LOCAL_DISK_SIZE", "").strip()
     if local_disk_path:
-        disk_section: dict = {"path": local_disk_path}
+        config["local_disk"] = local_disk_path
         if max_disk_size:
-            disk_section["max_size"] = max_disk_size
-        config["local_disk"] = disk_section
+            config["max_local_disk_size"] = float(max_disk_size)
+    elif max_disk_size:
+        config["max_local_disk_size"] = float(max_disk_size)
 
     # ── pre_caching（冷启动预热）──
     if get_cold_start_env():
@@ -448,6 +448,14 @@ def _write_lmcache_config_yaml(engine: str) -> Optional[str]:
         return None
 
 
+def _append_lmcache_env_export(env_commands: List[str], name: str, value: Optional[str] = None) -> None:
+    """Append an explicit engine-side export for an LMCache environment variable."""
+    if value is None:
+        value = os.getenv(name, "").strip()
+    if value:
+        env_commands.append(f"export {name}={shlex.quote(value)}")
+
+
 def _build_cache_env_commands(engine: str) -> List[str]:
     """构建 KVCache Offload 特性的环境变量设置命令。
 
@@ -475,6 +483,17 @@ def _build_cache_env_commands(engine: str) -> List[str]:
 
     # 跨实例Hash一致
     env_commands.append('export PYTHONHASHSEED=0')
+    _append_lmcache_env_export(env_commands, "LMCACHE_OFFLOAD", "true")
+    _append_lmcache_env_export(env_commands, "LMCACHE_CHUNK_SIZE")
+
+    local_cpu_value = os.getenv("LMCACHE_LOCAL_CPU", "").strip()
+    max_cpu_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
+    if local_cpu_value or max_cpu_size:
+        _append_lmcache_env_export(env_commands, "LMCACHE_LOCAL_CPU", local_cpu_value or "true")
+        _append_lmcache_env_export(env_commands, "LMCACHE_MAX_LOCAL_CPU_SIZE", max_cpu_size)
+
+    _append_lmcache_env_export(env_commands, "LMCACHE_LOCAL_DISK")
+    _append_lmcache_env_export(env_commands, "LMCACHE_MAX_LOCAL_DISK_SIZE")
 
     # 任何 LMCache 容量/功能段配置都会触发 YAML 生成并导出路径
     yaml_path = _write_lmcache_config_yaml(engine)
