@@ -199,7 +199,6 @@ def _build_env_commands(params: Dict[str, Any]) -> List[str]:
             logger.warning("[mindie] Invalid NPU_MEMORY_FRACTION=%r, ignoring", npu_memory_fraction)
 
     # ── ASCEND debug / HCCL tuning env vars ──
-    # ASCEND_GLOBAL_LOG_LEVEL: 0=debug, 1=info, 2=warn, 3=error (default)
     for _env_name, _default in (
         ("ASCEND_GLOBAL_LOG_LEVEL", "1"),
         ("ASCEND_SLOG_PRINT_TO_STDOUT", "0"),

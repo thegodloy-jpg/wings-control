@@ -1709,32 +1709,8 @@ def _build_ray_wait_loop(nnodes: int) -> List[str]:
     ]
 
 
-def _build_ray_head_commands(
-    params: Dict[str, Any],
-    ctx: DistScriptCtx,
-    sparse_args: str,
-) -> List[str]:
-    """构建 Ray head 节点 (rank 0) 的脚本命令列表。"""
-    parts: List[str] = [_SH_VLLM_HOST]
-    parts.extend(_build_comm_env_commands(ctx.is_ascend))
-    parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
-
-    # Ascend Ray 场景：head 同时承担 driver 与本地 actor 的角色，需要与 worker
-    # 保持一致的环境，否则会出现两类典型崩溃：
-    #   1) 未设 RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1 时，Ray 会
-    #      自动给 head 上的 actor 注入 ASCEND_RT_VISIBLE_DEVICES，但 vllm-ascend
-    #      仍按物理卡 ID 选卡 (set_device(local_rank))，多卡场景下会触发
-    #      "invalid device ordinal" 或 HCCL rank-table 不匹配。
-    #   2) RAY_CGRAPH_get_timeout 是 driver 端读取的超时（默认 300s），
-    #      Ascend 首推 JIT 编译耗时常超过 5 分钟，必须在 head（driver）上 export，
-    #      仅在 worker 上 export 完全不起作用。
-    if ctx.is_ascend:
-        parts.extend([
-            "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
-            "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
-            "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
-        ])
-
+def _build_ray_head_start_commands(params: Dict[str, Any], ctx: DistScriptCtx) -> List[str]:
+    """Build the Ray head startup command and matching diagnostics."""
     ray_head_resource = _get_ray_resource_flag(ctx.engine, params)
     ray_head_cmd = (
         f"ray start --head --port={ctx.ray_port}"
@@ -1743,55 +1719,72 @@ def _build_ray_head_commands(
         f" --dashboard-host=$VLLM_HOST_IP\n"
     )
     logger.info("[ray] head start command: %s", ray_head_cmd.strip())
-    parts.append(f'echo "[ray] head start command: {ray_head_cmd.strip()}"')
-    parts.append(ray_head_cmd)
-    parts.extend(_build_ray_wait_loop(ctx.nnodes))
+    return [f'echo "[ray] head start command: {ray_head_cmd.strip()}"', ray_head_cmd]
 
-    eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
-    speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
 
-    ray_pp_extra = ""
+def _build_ray_parallel_overrides(params: Dict[str, Any], ctx: DistScriptCtx) -> tuple[str, str]:
+    """Override TP/PP for Ray MoE architectures that need per-node TP."""
     model_info_ray = ModelIdentifier(
         params.get("model_name"), params.get("model_path"), params.get("model_type"))
-    _ray_auto_pp_archs = [
+    ray_auto_pp_archs = {
         "Qwen3MoeForCausalLM",
         "Qwen3_5MoeForConditionalGeneration",
         "MiniMaxM2ForCausalLM",
-    ]
-    cmd_for_exec = ctx.cmd
-    if getattr(model_info_ray, "model_architecture", None) in _ray_auto_pp_archs:
-        nodes_list = ctx.node_ips.split(",") if ctx.node_ips else []
-        num_nodes = len(nodes_list) if nodes_list else 1
-        tp_size = params.get("device_count", 1)
-        ray_pp_extra = f" --pipeline-parallel-size {num_nodes} --tensor-parallel-size {tp_size}"
-        # engine_config 已带 --tensor-parallel-size <device_count*nnodes>，
-        # MoE 自动 PP 路径需用 device_count 覆盖，必须先剥离原有参数避免重复。
-        cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--tensor-parallel-size")
-        cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--pipeline-parallel-size")
-        logger.info("[vllm_ascend ray] Set parallel parameters: "
-                    "pipeline_parallel_size=%s, tensor_parallel_size=%s",
-                    num_nodes, tp_size)
+    }
+    if getattr(model_info_ray, "model_architecture", None) not in ray_auto_pp_archs:
+        return ctx.cmd, ""
 
-    # 显式注入 --distributed-executor-backend ray。
-    # 历史注释声称 engine_config 中已包含该 flag（来自 config_loader），实际上
-    # config_loader._handle_vllm_distributed 只把它写入 cmd_params 顶层，
-    # 而 _apply_cli_overrides 仅覆盖 engine_config 已有 key，从未注入新 key，
-    # 导致 CLI 缺失该参数 → vLLM 默认走 mp executor → 单节点本地起 N 个 worker
-    # → device id 越界（如 2 卡机器要 set_device(2/3) 报 EE1003 invalid devId）。
-    # 这里先剥离旧值（防止上游某天补上后重复），再统一追加 ray。
-    backend_extra = ""
-    backend = params.get("distributed_executor_backend", "ray")
-    if backend == "ray":
-        cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--distributed-executor-backend")
-        backend_extra = " --distributed-executor-backend ray"
+    nodes_list = ctx.node_ips.split(",") if ctx.node_ips else []
+    num_nodes = len(nodes_list) if nodes_list else 1
+    tp_size = params.get("device_count", 1)
+    cmd_for_exec = _strip_cli_flag(ctx.cmd, "--tensor-parallel-size")
+    cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--pipeline-parallel-size")
+    logger.info(
+        "[vllm_ascend ray] Set parallel parameters: pipeline_parallel_size=%s, tensor_parallel_size=%s",
+        num_nodes,
+        tp_size,
+    )
+    return cmd_for_exec, f" --pipeline-parallel-size {num_nodes} --tensor-parallel-size {tp_size}"
 
-    base_exec = (
+
+def _build_ray_backend_override(params: Dict[str, Any], cmd_for_exec: str) -> tuple[str, str]:
+    """Ensure the generated vLLM command explicitly uses the Ray executor."""
+    if params.get("distributed_executor_backend", "ray") != "ray":
+        return cmd_for_exec, ""
+    cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--distributed-executor-backend")
+    return cmd_for_exec, " --distributed-executor-backend ray"
+
+
+def _build_ray_head_exec_command(
+    params: Dict[str, Any],
+    ctx: DistScriptCtx,
+    sparse_args: str,
+) -> str:
+    """Build the final vLLM exec command for the Ray head node."""
+    eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
+    speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
+    cmd_for_exec, ray_pp_extra = _build_ray_parallel_overrides(params, ctx)
+    cmd_for_exec, backend_extra = _build_ray_backend_override(params, cmd_for_exec)
+    return (
         f"exec {cmd_for_exec}{eager_flag}"
         f"{speculative_extra}{sparse_args}"
         f"{ray_pp_extra}"
         f"{backend_extra}"
     )
-    parts.append(base_exec)
+
+
+def _build_ray_head_commands(
+    params: Dict[str, Any],
+    ctx: DistScriptCtx,
+    sparse_args: str,
+) -> List[str]:
+    """Build shell commands for the Ray head node (rank 0)."""
+    parts: List[str] = [_SH_VLLM_HOST]
+    parts.extend(_build_comm_env_commands(ctx.is_ascend))
+    parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
+    parts.extend(_build_ray_head_start_commands(params, ctx))
+    parts.extend(_build_ray_wait_loop(ctx.nnodes))
+    parts.append(_build_ray_head_exec_command(params, ctx, sparse_args))
     return parts
 
 

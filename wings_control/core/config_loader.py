@@ -1524,101 +1524,109 @@ def _write_engine_second_line(path: str, engine: str) -> None:
 
 
 
-def _auto_select_engine(hardware_env: Dict[str, Any],
-                       cmd_known_params: Dict[str, Any],
-                       model_info) -> Dict[str, Any]:
-    """根据硬件环境和模型特征自动选择推理引擎，并完成引擎相关的全局初始化。
-
-    核心职责：
-    1. 若用户未指定 engine → 调用 _select_engine_automatically 自动选择
-    2. 若用户已指定 engine → 调用 _validate_user_engine 校验兼容性（可能降级）
-    3. MindIE 引擎需确保 config.json 权限为 640
-    4. 将最终引擎名写入标记文件和 WINGS_ENGINE 环境变量
-    5. 在 Ascend 设备上将 vllm 自动升级为 vllm_ascend
-    6. 根据 gpu_usage_mode 确定最终 device_count
-
-    Args:
-        hardware_env:     硬件探测结果（device, count, details）
-        cmd_known_params: 用户 CLI 参数字典（会被原地修改）
-        model_info:       模型元信息对象
-
-    Returns:
-        修改后的 cmd_known_params（加入 engine, model_type, device_count）
-    """
-    device_type = hardware_env['device']
+def _resolve_device_name(hardware_env: Dict[str, Any]) -> str:
+    """Return the first detected device name, or a stable fallback."""
     if hardware_env.get('details'):
-        device_name = hardware_env.get('details')[0]['name']
-    else:
-        device_name = 'unknown'
-    gpu_usage_mode = cmd_known_params.get("gpu_usage_mode", "full")
+        return hardware_env.get('details')[0]['name']
+    return 'unknown'
 
-    # 引擎选择：用户未指定时自动选择，已指定时校验兼容性
-    if not cmd_known_params.get("engine"):
-        engine = _select_engine_automatically(device_type, device_name,
-                                              gpu_usage_mode, model_info)
-    else:
-        engine = _validate_user_engine(cmd_known_params.get("engine"),
-                                       device_name, gpu_usage_mode, model_info)
 
-    # MindIE 引擎要求 config.json 权限为 640；Ascend310 还需检查 torch_dtype
-    if engine == 'mindie':
-        config_json_file = os.path.join(cmd_known_params.get('model_path'), 'config.json')
-        if not check_permission_640(config_json_file):
-            try:
-                os.chmod(config_json_file, 0o640)
-                logger.info("The permission setting for model config.json is not set to 640. " \
-                "Since MindIE only supports the 640 permission configuration, we will adjust it to 640.")
-            except Exception as e:
-                logger.warning("Failed to set permission for model config.json to 640: %s.", e)
-        if "310" in device_name:
-            check_torch_dtype(config_json_file)
+def _resolve_engine_choice(
+    device_type: str,
+    device_name: str,
+    gpu_usage_mode: str,
+    cmd_known_params: Dict[str, Any],
+    model_info,
+) -> str:
+    """Select an engine when missing, otherwise validate the user-provided engine."""
+    engine = cmd_known_params.get("engine")
+    if not engine:
+        return _select_engine_automatically(device_type, device_name, gpu_usage_mode, model_info)
+    return _validate_user_engine(engine, device_name, gpu_usage_mode, model_info)
 
-    # 回写模型类型到参数字典，供下游引擎适配器判断
-    cmd_known_params["model_type"] = model_info.identify_model_type()
 
-    # 回写最终选定的引擎名称
-    cmd_known_params["engine"] = engine
+def _prepare_mindie_model_config(cmd_known_params: Dict[str, Any], device_name: str) -> None:
+    """Apply MindIE-specific model config permission and dtype checks."""
+    config_json_file = os.path.join(cmd_known_params.get('model_path'), 'config.json')
+    if not check_permission_640(config_json_file):
+        try:
+            os.chmod(config_json_file, 0o640)
+            logger.info(
+                "The permission setting for model config.json is not set to 640. "
+                "Since MindIE only supports the 640 permission configuration, we will adjust it to 640."
+            )
+        except Exception as e:
+            logger.warning("Failed to set permission for model config.json to 640: %s.", e)
+    if "310" in device_name:
+        check_torch_dtype(config_json_file)
 
-    # 配置推测解码、稀疏 KV 和 RAG 加速环境变量
+
+def _apply_engine_runtime_flags(cmd_known_params: Dict[str, Any]) -> None:
+    """Set feature environment variables driven by selected engine parameters."""
     _set_spec_decoding_config(cmd_known_params)
     _set_sparse_config(cmd_known_params)
     _set_rag_acc_config(cmd_known_params)
 
-    # 在昇腾设备上将 vllm 自动升级为 vllm_ascend
-    if engine == "vllm":
-        _handle_ascend_vllm(device_type, cmd_known_params)
 
-    # 取升级后的最终引擎名称（可能已被 _handle_ascend_vllm 修改为 vllm_ascend）
-    final_engine = cmd_known_params.get("engine", engine)
-    if get_lmcache_env() and final_engine not in {"vllm", "vllm_ascend"}:
+def _record_selected_engine(engine: str) -> None:
+    """Persist the selected engine for sidecar coordination and diagnostics."""
+    _write_engine_second_line(os.getenv("BACKEND_PID_FILE", "/var/log/wings/wings.txt"), engine)
+    os.environ['WINGS_ENGINE'] = engine
+    logger.info("Set global environment variable WINGS_ENGINE=%s", engine)
+
+
+def _warn_unsupported_lmcache_engine(engine: str) -> None:
+    """Warn when LMCache is enabled for an engine that will ignore it."""
+    if get_lmcache_env() and engine not in {"vllm", "vllm_ascend"}:
         logger.warning(
             "[KVCache Offload] LMCACHE_OFFLOAD is enabled, but selected engine '%s' "
             "does not support LMCache offload. Offload settings will be ignored unless "
             "engine is explicitly set to vllm or vllm_ascend.",
-            final_engine,
+            engine,
         )
 
-    # 写入标记文件和全局环境变量 — 必须在 _handle_ascend_vllm 之后，
-    # 确保记录的是最终实际使用的引擎名称
-    _write_engine_second_line(os.getenv("BACKEND_PID_FILE", "/var/log/wings/wings.txt"), final_engine)
-    os.environ['WINGS_ENGINE'] = final_engine
-    logger.info("Set global environment variable WINGS_ENGINE=%s", final_engine)
 
-    # 分布式参数注入（distributed_executor_backend, ray/nixl/dist_port 等）
-    if cmd_known_params.get("distributed"):
-        _handle_distributed(engine, cmd_known_params, model_info)
-
-    # 确定最终设备数量：full 模式使用硬件探测值，其他模式使用用户指定值
-    # device_count
+def _set_final_device_count(
+    hardware_env: Dict[str, Any],
+    cmd_known_params: Dict[str, Any],
+) -> None:
+    """Resolve and validate final device_count."""
     if cmd_known_params.get("gpu_usage_mode") == "full":
         device_count = hardware_env.get("count", 1)
     else:
         device_count = cmd_known_params.get("device_count", 1)
-    # 设备数量合法性校验
     if device_count <= 0:
         raise ValueError(f"device_count must be an integer greater than 0. Current value: {device_count}")
     cmd_known_params['device_count'] = device_count
 
+
+def _auto_select_engine(hardware_env: Dict[str, Any],
+                       cmd_known_params: Dict[str, Any],
+                       model_info) -> Dict[str, Any]:
+    """Select and initialize the engine-related runtime parameters."""
+    device_type = hardware_env['device']
+    device_name = _resolve_device_name(hardware_env)
+    gpu_usage_mode = cmd_known_params.get("gpu_usage_mode", "full")
+    engine = _resolve_engine_choice(device_type, device_name, gpu_usage_mode, cmd_known_params, model_info)
+
+    if engine == 'mindie':
+        _prepare_mindie_model_config(cmd_known_params, device_name)
+
+    cmd_known_params["model_type"] = model_info.identify_model_type()
+    cmd_known_params["engine"] = engine
+    _apply_engine_runtime_flags(cmd_known_params)
+
+    if engine == "vllm":
+        _handle_ascend_vllm(device_type, cmd_known_params)
+
+    final_engine = cmd_known_params.get("engine", engine)
+    _warn_unsupported_lmcache_engine(final_engine)
+    _record_selected_engine(final_engine)
+
+    if cmd_known_params.get("distributed"):
+        _handle_distributed(final_engine, cmd_known_params, model_info)
+
+    _set_final_device_count(hardware_env, cmd_known_params)
     return cmd_known_params
 
 
@@ -1747,28 +1755,25 @@ def _validate_user_engine(engine: str, device_name: str, gpu_usage_mode: str, mo
     异常:
         ValueError: 引擎名不在支持列表中时抛出
     """
-    #
     if engine not in ['mindie', 'vllm', 'vllm_ascend', 'sglang']:
         raise ValueError(
             f"The engine {engine} is not supported yet! "
             "Please change to 'mindie', 'vllm', 'vllm_ascend' or 'sglang'"
         )
 
-    vllm = 'vllm'
     model_type = model_info.identify_model_type()
-    #
     if engine == 'mindie':
-        # 310mindie
+        # Ascend310 仅支持 mindie，不支持 vllm_ascend
         if "310" in device_name:
             return 'mindie'
-        # embeddingrerankvllm_ascend
+        # embedding/rerank 模型需切换到 vllm_ascend
         elif model_type in ["embedding", "rerank"]:
             logger.warning("model type is %s, automatically switched to VLLM_Ascend engine", model_type)
             return "vllm_ascend"
         elif get_router_env():
             logger.warning("Wings router enabled, automatically switched to VLLM engine")
-            return vllm
-        # QwenQwQvllm_ascend
+            return 'vllm'
+        # 算子加速（如 KunLun ATB）要求 vllm_ascend
         elif get_operator_acceleration_env():
             logger.warning("operator_acceleration is enabled, "
                            "automatically switched to VLLM_Ascend engine")
@@ -1804,15 +1809,10 @@ def _handle_distributed(engine: str, cmd_params: Dict[str, Any], model_info):
     )
     distributed_config = load_json_config(distributed_config_path)
 
-    # vllmvllm_ascend
     if engine in ['vllm', 'vllm_ascend']:
         _handle_vllm_distributed(distributed_config, cmd_params, model_info)
-
-    # sglang
     elif engine == 'sglang':
         _handle_sglang_distributed(distributed_config, cmd_params)
-
-    # mindie
     elif engine == 'mindie':
         _handle_mindie_distributed(distributed_config, cmd_params)
 
@@ -1855,7 +1855,6 @@ def _handle_vllm_distributed(distributed_config: Dict[str, Any], cmd_params: Dic
             'rpc_port': rpc_port
         })
     else:
-        #
         if not vllm_distributed_port:
             vllm_distributed_port = distributed_config.get('vllm_distributed', {}).get('ray_head_port', 27070)
 

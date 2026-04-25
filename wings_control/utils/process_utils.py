@@ -9,8 +9,7 @@
 Sidecar 架构契约:
     - 不在启动检查中无限阻塞
     - 进程监控诊断信息清晰可读
-"""
-# Copyright (c) xFusion Digital Technologies Co., Ltd. 2025-2025. All rights reserved.
+"""# Copyright (c) xFusion Digital Technologies Co., Ltd. 2025-2025. All rights reserved.
 # -*- coding: utf-8 -*-
 
 import os
