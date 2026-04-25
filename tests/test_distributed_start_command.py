@@ -21,16 +21,16 @@ from wings_control import DispatchOptions, _try_dispatch_to_worker  # noqa: E402
 
 
 def _assert_start_command_mode(testcase: unittest.TestCase, script_path: Path) -> None:
-    """Assert the start-command file keeps engine-container executable perms."""
+    """Assert the start-command file keeps engine-container readable perms."""
     mode = stat.S_IMODE(script_path.stat().st_mode)
     if os.name == "nt":
         testcase.assertEqual(mode, 0o666)
     else:
-        testcase.assertEqual(mode, 0o755)
+        testcase.assertEqual(mode, 0o644)
 
 
 class TestStartCommandWriter(unittest.TestCase):
-    def test_write_start_command_is_world_executable_for_engine_sidecar(self):
+    def test_write_start_command_is_world_readable_for_engine_sidecar(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(settings, "SHARED_VOLUME_PATH", tmpdir):
                 script_path = Path(write_start_command("echo worker-ray\n"))
