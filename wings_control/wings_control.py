@@ -68,6 +68,7 @@ import logging
 import os
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -82,9 +83,9 @@ import requests
 from config.settings import settings
 from core.port_plan import PortPlan, derive_port_plan
 from core.start_args_compat import LaunchArgs, parse_launch_args
-from core.start_command_utils import write_start_command
 from core.wings_entry import build_launcher_plan
 from utils.env_utils import get_local_ip, get_master_ip, get_node_ips
+from utils.file_utils import safe_write_file, WriteOptions
 from utils.log_config import setup_root_logging, LOGGER_LAUNCHER
 from utils.noise_filter import install_noise_filters
 from utils.process_utils import infer_log_level
@@ -483,7 +484,20 @@ def _build_processes(port_plan: PortPlan) -> list[ManagedProc]:
 
 def _write_start_command(script_text: str) -> str:
     """将 engine 启动脚本写入共享卷（原子写入 + 宽松权限）。"""
-    path = write_start_command(script_text)
+    shared_dir = settings.SHARED_VOLUME_PATH
+    os.makedirs(shared_dir, exist_ok=True)
+    path = os.path.join(shared_dir, settings.START_COMMAND_FILENAME)
+    # 权限 0o644：engine 容器即使非 root 也能读取。
+    # atomic=True：先写临时文件再 rename，防止 engine 读到截断的脚本。
+    ok = safe_write_file(
+        path, script_text, is_json=False,
+        options=WriteOptions(
+            modes=stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
+            atomic=True,
+        ),
+    )
+    if not ok:
+        raise RuntimeError(f"failed to write start command: {path}")
     logger.info("start command written: %s", path)
     return path
 
@@ -692,7 +706,6 @@ def _try_dispatch_to_worker(
     rank: int,
     params: dict,
     options: DispatchOptions,
-    start_command: str | None = None,
 ) -> bool:
     """向单个 Worker 节点发送引擎启动请求，带有限重试。
 
@@ -701,15 +714,9 @@ def _try_dispatch_to_worker(
     """
     for attempt in range(1, options.max_retries + 1):
         try:
-            request_json = {
-                "engine": params.get("engine", "vllm"),
-                "params": params,
-            }
-            if start_command:
-                request_json["start_command"] = start_command
             resp = requests.post(
                 f"http://{worker_ip}:{worker_port}/api/start_engine",
-                json=request_json,
+                json={"engine": params.get("engine", "vllm"), "params": params},
                 timeout=30,
             )
             resp.raise_for_status()
@@ -728,45 +735,6 @@ def _try_dispatch_to_worker(
     return False
 
 
-def _build_worker_dispatch_payload(
-    launch_args: LaunchArgs,
-    topology: DistTopology,
-    rank: int,
-) -> tuple[dict, str | None]:
-    """Build the worker-dispatch params and, when possible, a pre-rendered script."""
-    topology_csv = ",".join(topology.node_ips)
-    worker_args = _override_distributed_args(
-        launch_args,
-        distributed=True,
-        nnodes=topology.nnodes,
-        node_rank=rank,
-        head_node_addr=topology.head_addr,
-        node_ips=topology_csv,
-        nodes=topology_csv,
-        master_ip=launch_args.master_ip or topology.head_addr,
-        ray_head_ip=launch_args.ray_head_ip or launch_args.master_ip or topology.head_addr,
-    )
-    params = worker_args.to_namespace().__dict__
-
-    start_command: str | None = None
-    try:
-        port_plan = derive_port_plan(
-            port=worker_args.port,
-            enable_reason_proxy=settings.ENABLE_REASON_PROXY,
-            health_port=settings.HEALTH_PORT,
-        )
-        launcher_plan = build_launcher_plan(worker_args, port_plan)
-        start_command = launcher_plan.command
-    except Exception:
-        logger.exception(
-            "Failed to pre-build worker rank %d start command on master; "
-            "falling back to params-only dispatch",
-            rank,
-        )
-
-    return params, start_command
-
-
 def _dispatch_engine_to_workers(
     worker_ips: list[str],
     worker_port: int,
@@ -781,13 +749,21 @@ def _dispatch_engine_to_workers(
     """
     if options is None:
         options = DispatchOptions()
+    topology_csv = ",".join(topology.node_ips)
+    base_params = launch_args.to_namespace().__dict__
     failed_count = 0
     for rank, worker_ip in enumerate(worker_ips, start=1):
-        params, start_command = _build_worker_dispatch_payload(
-            launch_args,
-            topology,
-            rank,
-        )
+        params = {
+            **base_params,
+            "distributed": True,
+            "nnodes": topology.nnodes,
+            "node_rank": rank,
+            "head_node_addr": topology.head_addr,
+            "node_ips": topology_csv,
+            "nodes": topology_csv,
+            "master_ip": launch_args.master_ip or topology.head_addr,
+            "ray_head_ip": launch_args.ray_head_ip or launch_args.master_ip or topology.head_addr,
+        }
 
         # 先探测 Worker API 是否已在监听
         if not _wait_for_worker_api_ready(worker_ip, worker_port):
@@ -799,14 +775,7 @@ def _dispatch_engine_to_workers(
             continue
 
         # 带有限重试的分发
-        if not _try_dispatch_to_worker(
-            worker_ip,
-            worker_port,
-            rank,
-            params,
-            options,
-            start_command=start_command,
-        ):
+        if not _try_dispatch_to_worker(worker_ip, worker_port, rank, params, options):
             logger.error(
                 "Permanently failed to distribute to worker rank %d (%s) after %d retries",
                 rank, worker_ip, options.max_retries,
