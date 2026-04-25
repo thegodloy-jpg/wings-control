@@ -8,7 +8,7 @@
 """
 
 import sys
-from wings_control.wings_control import run
+from . import run
 
 if __name__ == "__main__":
     raise SystemExit(run(sys.argv[1:]))  # 主进程入口，G.ERR.11 例外  # noqa: avoid-using-exit
