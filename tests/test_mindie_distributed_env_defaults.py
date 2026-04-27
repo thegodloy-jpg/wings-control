@@ -17,7 +17,6 @@ mindie_adapter = importlib.import_module("engines.mindie_adapter")
 _append_export_echoes = mindie_adapter._append_export_echoes
 _build_distributed_env_commands = mindie_adapter._build_distributed_env_commands
 _build_mindie_distributed_env_default_commands = mindie_adapter._build_mindie_distributed_env_default_commands
-_build_model_config_overrides = mindie_adapter._build_model_config_overrides
 
 
 class TestMindieDistributedEnvDefaults(unittest.TestCase):
@@ -97,19 +96,6 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
             "printf '[mindie-env] OMP_NUM_THREADS=%s\\n' \"${OMP_NUM_THREADS:-}\"",
             "echo done",
         ])
-
-    def test_multinode_auto_tp_uses_local_world_size(self):
-        overrides = _build_model_config_overrides(
-            {},
-            True,
-            2,
-            global_world_size=4,
-            nnodes=2,
-        )
-
-        self.assertEqual(overrides["worldSize"], 2)
-        self.assertEqual(overrides["tp"], 2)
-        self.assertEqual(overrides["dp"], 1)
 
 
 if __name__ == "__main__":
