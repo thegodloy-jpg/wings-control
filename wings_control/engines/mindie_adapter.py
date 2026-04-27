@@ -1045,29 +1045,37 @@ def _inject_multinode_tp_dp(
     engine_config: Dict[str, Any],
     is_distributed: bool,
     nnodes: int,
+    local_world_size: int,
     global_world_size: int,
     overrides: Dict[str, Any],
 ) -> None:
-    """MindIE 2.3.0 多节点必须显式设置 tp/dp，否则内部 DP 计算返回 0 触发 C++ 崩溃。
+    """MindIE 2.3.0 多节点必须显式设置本节点 tp/dp，否则内部 DP 计算返回 0。
 
-    公式: global_world_size = TP × DP × PP
+    多节点场景中，config.json 的 ``worldSize`` 与 ``tp`` 均按本节点可见
+    NPU 数量设置；全局总 rank 数通过 ``MINDIE_MODEL_WORLD_SIZE`` 与 rank
+    table 传递，避免 MindIE 在容器内按全局 TP 访问不存在的本地 device id。
     """
-    if not (is_distributed and nnodes > 1 and global_world_size > 0):
+    if not (is_distributed and nnodes > 1 and local_world_size > 0):
         return
     # PP（流水线并行）优先从 engine_config 读取，默认为 1
     pp = int(engine_config.get("pp", 1) or 1)
-    effective_tp = global_world_size // pp if pp > 1 else global_world_size
+    effective_tp = local_world_size // pp if pp > 1 else local_world_size
+    effective_tp = max(1, effective_tp)
     effective_dp = 1
     if engine_config.get("tp") is None:
         overrides["tp"] = effective_tp
         if pp > 1:
             logger.info(
-                    "[mindie] Multi-node: auto-set tp=%d "
-                    "(worldSize=%d / pp=%d)",
-                    effective_tp, global_world_size, pp
-                )
+                "[mindie] Multi-node: auto-set tp=%d "
+                "(localWorldSize=%d / pp=%d, globalWorldSize=%d)",
+                effective_tp, local_world_size, pp, global_world_size,
+            )
         else:
-            logger.info("[mindie] Multi-node: auto-set tp=%d (global worldSize)", effective_tp)
+            logger.info(
+                "[mindie] Multi-node: auto-set tp=%d "
+                "(localWorldSize=%d, globalWorldSize=%d)",
+                effective_tp, local_world_size, global_world_size,
+            )
     if engine_config.get("dp") is None:
         overrides["dp"] = effective_dp
         logger.info("[mindie] Multi-node: auto-set dp=%d", effective_dp)
@@ -1158,7 +1166,14 @@ def _build_model_config_overrides(
         "trustRemoteCode": engine_config.get("trustRemoteCode", True),
     }
 
-    _inject_multinode_tp_dp(engine_config, is_distributed, nnodes, global_world_size, overrides)
+    _inject_multinode_tp_dp(
+        engine_config,
+        is_distributed,
+        nnodes,
+        world_size,
+        global_world_size,
+        overrides,
+    )
     _inject_moe_config(engine_config, world_size, overrides)
     _inject_parallel_passthrough(engine_config, overrides)
     _inject_mtp_plugin(engine_config, overrides)
