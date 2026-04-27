@@ -86,25 +86,27 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertNotIn("HCCL_EXEC_TIMEOUT", rendered)
         self.assertIn("export RANK_TABLE_FILE=/shared-volume/hccl_ranktable.json", rendered)
 
-    def test_multinode_rank0_server_ip_uses_service_ip(self):
+    def test_multinode_rank0_server_ip_uses_master_ip(self):
         overrides = _build_server_overrides(
             {"ipAddress": "10.0.0.99"},
             is_distributed=True,
             node_rank=0,
             nnodes=2,
+            master_addr="10.0.0.1",
         )
 
-        self.assertEqual(overrides["ipAddress"], "10.0.0.99")
+        self.assertEqual(overrides["ipAddress"], "10.0.0.1")
 
-    def test_multinode_worker_server_ip_stays_local_not_master(self):
+    def test_multinode_worker_server_ip_uses_master_ip(self):
         overrides = _build_server_overrides(
             {"ipAddress": "10.0.0.99"},
             is_distributed=True,
             node_rank=1,
             nnodes=2,
+            master_addr="10.0.0.1",
         )
 
-        self.assertEqual(overrides["ipAddress"], "127.0.0.1")
+        self.assertEqual(overrides["ipAddress"], "10.0.0.1")
 
     def test_export_commands_print_values_when_rendered(self):
         commands = _append_export_echoes([

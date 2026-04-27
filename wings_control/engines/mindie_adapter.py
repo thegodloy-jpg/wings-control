@@ -1069,16 +1069,14 @@ def _build_server_overrides(
     is_distributed: bool,
     node_rank: int,
     nnodes: int,
+    master_addr: Optional[str] = None,
 ) -> Dict[str, Any]:
     """构建 MindIE ServerConfig 覆盖参数。"""
     if is_distributed and nnodes > 1:
-        # ServerConfig.ipAddress 是当前 MindIE 服务监听地址，不是 MASTER_ADDR。
-        # 分布式场景只让 rank0 使用外部服务 IP；worker 节点不应写主节点 IP，
-        # 保持本地回环监听，避免在 worker 上绑定不存在的主节点地址。
-        ip_address = (
-            engine_config.get("ipAddress", "0.0.0.0")
-            if node_rank == 0 else "127.0.0.1"
-        )
+        # MindIE 多节点服务入口统一指向 master 节点。
+        # 因此所有节点的 ServerConfig.ipAddress 都写 master IP，避免 worker
+        # 生成与主服务入口不一致的 config.json。
+        ip_address = master_addr or engine_config.get("ipAddress", "0.0.0.0")
     else:
         ip_address = engine_config.get("ipAddress", "0.0.0.0")
     overrides: Dict[str, Any] = {
@@ -1544,7 +1542,14 @@ def build_start_script(params: Dict[str, Any]) -> str:
     npu_device_ids = _resolve_npu_device_ids(engine_config, is_distributed, local_device_count)
 
     # 构建各配置覆盖区块
-    server_overrides = _build_server_overrides(engine_config, is_distributed, node_rank, nnodes)
+    master_addr = (
+        params.get("mindie_master_addr")
+        or params.get("master_ip")
+        or params.get("head_node_addr")
+    )
+    server_overrides = _build_server_overrides(
+        engine_config, is_distributed, node_rank, nnodes, master_addr
+    )
     backend_overrides = _build_backend_overrides(engine_config, is_distributed, nnodes, npu_device_ids)
     model_deploy_overrides = _build_model_deploy_overrides(engine_config)
 
