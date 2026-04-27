@@ -1127,32 +1127,30 @@ def _inject_multinode_tp_dp(
     engine_config: Dict[str, Any],
     is_distributed: bool,
     nnodes: int,
-    global_world_size: int,
+    world_size: int,
     overrides: Dict[str, Any],
 ) -> None:
     """MindIE 2.3.0 多节点必须显式设置 tp/dp，否则内部 DP 计算返回 0 触发 C++ 崩溃。
 
-    公式: global_world_size = TP × DP × PP
+    公式: ModelConfig.worldSize = TP × DP × PP
     """
-    if not (is_distributed and nnodes > 1 and global_world_size > 0):
+    if not (is_distributed and nnodes > 1 and world_size > 0):
         return
+    effective_dp = nnodes
     # PP（流水线并行）优先从 engine_config 读取，默认为 1
     pp = int(engine_config.get("pp", 1) or 1)
-    effective_tp = global_world_size // pp if pp > 1 else global_world_size
-    effective_dp = 1
-    if engine_config.get("tp") is None:
-        overrides["tp"] = effective_tp
-        if pp > 1:
-            logger.info(
-                    "[mindie] Multi-node: auto-set tp=%d "
-                    "(worldSize=%d / pp=%d)",
-                    effective_tp, global_world_size, pp
-                )
-        else:
-            logger.info("[mindie] Multi-node: auto-set tp=%d (global worldSize)", effective_tp)
-    if engine_config.get("dp") is None:
-        overrides["dp"] = effective_dp
-        logger.info("[mindie] Multi-node: auto-set dp=%d", effective_dp)
+    if world_size % (effective_dp * pp) != 0:
+        raise ValueError(
+            "MindIE distributed parallel mismatch: "
+            f"worldSize={world_size} must be divisible by dp({effective_dp}) × pp({pp})"
+        )
+    effective_tp = world_size // (effective_dp * pp)
+    overrides["dp"] = effective_dp
+    overrides["tp"] = effective_tp
+    logger.info(
+        "[mindie] Multi-node: set dp=%d, tp=%d, pp=%d so worldSize=%d equals tp×dp×pp",
+        effective_dp, effective_tp, pp, world_size,
+    )
 
 
 def _inject_moe_config(
@@ -1247,9 +1245,9 @@ def _build_model_config_overrides(
         "trustRemoteCode": engine_config.get("trustRemoteCode", True),
     }
 
-    _inject_multinode_tp_dp(engine_config, is_distributed, nnodes, global_world_size, overrides)
     _inject_moe_config(engine_config, world_size, overrides)
     _inject_parallel_passthrough(engine_config, overrides)
+    _inject_multinode_tp_dp(engine_config, is_distributed, nnodes, world_size, overrides)
     _inject_mtp_plugin(engine_config, overrides)
     _inject_function_call_config(engine_config, overrides)
 
