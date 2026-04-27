@@ -2102,6 +2102,9 @@ def build_start_script(params: Dict[str, Any]) -> str:
     else:
         script = _build_vllm_single_script(params, cmd, common_env_cmds, engine, sparse_args)
 
+    if engine == "vllm_ascend":
+        script = _inject_env_echo(script)
+
     return script
 
 
@@ -2132,7 +2135,7 @@ def _inject_env_echo(script: str) -> str:
         r'^(exec\s+python3?|python3?\s+-m\s+vllm|python3?\s+-m\s+sglang|'
         r'ray\s+(start|stop|status)|source\s+/|nohup\s+|\./[A-Za-z0-9_./-]+\.sh)'
     )
-    for line in lines:
+    for idx, line in enumerate(lines):
         stripped = line.lstrip()
         m = _re.match(r'^export\s+([A-Za-z_][A-Za-z0-9_]*)', stripped)
         if m:
@@ -2142,9 +2145,15 @@ def _inject_env_echo(script: str) -> str:
             # 这种追加合并的最终结果）。
             result.append(line)
             indent = line[: len(line) - len(stripped)]
-            result.append(
-                f'{indent}echo "[wings-env] export {var_name}=${{{var_name}:-}}"\n'
+            next_line = lines[idx + 1].lstrip() if idx + 1 < len(lines) else ""
+            already_echoed = (
+                f"[wings-env] export {var_name}=" in next_line
+                or f"[mindie-env] {var_name}=" in next_line
             )
+            if not already_echoed:
+                result.append(
+                    f'{indent}echo "[wings-env] export {var_name}=${{{var_name}:-}}"\n'
+                )
             continue
         if cmd_prefix_re.match(stripped):
             indent = line[: len(line) - len(stripped)]
@@ -2153,7 +2162,9 @@ def _inject_env_echo(script: str) -> str:
             if len(preview) > 800:
                 preview = preview[:800] + "...<truncated>"
             preview_safe = preview.replace("'", "'\"'\"'")
-            result.append(f"{indent}echo '[wings-cmd] >>> {preview_safe}'\n")
+            already_echoed = bool(result and "[wings-cmd] >>>" in result[-1])
+            if not already_echoed:
+                result.append(f"{indent}echo '[wings-cmd] >>> {preview_safe}'\n")
         result.append(line)
     return "".join(result)
 

@@ -633,8 +633,14 @@ def _build_env_overrides_preamble() -> str:
 
         elif suffix == ".sh":
             # shell 脚本在全局 set -u 下执行时，允许引用暂未定义的变量。
+            quoted_path = shlex.quote(str(fpath))
+            quoted_label = shlex.quote(fpath.name)
             lines.append("set +u")
-            lines.append(f"source {shlex.quote(str(fpath))}")
+            lines.append(
+                "if command -v wings_source_env_with_diff >/dev/null 2>&1; then "
+                f"wings_source_env_with_diff {quoted_path} {quoted_label}; "
+                f"else source {quoted_path}; fi"
+            )
             lines.append("set -u")
 
         else:
@@ -797,6 +803,48 @@ mkdir -p /shared-volume
 """
         logger.info("Skipped log_analyzer for worker node (node_rank=%d)", node_rank)
         return analyzer_preamble
+
+
+def _build_env_echo_helpers_preamble() -> str:
+    """生成环境变量打印辅助函数，供 engine 端 source 外部脚本时使用。
+
+    wings_source_env_with_diff 会在 source 前后采集 env 快照，并打印新增或变化
+    的 KEY=VALUE 行，用于覆盖 Ascend/MindIE 官方 set_env.sh 内部设置的变量。
+
+    Returns:
+        str: 可注入 start_command.sh 前置区域的 shell 函数定义
+
+    注意:
+        - 只打印 source 后仍然存在且新增/变化的变量
+        - 不做脱敏，变量值会按实际内容输出到 engine 日志
+    """
+    return r'''# --- wings: env echo helpers ---
+wings_source_env_with_diff() {
+    local script_path="$1"
+    local label="${2:-$1}"
+    if [ ! -f "$script_path" ]; then
+        echo "[wings-env-source] WARN: $label not found: $script_path"
+        return 0
+    fi
+
+    local before_file after_file
+    before_file="$(mktemp)"
+    after_file="$(mktemp)"
+    env | sort > "$before_file" || true
+
+    set +u
+    # shellcheck disable=SC1090
+    source "$script_path"
+    local source_rc=$?
+    set -u
+
+    env | sort > "$after_file" || true
+    comm -13 "$before_file" "$after_file" | sed "s|^|[wings-env-source] $label |" || true
+    rm -f "$before_file" "$after_file"
+    return "$source_rc"
+}
+# --- end wings env echo helpers ---
+'''
 
 
 # ── 高级特性状态 JSON ──
@@ -1293,6 +1341,7 @@ def _assemble_startup_command(
     modelslim_patch = build_modelslim_quarot_patch_preamble(engine)
     accel_preamble = _build_accel_preamble(engine, merged)
     env_overrides = _build_env_overrides_preamble()
+    env_echo_helpers = _build_env_echo_helpers_preamble()
 
     full_script = (
         "#!/usr/bin/env bash\nset -euo pipefail\n"
@@ -1303,7 +1352,8 @@ def _assemble_startup_command(
         # both the engine container and the sidecar proxy can reach it.
         "rm -rf /var/log/wings/prometheus_multiproc\n"
         "mkdir -p /var/log/wings/prometheus_multiproc\n"
-        "export PROMETHEUS_MULTIPROC_DIR=/var/log/wings/prometheus_multiproc\n"
+        + env_echo_helpers
+        + "export PROMETHEUS_MULTIPROC_DIR=/var/log/wings/prometheus_multiproc\n"
         + analyzer_preamble
         # Disable Python stdout full-buffering so that engine ready
         # messages (e.g. "Starting vLLM server on") reach engine.log

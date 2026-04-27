@@ -35,6 +35,30 @@ class TestInjectEnvEcho(unittest.TestCase):
             rendered,
         )
 
+    def test_existing_export_echo_is_not_duplicated(self):
+        script = (
+            "export OMP_NUM_THREADS=10\n"
+            'echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"\n'
+            "export HCCL_CONNECT_TIMEOUT=7200\n"
+            "printf '[mindie-env] HCCL_CONNECT_TIMEOUT=%s\\n' \"${HCCL_CONNECT_TIMEOUT:-}\"\n"
+        )
+
+        rendered = _inject_env_echo(script)
+
+        self.assertEqual(rendered.count("[wings-env] export OMP_NUM_THREADS="), 1)
+        self.assertEqual(rendered.count("[mindie-env] HCCL_CONNECT_TIMEOUT="), 1)
+        self.assertNotIn("[wings-env] export HCCL_CONNECT_TIMEOUT=", rendered)
+
+    def test_existing_command_echo_is_not_duplicated(self):
+        script = (
+            "echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server'\n"
+            "exec python3 -m vllm.entrypoints.openai.api_server\n"
+        )
+
+        rendered = _inject_env_echo(script)
+
+        self.assertEqual(rendered.count("[wings-cmd] >>>"), 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

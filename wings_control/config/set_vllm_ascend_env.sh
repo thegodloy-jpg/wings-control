@@ -9,15 +9,11 @@
 #       engine 镜像预装 CANN toolkit，此处补充运行时环境变量。
 # =============================================================================
 
-# Source-based CANN env init is intentionally disabled for the current path.
-# set +u
-# [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] \
-#     && source /usr/local/Ascend/ascend-toolkit/set_env.sh \
-#     || echo 'WARN: ascend-toolkit/set_env.sh not found'
-# [ -f /usr/local/Ascend/nnal/atb/set_env.sh ] \
-#     && source /usr/local/Ascend/nnal/atb/set_env.sh \
-#     || echo 'WARN: nnal/atb/set_env.sh not found'
-# set -u
+# CANN/ATB 环境初始化脚本在 engine 容器内执行；若 helper 已注入，则打印 source 前后的环境变量差异。
+set +u
+[ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] && { if command -v wings_source_env_with_diff >/dev/null 2>&1; then wings_source_env_with_diff /usr/local/Ascend/ascend-toolkit/set_env.sh ascend-toolkit/set_env.sh; else source /usr/local/Ascend/ascend-toolkit/set_env.sh; fi; } || echo 'WARN: ascend-toolkit/set_env.sh not found'
+[ -f /usr/local/Ascend/nnal/atb/set_env.sh ] && { if command -v wings_source_env_with_diff >/dev/null 2>&1; then wings_source_env_with_diff /usr/local/Ascend/nnal/atb/set_env.sh nnal/atb/set_env.sh; else source /usr/local/Ascend/nnal/atb/set_env.sh; fi; } || echo 'WARN: nnal/atb/set_env.sh not found'
+set -u
 
 # Ascend 驱动库路径（libascend_hal.so 等位于此目录）
 # 如果驱动目录不存在，说明宿主机驱动未挂载到容器
@@ -55,3 +51,5 @@ export OMP_PROC_BIND=false
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-10}
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 export HCCL_OP_EXPANSION_MODE=AIV
+
+

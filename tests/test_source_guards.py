@@ -18,17 +18,24 @@ class TestSourceGuards(unittest.TestCase):
         with patch("engines.sglang_adapter.os.path.exists", return_value=True):
             cmds = sglang_adapter._build_base_env_commands({}, str(ROOT))
 
-        self.assertEqual(cmds, ["set +u", f"source {ROOT}\\wings\\config\\set_sglang_env.sh", "set -u"])
+        self.assertEqual(cmds[0], "set +u")
+        self.assertIn("wings_source_env_with_diff", cmds[1])
+        self.assertIn("set_sglang_env.sh", cmds[1])
+        self.assertIn("else source", cmds[1])
+        self.assertEqual(cmds[2], "set -u")
 
-    def test_mindie_dev_env_script_is_guarded_from_nounset(self):
-        with patch("engines.mindie_adapter.os.path.exists", return_value=True):
-            cmds = mindie_adapter._build_env_commands({})
+    def test_mindie_config_env_script_is_inlined(self):
+        cmds = mindie_adapter._build_env_commands({})
 
-        self.assertEqual(cmds[:3], [
-            "set +u",
+        rendered = "\n".join(cmds)
+        self.assertIn("# MindIE 单机引擎环境初始化脚本", rendered)
+        self.assertIn("set +u", cmds)
+        self.assertIn("set -u", cmds)
+        self.assertIn("export NPU_MEMORY_FRACTION=0.96", cmds)
+        self.assertNotIn(
             f"source {mindie_adapter.root_dir}\\wings\\config\\set_mindie_single_env.sh",
-            "set -u",
-        ])
+            cmds,
+        )
 
     def test_vllm_qwen3next_bisheng_source_is_guarded_from_nounset(self):
         fake_model = type("FakeModel", (), {"model_architecture": "Qwen3NextForCausalLM"})()

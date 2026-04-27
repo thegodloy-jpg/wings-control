@@ -27,7 +27,9 @@ class TestEnvOverridesPreamble(unittest.TestCase):
             with patch.object(settings, "ENV_OVERRIDES_DIR", str(env_dir)):
                 preamble = _build_env_overrides_preamble()
 
-        self.assertIn("set +u\nsource ", preamble)
+        self.assertIn("set +u\nif command -v wings_source_env_with_diff", preamble)
+        self.assertIn("wings_source_env_with_diff", preamble)
+        self.assertIn("else source ", preamble)
         self.assertIn("\nset -u\n", preamble)
         self.assertIn("custom.sh", preamble)
 

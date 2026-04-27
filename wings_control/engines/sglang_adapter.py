@@ -51,6 +51,8 @@ def _build_base_env_commands(params: Dict[str, Any], root: str) -> List[str]:
 
     查找并加载项目中的 SGLang 环境设置脚本（如果存在）。
     脚本路径: <root>/wings/config/set_sglang_env.sh
+    若全局 helper 已注入，则通过 wings_source_env_with_diff 打印 source 前后
+    新增/变化的环境变量；否则回退到普通 source。
 
     Args:
         params: 参数字典（当前未使用，保留为扩展点）
@@ -62,10 +64,18 @@ def _build_base_env_commands(params: Dict[str, Any], root: str) -> List[str]:
     注意:
         - 脚本不存在时记录警告并返回空列表
         - 不会导致启动失败，仅影响特定特性
+        - set +u / set -u 用于兼容脚本中引用未定义变量的场景
     """
     env_script = os.path.join(root, "wings", "config", "set_sglang_env.sh")
     if os.path.exists(env_script):
-        return ["set +u", f"source {env_script}", "set -u"]
+        quoted_script = shlex.quote(env_script)
+        return [
+            "set +u",
+            "if command -v wings_source_env_with_diff >/dev/null 2>&1; then "
+            f"wings_source_env_with_diff {quoted_script} set_sglang_env.sh; "
+            f"else source {quoted_script}; fi",
+            "set -u",
+        ]
     logger.debug("SGLang env script not found at %s; starting without sourcing env script", env_script)
     return []
 
