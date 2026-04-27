@@ -1133,25 +1133,19 @@ def _inject_multinode_tp_dp(
 ) -> None:
     """MindIE 2.3.0 多节点必须显式设置 tp/dp，否则内部 DP 计算返回 0 触发 C++ 崩溃。
 
-    公式: globalWorldSize = TP × DP × PP
+    多节点服务化场景沿用社区常见配置：ModelConfig.worldSize 保持本节点
+    可见 NPU 数，跨节点模型并行由全局 TP 承载，DP 固定为 1。
     """
     if not (is_distributed and nnodes > 1 and global_world_size > 0):
         return
-    effective_dp = nnodes
-    # PP（流水线并行）优先从 engine_config 读取，默认为 1
-    pp = int(engine_config.get("pp", 1) or 1)
-    if global_world_size % (effective_dp * pp) != 0:
-        raise ValueError(
-            "MindIE distributed parallel mismatch: "
-            f"globalWorldSize={global_world_size} must be divisible by dp({effective_dp}) × pp({pp})"
-        )
-    effective_tp = global_world_size // (effective_dp * pp)
+    effective_dp = 1
+    effective_tp = int(global_world_size)
     overrides["dp"] = effective_dp
     overrides["tp"] = effective_tp
     logger.info(
-        "[mindie] Multi-node: set dp=%d, tp=%d, pp=%d so globalWorldSize=%d equals tp×dp×pp "
-        "(config worldSize=%d)",
-        effective_dp, effective_tp, pp, global_world_size, world_size,
+        "[mindie] Multi-node: set dp=%d, tp=%d from globalWorldSize=%d "
+        "(config worldSize=%d is local device count)",
+        effective_dp, effective_tp, global_world_size, world_size,
     )
 
 
@@ -1563,9 +1557,10 @@ def build_start_script(params: Dict[str, Any]) -> str:
     backend_overrides = _build_backend_overrides(engine_config, is_distributed, nnodes, npu_device_ids)
     model_deploy_overrides = _build_model_deploy_overrides(engine_config)
 
-    # ── worldSize 语义修正 (多节点) ────────────────────────────────
-    # MindIE 分布式 config.json 中 ModelConfig.worldSize 使用当前节点芯片数。
-    # dp 固定为节点数，tp 基于全局芯片总数推导，确保 globalWorldSize=dp×tp×pp。
+    # ── worldSize / TP / DP 语义修正 (多节点) ───────────────────────
+    # MindIE 2.3.0 多机社区示例中，config.json 两端保持一致，
+    # ModelConfig.worldSize 使用当前节点可见芯片数；全局卡数由 WORLD_SIZE / rank table
+    # 承载。并行参数按全局 TP 设置：tp=globalWorldSize, dp=1。
     global_world_size = engine_config.get(
         "worldSize",
         topology["global_world_size"] if topology else (8 if is_distributed else 1),
