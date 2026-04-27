@@ -472,10 +472,8 @@ def _copy_external_rank_table(
         external_path, shared_path,
     )
     try:
-        os.makedirs(os.path.dirname(shared_path), exist_ok=True)
-        shutil.copy2(external_path, shared_path)
-        os.chmod(shared_path, 0o640)
-    except OSError as e:
+        _copy_and_normalize_rank_table(external_path, shared_path)
+    except (OSError, ValueError) as e:
         logger.error(
             "[mindie] Failed to copy rank table to shared volume: %s", e
         )
@@ -486,8 +484,60 @@ def _copy_external_rank_table(
         )
 
     return [
-        f"# ── HCCL rank table (copied from {external_path} to shared volume) ──",
+        f"# ── HCCL rank table (copied and normalized from {external_path}) ──",
     ], shared_path
+
+
+def _normalize_rank_table_device_ids(rank_table: Dict[str, Any]) -> int:
+    """将每个 server 内的 device_id 重排为容器本地序号。
+
+    MindIE/torch_npu 在容器内调用 ``set_device`` 时使用的是本容器可见
+    NPU 序号，而不是宿主机物理卡号。外部 rank table 常见地写入物理
+    device id（如 1/7/3），会导致容器内 ``Expected value: [0, N)`` 报错。
+
+    Args:
+        rank_table: 已解析的 HCCL rank table 字典
+
+    Returns:
+        int: 被改写的 device_id 数量
+    """
+    changed = 0
+    server_list = rank_table.get("server_list")
+    if not isinstance(server_list, list):
+        return changed
+
+    for server in server_list:
+        if not isinstance(server, dict):
+            continue
+        devices = server.get("device")
+        if not isinstance(devices, list):
+            continue
+        for local_idx, device in enumerate(devices):
+            if not isinstance(device, dict):
+                continue
+            normalized_id = str(local_idx)
+            if str(device.get("device_id", "")) != normalized_id:
+                device["device_id"] = normalized_id
+                changed += 1
+    return changed
+
+
+def _copy_and_normalize_rank_table(external_path: str, shared_path: str) -> None:
+    """复制 rank table 到共享卷，并将每节点 device_id 归一化为 0..N-1。"""
+    with open(external_path, "r", encoding="utf-8") as f:
+        rank_table = json.load(f)
+
+    changed = _normalize_rank_table_device_ids(rank_table)
+    os.makedirs(os.path.dirname(shared_path), exist_ok=True)
+    with open(shared_path, "w", encoding="utf-8") as f:
+        json.dump(rank_table, f, indent=2, ensure_ascii=False)
+    shutil.copystat(external_path, shared_path, follow_symlinks=True)
+    os.chmod(shared_path, 0o640)
+    if changed:
+        logger.warning(
+            "[mindie] Normalized %d rank table device_id value(s) to local ordinals",
+            changed,
+        )
 
 
 def _build_runtime_rank_table_check(
@@ -521,6 +571,26 @@ def _build_runtime_rank_table_check(
         f"    cp {safe_ext} {safe_shared}",
         f"    chmod 640 {safe_shared}",
         "    echo '[mindie] Copied external rank table to shared volume'",
+        "    python3 << 'RANK_TABLE_NORMALIZE_EOF'",
+        "import json",
+        f"path = {json.dumps(shared_path)}",
+        "with open(path, 'r', encoding='utf-8') as f:",
+        "    rank_table = json.load(f)",
+        "changed = 0",
+        "for server in rank_table.get('server_list', []):",
+        "    devices = server.get('device', []) if isinstance(server, dict) else []",
+        "    for local_idx, device in enumerate(devices):",
+        "        if not isinstance(device, dict):",
+        "            continue",
+        "        normalized_id = str(local_idx)",
+        "        if str(device.get('device_id', '')) != normalized_id:",
+        "            device['device_id'] = normalized_id",
+        "            changed += 1",
+        "if changed:",
+        "    with open(path, 'w', encoding='utf-8') as f:",
+        "        json.dump(rank_table, f, indent=2, ensure_ascii=False)",
+        "print(f'[mindie] Normalized {changed} rank table device_id value(s) to local ordinals')",
+        "RANK_TABLE_NORMALIZE_EOF",
         "else",
         (
             f"    echo '[mindie] ERROR: rank table source {external_path} not found; "
