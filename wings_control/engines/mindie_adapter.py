@@ -1560,17 +1560,14 @@ def build_start_script(params: Dict[str, Any]) -> str:
     model_deploy_overrides = _build_model_deploy_overrides(engine_config)
 
     # ── worldSize 语义修正 (多节点) ────────────────────────────────
-    # engine_config["worldSize"] 来自 config_loader，是全局 TP 总卡数。
-    # 但 MindIE config.json 中 ModelConfig.worldSize 必须等于本节点的
-    # npuDeviceIds 数量，否则 ConfigManager 校验失败。
-    # 全局 TP 总卡数已通过 MINDIE_MODEL_WORLD_SIZE 环境变量 + HCCL
-    # rank table 传递，config.json 中只需填本节点卡数。
+    # MindIE 分布式 config.json 中 ModelConfig.worldSize 使用全局芯片总数。
+    # dp 固定为节点数，tp 基于全局 worldSize 推导，确保 worldSize=dp×tp×pp。
     global_world_size = engine_config.get(
         "worldSize",
         topology["global_world_size"] if topology else (8 if is_distributed else 1),
     )
     if topology and topology["nnodes"] > 1:
-        config_world_size = topology["device_count"]
+        config_world_size = global_world_size
     else:
         config_world_size = global_world_size
 

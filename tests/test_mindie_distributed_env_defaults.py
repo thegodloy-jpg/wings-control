@@ -139,14 +139,14 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         overrides = _build_model_config_overrides(
             {},
             is_distributed=True,
-            world_size=2,
+            world_size=4,
             global_world_size=4,
             nnodes=2,
         )
 
-        self.assertEqual(overrides["worldSize"], 2)
+        self.assertEqual(overrides["worldSize"], 4)
         self.assertEqual(overrides["dp"], 2)
-        self.assertEqual(overrides["tp"], 1)
+        self.assertEqual(overrides["tp"], 2)
         self.assertEqual(overrides["worldSize"], overrides["dp"] * overrides["tp"])
 
     def test_mindie_multinode_tp_accounts_for_pp(self):
@@ -176,13 +176,13 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         overrides = _build_model_config_overrides(
             {"dp": 1, "tp": 4},
             is_distributed=True,
-            world_size=2,
+            world_size=4,
             global_world_size=4,
             nnodes=2,
         )
 
         self.assertEqual(overrides["dp"], 2)
-        self.assertEqual(overrides["tp"], 1)
+        self.assertEqual(overrides["tp"], 2)
         self.assertEqual(overrides["worldSize"], overrides["dp"] * overrides["tp"])
 
     def test_export_commands_print_values_when_rendered(self):
