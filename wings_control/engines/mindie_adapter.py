@@ -1157,15 +1157,16 @@ def _inject_moe_config(
     world_size: int,
     overrides: Dict[str, Any],
 ) -> None:
-    """注入 MoE 并行配置（isMOE=True 时生效）。"""
+    """Pass through explicit MoE parallel fields only.
+
+    Multi-node default MoE values are set only by _inject_multinode_tp_dp(),
+    so final moe_tp/moe_ep values have a single default source.
+    """
     if not engine_config.get("isMOE", False):
         return
-    overrides.update({
-        "tp": engine_config.get("tp", world_size),
-        "dp": engine_config.get("dp", -1),
-        "moe_tp": engine_config.get("moe_tp", world_size),
-        "moe_ep": engine_config.get("moe_ep", -1),
-    })
+    for key in ("tp", "dp", "moe_tp", "moe_ep"):
+        if engine_config.get(key) is not None:
+            overrides[key] = engine_config[key]
 
 
 def _inject_parallel_passthrough(engine_config: Dict[str, Any], overrides: Dict[str, Any]) -> None:
