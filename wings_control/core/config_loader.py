@@ -894,18 +894,70 @@ def _set_router_config(params):
     logger.info("Wings Router for vllm is enabled")
 
 
+def _is_moe_config(config: Optional[Dict[str, Any]], model_architecture: Optional[str]) -> bool:
+    """Return True when model metadata indicates a Mixture-of-Experts model."""
+    moe_architectures = {
+        "DeepseekV2ForCausalLM",
+        "DeepseekV3ForCausalLM",
+        "DeepseekV32ForCausalLM",
+        "Qwen3MoeForCausalLM",
+        "Glm4MoeForCausalLM",
+    }
+    if model_architecture in moe_architectures:
+        return True
+    if model_architecture and "moe" in model_architecture.lower():
+        return True
+    if not isinstance(config, dict):
+        return False
+
+    architectures = config.get("architectures") or []
+    if any(arch in moe_architectures or "moe" in str(arch).lower() for arch in architectures):
+        return True
+
+    moe_indicator_keys = (
+        "num_experts",
+        "num_local_experts",
+        "num_experts_per_tok",
+        "n_routed_experts",
+        "n_shared_experts",
+        "moe_intermediate_size",
+    )
+    for key in moe_indicator_keys:
+        value = config.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        try:
+            if int(value) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def _detect_mtp_moe_features(engine_cmd_parameter: Dict[str, Any],
-                              params: Dict[str, Any]) -> None:
-    """检测 MTP / MOE 特性并更新 params 中的 isMTP 和 isMOE 字段。"""
+                              params: Dict[str, Any],
+                              model_info=None) -> None:
+    """Detect MTP / MoE features and update isMTP / isMOE in params."""
     is_mtp = False
     is_moe = False
     model_path = engine_cmd_parameter.get("model_path")
     if model_path and os.path.exists(model_path):
         mtp_file = os.path.join(model_path, "mtp.safetensors")
         is_mtp = os.path.exists(mtp_file)
-    moe_models = ["deepseek-r1-671b"]
+    moe_models = {
+        "deepseek-r1-671b",
+        "deepseek-v3",
+        "deepseek-v3.1",
+        "qwen3-30b-a3b",
+    }
     model_name = engine_cmd_parameter.get("model_name")
-    if (model_name and model_name.lower() in moe_models) or params.get("enable_ep_moe"):
+    model_architecture = getattr(model_info, "model_architecture", None) if model_info else None
+    model_config = getattr(model_info, "config", None) if model_info else None
+    if (
+        (model_name and model_name.lower() in moe_models)
+        or params.get("enable_ep_moe")
+        or _is_moe_config(model_config, model_architecture)
+    ):
         is_moe = True
     params.update({'isMTP': is_mtp, 'isMOE': is_moe})
 
@@ -1032,7 +1084,7 @@ def _merge_mindie_params(params, ctx, engine_cmd_parameter, model_info=None):
         6. _set_mindie_function_call    → Function Call 开关
     """
     _set_mindie_common_params(params, engine_cmd_parameter)
-    _detect_mtp_moe_features(engine_cmd_parameter, params)
+    _detect_mtp_moe_features(engine_cmd_parameter, params, model_info)
 
     if engine_cmd_parameter["input_length"] and engine_cmd_parameter["output_length"]:
         params.update({

@@ -1,6 +1,6 @@
 # DeepSeek-V3.1 2x8 dual-node full generated view
 
-This document focuses only on one scenario: DeepSeek-V3.1, 2 nodes x 8 NPUs.
+This document focuses only on one scenario: DeepSeek-V3.1, 2 nodes x 8 NPUs. DeepSeek-V3.1 is treated as MoE, so moe_tp/moe_ep are included without enable_expert_parallel.
 
 ## config.json
 
@@ -124,8 +124,10 @@ Source: config.json
           "async_scheduler_wait_time": 120,
           "kv_trans_timeout": 10,
           "kv_link_timeout": 1080,
-          "dp": 1,
           "tp": 16,
+          "dp": 1,
+          "moe_tp": 1,
+          "moe_ep": 16,
           "models": {
             "deepseekv2": {
               "tool_call_options": {
