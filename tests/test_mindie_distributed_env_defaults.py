@@ -307,6 +307,27 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(model_config["dp"], 1)
         self.assertNotIn("models", model_config)
 
+    def test_qwen3_multinode_2x16_final_config_is_identical_and_expected(self):
+        node0 = self._build_final_multinode_config(
+            node_rank=0,
+            device_count=16,
+            global_world_size=32,
+        )
+        node1 = self._build_final_multinode_config(
+            node_rank=1,
+            device_count=16,
+            global_world_size=32,
+        )
+
+        self.assertEqual(node0, node1)
+        self.assertEqual(node0["BackendConfig"]["npuDeviceIds"], [list(range(16))])
+
+        model_config = node0["BackendConfig"]["ModelDeployConfig"]["ModelConfig"][0]
+        self.assertEqual(model_config["worldSize"], 16)
+        self.assertEqual(model_config["tp"], 32)
+        self.assertEqual(model_config["dp"], 1)
+        self.assertNotIn("models", model_config)
+
     def test_qwen3_moe_multinode_2x8_final_config_includes_moe_parallel_fields(self):
         node0 = self._build_final_multinode_config(
             node_rank=0,
@@ -331,6 +352,32 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(model_config["dp"], 1)
         self.assertEqual(model_config["moe_tp"], 1)
         self.assertEqual(model_config["moe_ep"], 16)
+        self.assertNotIn("models", model_config)
+
+    def test_qwen3_moe_multinode_2x16_final_config_includes_moe_parallel_fields(self):
+        node0 = self._build_final_multinode_config(
+            node_rank=0,
+            model_name="Qwen3-30B-A3B",
+            device_count=16,
+            global_world_size=32,
+            is_moe=True,
+        )
+        node1 = self._build_final_multinode_config(
+            node_rank=1,
+            model_name="Qwen3-30B-A3B",
+            device_count=16,
+            global_world_size=32,
+            is_moe=True,
+        )
+
+        self.assertEqual(node0, node1)
+        model_config = node0["BackendConfig"]["ModelDeployConfig"]["ModelConfig"][0]
+        self.assertEqual(model_config["modelName"], "Qwen3-30B-A3B")
+        self.assertEqual(model_config["worldSize"], 16)
+        self.assertEqual(model_config["tp"], 32)
+        self.assertEqual(model_config["dp"], 1)
+        self.assertEqual(model_config["moe_tp"], 1)
+        self.assertEqual(model_config["moe_ep"], 32)
         self.assertNotIn("models", model_config)
 
     def test_export_commands_print_values_when_rendered(self):
