@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import importlib
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +23,60 @@ _build_server_overrides = mindie_adapter._build_server_overrides
 
 
 class TestMindieDistributedEnvDefaults(unittest.TestCase):
+    def _extract_overrides_json(self, script: str):
+        start = "cat > /tmp/_mindie_overrides.json << 'OVERRIDES_EOF'"
+        lines = script.splitlines()
+        start_idx = lines.index(start) + 1
+        end_idx = lines.index("OVERRIDES_EOF", start_idx)
+        return json.loads("\n".join(lines[start_idx:end_idx]))
+
+    def _merge_mindie_config(self, overrides):
+        template_path = ROOT / "wings_control" / "config" / "defaults" / "mindie_service_config.json"
+        config = json.loads(template_path.read_text(encoding="utf-8"))
+        for meta_key in ("_comment", "_usage"):
+            config.pop(meta_key, None)
+
+        config["ServerConfig"].update(overrides["server"])
+        backend = config["BackendConfig"]
+        backend.update(overrides["backend"])
+        model_deploy = backend["ModelDeployConfig"]
+        model_deploy.update(overrides["model_deploy"])
+        model_deploy["ModelConfig"][0].update(overrides["model_config"])
+        backend["ScheduleConfig"].update(overrides["schedule"])
+        config.update(overrides.get("extra", {}))
+        return config
+
+    def _build_final_qwen3_multinode_config(self, node_rank: int):
+        engine_config = {
+            "modelName": "Qwen3-32B",
+            "modelWeightPath": "/usr/local/serving/models/",
+            "worldSize": 4,
+            "mindie_model_type": "qwen3",
+            "mindie_tool_call_parser": "qwen3",
+        }
+        if node_rank == 0:
+            engine_config.update({"ipAddress": "112.254.176.114", "port": 17000})
+        params = {
+            "engine_config": engine_config,
+            "distributed": True,
+            "nnodes": 2,
+            "node_rank": node_rank,
+            "device_count": 2,
+            "node_ips": "112.254.176.114,112.254.176.115",
+            "worldSize": 4,
+            "mindie_master_addr": "112.254.176.114",
+        }
+        with patch(
+            "engines.mindie_adapter._resolve_external_rank_table_path",
+            return_value="/tmp/rank_table.json",
+        ):
+            with patch(
+                "engines.mindie_adapter._resolve_rank_table",
+                return_value=([], "/shared-volume/hccl_ranktable.json"),
+            ):
+                script = mindie_adapter.build_start_script(params)
+        return self._merge_mindie_config(self._extract_overrides_json(script))
+
     def _write_script(self, content: str) -> str:
         tmp = tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False, encoding="utf-8")
         with tmp:
@@ -185,6 +240,24 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(overrides["worldSize"], 2)
         self.assertEqual(overrides["dp"], 1)
         self.assertEqual(overrides["tp"], 4)
+
+    def test_qwen3_multinode_final_config_is_identical_on_two_nodes(self):
+        node0 = self._build_final_qwen3_multinode_config(node_rank=0)
+        node1 = self._build_final_qwen3_multinode_config(node_rank=1)
+
+        self.assertEqual(node0, node1)
+        self.assertEqual(node0["ServerConfig"]["ipAddress"], "112.254.176.114")
+        self.assertEqual(node0["ServerConfig"]["port"], 17000)
+        self.assertEqual(node0["BackendConfig"]["npuDeviceIds"], [[0, 1]])
+        self.assertEqual(node0["BackendConfig"]["multiNodesInferEnabled"], True)
+
+        model_config = node0["BackendConfig"]["ModelDeployConfig"]["ModelConfig"][0]
+        self.assertEqual(model_config["modelName"], "Qwen3-32B")
+        self.assertEqual(model_config["modelWeightPath"], "/usr/local/serving/models/")
+        self.assertEqual(model_config["worldSize"], 2)
+        self.assertEqual(model_config["tp"], 4)
+        self.assertEqual(model_config["dp"], 1)
+        self.assertNotIn("models", model_config)
 
     def test_export_commands_print_values_when_rendered(self):
         commands = _append_export_echoes([
