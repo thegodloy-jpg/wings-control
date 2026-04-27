@@ -135,19 +135,19 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
             {"deepseekv2": {"tool_call_options": {"tool_call_parser": "deepseek_v31"}}},
         )
 
-    def test_mindie_multinode_dp_is_node_count_and_tp_matches_world_size(self):
+    def test_mindie_multinode_dp_is_node_count_and_tp_matches_global_world_size(self):
         overrides = _build_model_config_overrides(
             {},
             is_distributed=True,
-            world_size=4,
+            world_size=2,
             global_world_size=4,
             nnodes=2,
         )
 
-        self.assertEqual(overrides["worldSize"], 4)
+        self.assertEqual(overrides["worldSize"], 2)
         self.assertEqual(overrides["dp"], 2)
         self.assertEqual(overrides["tp"], 2)
-        self.assertEqual(overrides["worldSize"], overrides["dp"] * overrides["tp"])
+        self.assertEqual(4, overrides["dp"] * overrides["tp"])
 
     def test_mindie_multinode_tp_accounts_for_pp(self):
         overrides = _build_model_config_overrides(
@@ -160,15 +160,15 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
 
         self.assertEqual(overrides["dp"], 2)
         self.assertEqual(overrides["tp"], 2)
-        self.assertEqual(overrides["worldSize"], overrides["dp"] * overrides["tp"] * 2)
+        self.assertEqual(8, overrides["dp"] * overrides["tp"] * 2)
 
     def test_mindie_multinode_rejects_mismatched_world_size(self):
-        with self.assertRaisesRegex(ValueError, "worldSize=3"):
+        with self.assertRaisesRegex(ValueError, "globalWorldSize=3"):
             _build_model_config_overrides(
                 {},
                 is_distributed=True,
-                world_size=3,
-                global_world_size=4,
+                world_size=2,
+                global_world_size=3,
                 nnodes=2,
             )
 
@@ -176,14 +176,15 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         overrides = _build_model_config_overrides(
             {"dp": 1, "tp": 4},
             is_distributed=True,
-            world_size=4,
+            world_size=2,
             global_world_size=4,
             nnodes=2,
         )
 
+        self.assertEqual(overrides["worldSize"], 2)
         self.assertEqual(overrides["dp"], 2)
         self.assertEqual(overrides["tp"], 2)
-        self.assertEqual(overrides["worldSize"], overrides["dp"] * overrides["tp"])
+        self.assertEqual(4, overrides["dp"] * overrides["tp"])
 
     def test_export_commands_print_values_when_rendered(self):
         commands = _append_export_echoes([

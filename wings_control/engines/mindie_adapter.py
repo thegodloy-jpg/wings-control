@@ -1128,28 +1128,30 @@ def _inject_multinode_tp_dp(
     is_distributed: bool,
     nnodes: int,
     world_size: int,
+    global_world_size: int,
     overrides: Dict[str, Any],
 ) -> None:
     """MindIE 2.3.0 多节点必须显式设置 tp/dp，否则内部 DP 计算返回 0 触发 C++ 崩溃。
 
-    公式: ModelConfig.worldSize = TP × DP × PP
+    公式: globalWorldSize = TP × DP × PP
     """
-    if not (is_distributed and nnodes > 1 and world_size > 0):
+    if not (is_distributed and nnodes > 1 and global_world_size > 0):
         return
     effective_dp = nnodes
     # PP（流水线并行）优先从 engine_config 读取，默认为 1
     pp = int(engine_config.get("pp", 1) or 1)
-    if world_size % (effective_dp * pp) != 0:
+    if global_world_size % (effective_dp * pp) != 0:
         raise ValueError(
             "MindIE distributed parallel mismatch: "
-            f"worldSize={world_size} must be divisible by dp({effective_dp}) × pp({pp})"
+            f"globalWorldSize={global_world_size} must be divisible by dp({effective_dp}) × pp({pp})"
         )
-    effective_tp = world_size // (effective_dp * pp)
+    effective_tp = global_world_size // (effective_dp * pp)
     overrides["dp"] = effective_dp
     overrides["tp"] = effective_tp
     logger.info(
-        "[mindie] Multi-node: set dp=%d, tp=%d, pp=%d so worldSize=%d equals tp×dp×pp",
-        effective_dp, effective_tp, pp, world_size,
+        "[mindie] Multi-node: set dp=%d, tp=%d, pp=%d so globalWorldSize=%d equals tp×dp×pp "
+        "(config worldSize=%d)",
+        effective_dp, effective_tp, pp, global_world_size, world_size,
     )
 
 
@@ -1247,7 +1249,9 @@ def _build_model_config_overrides(
 
     _inject_moe_config(engine_config, world_size, overrides)
     _inject_parallel_passthrough(engine_config, overrides)
-    _inject_multinode_tp_dp(engine_config, is_distributed, nnodes, world_size, overrides)
+    _inject_multinode_tp_dp(
+        engine_config, is_distributed, nnodes, world_size, global_world_size, overrides
+    )
     _inject_mtp_plugin(engine_config, overrides)
     _inject_function_call_config(engine_config, overrides)
 
@@ -1560,14 +1564,14 @@ def build_start_script(params: Dict[str, Any]) -> str:
     model_deploy_overrides = _build_model_deploy_overrides(engine_config)
 
     # ── worldSize 语义修正 (多节点) ────────────────────────────────
-    # MindIE 分布式 config.json 中 ModelConfig.worldSize 使用全局芯片总数。
-    # dp 固定为节点数，tp 基于全局 worldSize 推导，确保 worldSize=dp×tp×pp。
+    # MindIE 分布式 config.json 中 ModelConfig.worldSize 使用当前节点芯片数。
+    # dp 固定为节点数，tp 基于全局芯片总数推导，确保 globalWorldSize=dp×tp×pp。
     global_world_size = engine_config.get(
         "worldSize",
         topology["global_world_size"] if topology else (8 if is_distributed else 1),
     )
     if topology and topology["nnodes"] > 1:
-        config_world_size = global_world_size
+        config_world_size = topology["device_count"]
     else:
         config_world_size = global_world_size
 
