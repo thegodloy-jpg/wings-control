@@ -1069,11 +1069,21 @@ def _build_server_overrides(
     is_distributed: bool,
     node_rank: int,
     nnodes: int,
+    current_node_ip: Optional[str] = None,
 ) -> Dict[str, Any]:
     """构建 MindIE ServerConfig 覆盖参数。"""
-    ip_address = "0.0.0.0" if (not is_distributed or node_rank == 0) else "127.0.0.1"
+    if is_distributed and nnodes > 1:
+        # MindIE 多节点要求每个节点的 ServerConfig.ipAddress 使用本节点 Pod IP。
+        # 不再把 rank0 改成 0.0.0.0、非 rank0 改成 127.0.0.1，避免 HCCL/服务间
+        # 初始化阶段拿到错误的节点地址。
+        ip_address = current_node_ip or engine_config.get(
+            "ipAddress",
+            "0.0.0.0" if node_rank == 0 else "127.0.0.1",
+        )
+    else:
+        ip_address = engine_config.get("ipAddress", "0.0.0.0")
     overrides: Dict[str, Any] = {
-        "ipAddress": engine_config.get("ipAddress", ip_address),
+        "ipAddress": ip_address,
         "port": engine_config.get("port", DEFAULT_SERVER_PORT),
         "httpsEnabled": engine_config.get("httpsEnabled", False),
         "inferMode": engine_config.get("inferMode", "standard"),
@@ -1535,7 +1545,13 @@ def build_start_script(params: Dict[str, Any]) -> str:
     npu_device_ids = _resolve_npu_device_ids(engine_config, is_distributed, local_device_count)
 
     # 构建各配置覆盖区块
-    server_overrides = _build_server_overrides(engine_config, is_distributed, node_rank, nnodes)
+    current_node_ip = None
+    if topology and topology["node_ips_list"] and node_rank < len(topology["node_ips_list"]):
+        current_node_ip = topology["node_ips_list"][node_rank]
+
+    server_overrides = _build_server_overrides(
+        engine_config, is_distributed, node_rank, nnodes, current_node_ip
+    )
     backend_overrides = _build_backend_overrides(engine_config, is_distributed, nnodes, npu_device_ids)
     model_deploy_overrides = _build_model_deploy_overrides(engine_config)
 

@@ -17,6 +17,7 @@ mindie_adapter = importlib.import_module("engines.mindie_adapter")
 _append_export_echoes = mindie_adapter._append_export_echoes
 _build_distributed_env_commands = mindie_adapter._build_distributed_env_commands
 _build_mindie_distributed_env_default_commands = mindie_adapter._build_mindie_distributed_env_default_commands
+_build_server_overrides = mindie_adapter._build_server_overrides
 
 
 class TestMindieDistributedEnvDefaults(unittest.TestCase):
@@ -84,6 +85,27 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertNotIn("HCCL_CONNECT_TIMEOUT", rendered)
         self.assertNotIn("HCCL_EXEC_TIMEOUT", rendered)
         self.assertIn("export RANK_TABLE_FILE=/shared-volume/hccl_ranktable.json", rendered)
+
+    def test_multinode_server_ip_uses_current_pod_ip(self):
+        overrides = _build_server_overrides(
+            {"ipAddress": "10.0.0.99"},
+            is_distributed=True,
+            node_rank=1,
+            nnodes=2,
+            current_node_ip="10.0.0.2",
+        )
+
+        self.assertEqual(overrides["ipAddress"], "10.0.0.2")
+
+    def test_multinode_server_ip_fallback_preserves_existing_value(self):
+        overrides = _build_server_overrides(
+            {"ipAddress": "10.0.0.99"},
+            is_distributed=True,
+            node_rank=1,
+            nnodes=2,
+        )
+
+        self.assertEqual(overrides["ipAddress"], "10.0.0.99")
 
     def test_export_commands_print_values_when_rendered(self):
         commands = _append_export_echoes([
