@@ -115,10 +115,8 @@
           "async_scheduler_wait_time": 120,
           "kv_trans_timeout": 10,
           "kv_link_timeout": 1080,
-          "tp": 16,
           "dp": 1,
-          "moe_tp": 1,
-          "moe_ep": 16,
+          "tp": 16,
           "models": {
             "deepseekv2": {
               "tool_call_options": {

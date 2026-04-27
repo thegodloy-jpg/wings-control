@@ -213,29 +213,6 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
             {"deepseekv2": {"tool_call_options": {"tool_call_parser": "deepseek_v31"}}},
         )
 
-    def test_deepseek_v31_moe_keeps_function_call_and_moe_parallel_fields(self):
-        overrides = _build_model_config_overrides(
-            {
-                "isMOE": True,
-                "mindie_model_type": "deepseekv2",
-                "mindie_tool_call_parser": "deepseek_v31",
-            },
-            is_distributed=True,
-            world_size=8,
-            global_world_size=16,
-            nnodes=2,
-        )
-
-        self.assertEqual(overrides["worldSize"], 8)
-        self.assertEqual(overrides["dp"], 1)
-        self.assertEqual(overrides["tp"], 16)
-        self.assertEqual(overrides["moe_tp"], 1)
-        self.assertEqual(overrides["moe_ep"], 16)
-        self.assertEqual(
-            overrides["models"],
-            {"deepseekv2": {"tool_call_options": {"tool_call_parser": "deepseek_v31"}}},
-        )
-
     def test_mindie_multinode_tp_is_global_world_size_and_dp_is_one(self):
         overrides = _build_model_config_overrides(
             {},

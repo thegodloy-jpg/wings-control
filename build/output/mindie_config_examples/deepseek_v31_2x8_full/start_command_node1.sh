@@ -119,10 +119,8 @@ cat > /tmp/_mindie_overrides.json << 'OVERRIDES_EOF'
     "cpuMemSize": 5,
     "npuMemSize": -1,
     "trustRemoteCode": true,
-    "tp": 16,
     "dp": 1,
-    "moe_tp": 1,
-    "moe_ep": 16,
+    "tp": 16,
     "models": {
       "deepseekv2": {
         "tool_call_options": {
