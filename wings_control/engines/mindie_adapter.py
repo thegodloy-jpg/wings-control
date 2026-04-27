@@ -1142,6 +1142,9 @@ def _inject_multinode_tp_dp(
     effective_tp = int(global_world_size)
     overrides["dp"] = effective_dp
     overrides["tp"] = effective_tp
+    if engine_config.get("isMOE", False):
+        overrides["moe_ep"] = int(global_world_size)
+        overrides["moe_tp"] = 1
     logger.info(
         "[mindie] Multi-node: set dp=%d, tp=%d from globalWorldSize=%d "
         "(config worldSize=%d is local device count)",

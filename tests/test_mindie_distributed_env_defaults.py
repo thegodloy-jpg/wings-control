@@ -94,6 +94,16 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.addCleanup(lambda: os.path.exists(tmp.name) and os.remove(tmp.name))
         return tmp.name
 
+    def test_service_template_optional_defaults_match_reference(self):
+        template = json.loads(
+            (ROOT / "wings_control" / "config" / "defaults" / "mindie_service_config.json")
+            .read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(template["ServerConfig"]["allowAllZeroIpListening"], False)
+        self.assertEqual(template["BackendConfig"]["multiNodesInferEnabled"], True)
+        self.assertEqual(template["BackendConfig"]["interNodeTLSEnabled"], False)
+
     def test_defaults_only_render_for_multinode_distributed(self):
         path = self._write_script('export OMP_NUM_THREADS="${OMP_NUM_THREADS:-10}"\n')
         env = {"MINDIE_DISTRIBUTED_ENV_SCRIPT_PATH": path}
@@ -319,8 +329,8 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(model_config["worldSize"], 8)
         self.assertEqual(model_config["tp"], 16)
         self.assertEqual(model_config["dp"], 1)
-        self.assertEqual(model_config["moe_tp"], 8)
-        self.assertEqual(model_config["moe_ep"], -1)
+        self.assertEqual(model_config["moe_tp"], 1)
+        self.assertEqual(model_config["moe_ep"], 16)
         self.assertNotIn("models", model_config)
 
     def test_export_commands_print_values_when_rendered(self):

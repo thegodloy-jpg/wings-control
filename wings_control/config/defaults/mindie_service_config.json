@@ -56,7 +56,7 @@
     "modelInstanceNumber": 1,
     "npuDeviceIds": [[0, 1]],
     "tokenizerProcessNumber": 8,
-    "multiNodesInferEnabled": false,
+    "multiNodesInferEnabled": true,
     "multiNodesInferPort": 1120,
     "interNodeTLSEnabled": false,
     "interNodeTlsCaPath": "security/grpc/ca/",
