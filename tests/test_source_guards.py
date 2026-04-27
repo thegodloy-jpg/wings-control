@@ -32,9 +32,32 @@ class TestSourceGuards(unittest.TestCase):
         self.assertIn("set +u", cmds)
         self.assertIn("set -u", cmds)
         self.assertIn("export NPU_MEMORY_FRACTION=0.96", cmds)
+        self.assertIn(
+            "wings_source_env_with_diff /usr/local/Ascend/mindie/set_env.sh "
+            "mindie/set_env.sh --backend=atb",
+            rendered,
+        )
+        self.assertIn(
+            "source /usr/local/Ascend/mindie/set_env.sh --backend=atb",
+            rendered,
+        )
         self.assertNotIn(
             f"source {mindie_adapter.root_dir}\\wings\\config\\set_mindie_single_env.sh",
             cmds,
+        )
+
+    def test_mindie_fallback_env_source_passes_backend_argument(self):
+        cmds = mindie_adapter._build_ascend_env_source_commands()
+
+        rendered = "\n".join(cmds)
+        self.assertIn(
+            "wings_source_env_with_diff /usr/local/Ascend/mindie/set_env.sh "
+            "mindie/set_env.sh --backend=atb",
+            rendered,
+        )
+        self.assertIn(
+            "source /usr/local/Ascend/mindie/set_env.sh --backend=atb",
+            rendered,
         )
 
     def test_vllm_qwen3next_bisheng_source_is_guarded_from_nounset(self):

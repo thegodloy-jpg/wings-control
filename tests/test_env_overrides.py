@@ -11,11 +11,19 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]  # wings-control/
 sys.path.insert(0, str(ROOT / "wings_control"))
 
-from core.wings_entry import _build_env_overrides_preamble  # noqa: E402
+from core.wings_entry import (  # noqa: E402
+    _build_env_echo_helpers_preamble,
+    _build_env_overrides_preamble,
+)
 from config.settings import settings  # noqa: E402
 
 
 class TestEnvOverridesPreamble(unittest.TestCase):
+    def test_source_env_helper_forwards_extra_arguments(self):
+        preamble = _build_env_echo_helpers_preamble()
+
+        self.assertIn("source \"$script_path\" \"$@\"", preamble)
+
     def test_shell_override_is_guarded_from_nounset(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             env_dir = Path(tmpdir)

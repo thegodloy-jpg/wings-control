@@ -19,7 +19,7 @@ import os
 import re
 import shlex
 import shutil
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +341,9 @@ def _append_export_echoes(commands: List[str]) -> List[str]:
     return rendered
 
 
-def _build_source_env_with_diff_command(script_path: str, label: str) -> str:
+def _build_source_env_with_diff_command(
+    script_path: str, label: str, source_args: Optional[List[str]] = None
+) -> str:
     """构建带环境差异打印的 source 命令。
 
     Args:
@@ -358,11 +360,13 @@ def _build_source_env_with_diff_command(script_path: str, label: str) -> str:
     """
     quoted_path = shlex.quote(script_path)
     quoted_label = shlex.quote(label)
+    quoted_args = " ".join(shlex.quote(arg) for arg in (source_args or []))
+    helper_args = f" {quoted_args}" if quoted_args else ""
     return (
         f"[ -f {quoted_path} ] && "
         "{ if command -v wings_source_env_with_diff >/dev/null 2>&1; then "
-        f"wings_source_env_with_diff {quoted_path} {quoted_label}; "
-        f"else source {quoted_path}; fi; }} "
+        f"wings_source_env_with_diff {quoted_path} {quoted_label}{helper_args}; "
+        f"else source {quoted_path}{helper_args}; fi; }} "
         f"|| echo 'WARN: {label} not found'"
     )
 
@@ -381,7 +385,7 @@ def _build_ascend_env_source_commands() -> List[str]:
         "/usr/local/Ascend/ascend-toolkit/set_env.sh", "ascend-toolkit/set_env.sh"
     ))
     cmds.append(_build_source_env_with_diff_command(
-        "/usr/local/Ascend/mindie/set_env.sh", "mindie/set_env.sh"
+        "/usr/local/Ascend/mindie/set_env.sh", "mindie/set_env.sh", ["--backend=atb"]
     ))
     cmds.append(_build_source_env_with_diff_command(
         "/usr/local/Ascend/atb-models/set_env.sh", "atb-models/set_env.sh"

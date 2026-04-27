@@ -822,6 +822,11 @@ def _build_env_echo_helpers_preamble() -> str:
 wings_source_env_with_diff() {
     local script_path="$1"
     local label="${2:-$1}"
+    if [ "$#" -ge 2 ]; then
+        shift 2
+    else
+        shift 1
+    fi
     if [ ! -f "$script_path" ]; then
         echo "[wings-env-source] WARN: $label not found: $script_path"
         return 0
@@ -834,7 +839,7 @@ wings_source_env_with_diff() {
 
     set +u
     # shellcheck disable=SC1090
-    source "$script_path"
+    source "$script_path" "$@"
     local source_rc=$?
     set -u
 
