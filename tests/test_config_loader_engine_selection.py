@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]  # wings-control/
 sys.path.insert(0, str(ROOT / "wings_control"))
 
 from core.config_loader import (  # noqa: E402
+    _detect_mtp_moe_features,
     _select_ascend_engine,
     _select_nvidia_engine,
     _validate_user_engine,
@@ -49,6 +50,20 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         with patch.dict(os.environ, {"LMCACHE_OFFLOAD": "true"}, clear=False):
             engine = _validate_user_engine("mindie", "Ascend910B", "full", model_info)
         self.assertEqual(engine, "mindie")
+
+    def test_mindie_moe_requires_enable_ep_moe(self):
+        params = {"enable_ep_moe": False}
+
+        _detect_mtp_moe_features({"model_name": "deepseek-r1-671b"}, params)
+
+        self.assertEqual(params["isMOE"], False)
+
+    def test_mindie_moe_enabled_by_enable_ep_moe(self):
+        params = {"enable_ep_moe": True}
+
+        _detect_mtp_moe_features({"model_name": "Qwen3-32B"}, params)
+
+        self.assertEqual(params["isMOE"], True)
 
 
 if __name__ == "__main__":

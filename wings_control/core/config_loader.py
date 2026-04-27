@@ -903,9 +903,7 @@ def _detect_mtp_moe_features(engine_cmd_parameter: Dict[str, Any],
     if model_path and os.path.exists(model_path):
         mtp_file = os.path.join(model_path, "mtp.safetensors")
         is_mtp = os.path.exists(mtp_file)
-    moe_models = ["deepseek-r1-671b"]
-    model_name = engine_cmd_parameter.get("model_name")
-    if (model_name and model_name.lower() in moe_models) or params.get("enable_ep_moe"):
+    if params.get("enable_ep_moe"):
         is_moe = True
     params.update({'isMTP': is_mtp, 'isMOE': is_moe})
 
