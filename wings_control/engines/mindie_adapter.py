@@ -48,7 +48,8 @@ MINDIE_CONFIG_PATH: str = os.getenv(
 DEFAULT_RANK_TABLE_PATH = "/workspace/rank_table_all.json"
 
 # 默认端口配置
-DEFAULT_SERVER_PORT = 18000              # MindIE HTTP API 端口
+# MindIE backend 监听端口；与 PortPlan 的 ENGINE_PORT 默认值保持一致。
+DEFAULT_SERVER_PORT = int(os.getenv("ENGINE_PORT", "17000"))
 DEFAULT_MINDIE_MASTER_PORT = int(os.getenv("MINDIE_MASTER_PORT", "27070"))  # 分布式主节点端口
 DEFAULT_HCCL_IP_EXCHANGE_PORT = int(os.getenv("HCCL_IP_EXCHANGE_PORT", "27071"))  # hccnX IP 交换端口
 MINDIE_DISTRIBUTED_ENV_DEFAULTS_FILENAME = "mindie_distributed_env.sh"
@@ -1202,6 +1203,13 @@ def _inject_function_call_config(engine_config: Dict[str, Any], overrides: Dict[
     mindie_tool_call_parser = engine_config.get("mindie_tool_call_parser")
     mindie_model_type = engine_config.get("mindie_model_type")
     if not (mindie_tool_call_parser and mindie_model_type):
+        return
+    if mindie_tool_call_parser != "deepseek_v31":
+        logger.info(
+            "[mindie] Skip Function Call config injection for parser=%s; "
+            "MindIE config.json should not add tool_call_options except DeepSeek-V3.1",
+            mindie_tool_call_parser,
+        )
         return
     model_entry: Dict[str, Any] = {
         "tool_call_options": {"tool_call_parser": mindie_tool_call_parser},

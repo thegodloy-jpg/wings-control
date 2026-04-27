@@ -17,6 +17,7 @@ mindie_adapter = importlib.import_module("engines.mindie_adapter")
 _append_export_echoes = mindie_adapter._append_export_echoes
 _build_distributed_env_commands = mindie_adapter._build_distributed_env_commands
 _build_mindie_distributed_env_default_commands = mindie_adapter._build_mindie_distributed_env_default_commands
+_build_model_config_overrides = mindie_adapter._build_model_config_overrides
 _build_server_overrides = mindie_adapter._build_server_overrides
 
 
@@ -107,6 +108,32 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         )
 
         self.assertEqual(overrides["ipAddress"], "10.0.0.1")
+
+    def test_mindie_server_port_defaults_to_backend_port(self):
+        overrides = _build_server_overrides({}, is_distributed=True, node_rank=1, nnodes=2)
+
+        self.assertEqual(overrides["port"], 17000)
+
+    def test_mindie_function_call_skips_non_deepseek_v31(self):
+        overrides = _build_model_config_overrides(
+            {"mindie_model_type": "qwen3", "mindie_tool_call_parser": "qwen3"},
+            is_distributed=True,
+            world_size=2,
+        )
+
+        self.assertNotIn("models", overrides)
+
+    def test_mindie_function_call_keeps_deepseek_v31(self):
+        overrides = _build_model_config_overrides(
+            {"mindie_model_type": "deepseekv2", "mindie_tool_call_parser": "deepseek_v31"},
+            is_distributed=True,
+            world_size=2,
+        )
+
+        self.assertEqual(
+            overrides["models"],
+            {"deepseekv2": {"tool_call_options": {"tool_call_parser": "deepseek_v31"}}},
+        )
 
     def test_export_commands_print_values_when_rendered(self):
         commands = _append_export_echoes([
