@@ -1051,9 +1051,10 @@ def _inject_multinode_tp_dp(
 ) -> None:
     """MindIE 2.3.0 多节点必须显式设置本节点 tp/dp，否则内部 DP 计算返回 0。
 
-    多节点场景中，config.json 的 ``worldSize`` 与 ``tp`` 均按本节点可见
-    NPU 数量设置；全局总 rank 数通过 ``MINDIE_MODEL_WORLD_SIZE`` 与 rank
-    table 传递，避免 MindIE 在容器内按全局 TP 访问不存在的本地 device id。
+    多节点场景中，config.json 的 ``worldSize`` 与自动 ``tp`` 均按本节点
+    可见 NPU 数量设置，避免 MindIE 在容器内按全局 TP 访问不存在的本地
+    device id；自动 ``dp`` 则补齐跨节点并行倍数，满足
+    ``global_world_size = tp × dp × pp``。
     """
     if not (is_distributed and nnodes > 1 and local_world_size > 0):
         return
@@ -1061,7 +1062,8 @@ def _inject_multinode_tp_dp(
     pp = int(engine_config.get("pp", 1) or 1)
     effective_tp = local_world_size // pp if pp > 1 else local_world_size
     effective_tp = max(1, effective_tp)
-    effective_dp = 1
+    parallel_unit = effective_tp * pp
+    effective_dp = max(1, global_world_size // parallel_unit) if parallel_unit > 0 else 1
     if engine_config.get("tp") is None:
         overrides["tp"] = effective_tp
         if pp > 1:
@@ -1078,7 +1080,11 @@ def _inject_multinode_tp_dp(
             )
     if engine_config.get("dp") is None:
         overrides["dp"] = effective_dp
-        logger.info("[mindie] Multi-node: auto-set dp=%d", effective_dp)
+        logger.info(
+            "[mindie] Multi-node: auto-set dp=%d "
+            "(globalWorldSize=%d / (tp=%d × pp=%d))",
+            effective_dp, global_world_size, effective_tp, pp,
+        )
 
 
 def _inject_moe_config(

@@ -109,7 +109,7 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
 
         self.assertEqual(overrides["worldSize"], 2)
         self.assertEqual(overrides["tp"], 2)
-        self.assertEqual(overrides["dp"], 1)
+        self.assertEqual(overrides["dp"], 2)
 
 
 if __name__ == "__main__":
