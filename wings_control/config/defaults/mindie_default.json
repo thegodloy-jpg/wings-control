@@ -22,9 +22,9 @@
   "httpsEnabled": false,
   "inferMode": "standard",
   "openAiSupport": "vllm",
-  "tokenTimeout": 600,
-  "e2eTimeout": 600,
-  "allowAllZeroIpListening": true,
+  "tokenTimeout": 3600,
+  "e2eTimeout": 65535,
+  "allowAllZeroIpListening": false,
   "cpuMemSize": 5,
   "npuMemSize": -1
 }

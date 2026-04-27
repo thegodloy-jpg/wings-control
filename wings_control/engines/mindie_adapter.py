@@ -1086,9 +1086,9 @@ def _build_server_overrides(
         "httpsEnabled": engine_config.get("httpsEnabled", False),
         "inferMode": engine_config.get("inferMode", "standard"),
         "openAiSupport": engine_config.get("openAiSupport", "vllm"),
-        "tokenTimeout": engine_config.get("tokenTimeout", 600),
-        "e2eTimeout": engine_config.get("e2eTimeout", 600),
-        "allowAllZeroIpListening": engine_config.get("allowAllZeroIpListening", True),
+        "tokenTimeout": engine_config.get("tokenTimeout", 3600),
+        "e2eTimeout": engine_config.get("e2eTimeout", 65535),
+        "allowAllZeroIpListening": engine_config.get("allowAllZeroIpListening", False),
     }
     if is_distributed and nnodes > 1:
         overrides["interCommTLSEnabled"] = engine_config.get("interCommTLSEnabled", False)

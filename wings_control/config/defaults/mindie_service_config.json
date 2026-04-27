@@ -10,7 +10,7 @@
     "port": 18000,
     "managementPort": 1026,
     "metricsPort": 1027,
-    "allowAllZeroIpListening": true,
+    "allowAllZeroIpListening": false,
     "maxLinkNum": 1000,
     "httpsEnabled": false,
     "fullTextEnabled": false,
@@ -46,8 +46,8 @@
     "interCommTlsCrlPath": "security/grpc/certs/",
     "interCommTlsCrlFiles": ["server_crl.pem"],
     "openAiSupport": "vllm",
-    "tokenTimeout": 600,
-    "e2eTimeout": 600,
+    "tokenTimeout": 3600,
+    "e2eTimeout": 65535,
     "distDPServerEnabled": false
   },
 

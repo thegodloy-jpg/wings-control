@@ -178,6 +178,9 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         overrides = _build_server_overrides({}, is_distributed=True, node_rank=1, nnodes=2)
 
         self.assertEqual(overrides["port"], 17000)
+        self.assertEqual(overrides["allowAllZeroIpListening"], False)
+        self.assertEqual(overrides["tokenTimeout"], 3600)
+        self.assertEqual(overrides["e2eTimeout"], 65535)
 
     def test_mindie_function_call_skips_non_deepseek_v31(self):
         overrides = _build_model_config_overrides(
@@ -258,8 +261,12 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(node0, node1)
         self.assertEqual(node0["ServerConfig"]["ipAddress"], "112.254.176.114")
         self.assertEqual(node0["ServerConfig"]["port"], 17000)
+        self.assertEqual(node0["ServerConfig"]["allowAllZeroIpListening"], False)
+        self.assertEqual(node0["ServerConfig"]["tokenTimeout"], 3600)
+        self.assertEqual(node0["ServerConfig"]["e2eTimeout"], 65535)
         self.assertEqual(node0["BackendConfig"]["npuDeviceIds"], [[0, 1]])
         self.assertEqual(node0["BackendConfig"]["multiNodesInferEnabled"], True)
+        self.assertEqual(node0["BackendConfig"]["interNodeTLSEnabled"], False)
 
         model_config = node0["BackendConfig"]["ModelDeployConfig"]["ModelConfig"][0]
         self.assertEqual(model_config["modelName"], "Qwen3-32B")
