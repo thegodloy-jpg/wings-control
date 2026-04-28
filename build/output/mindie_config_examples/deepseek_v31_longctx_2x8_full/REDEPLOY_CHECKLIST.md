@@ -221,7 +221,7 @@ export HCCL_DEVICE_IPS='192.168.100.10;192.168.101.10'
 export HCCL_DEVICE_IPS='192.168.100.10,192.168.100.11,192.168.100.12,192.168.100.13,192.168.100.14,192.168.100.15,192.168.100.16,192.168.100.17;192.168.101.10,192.168.101.11,192.168.101.12,192.168.101.13,192.168.101.14,192.168.101.15,192.168.101.16,192.168.101.17'
 ```
 
-本目录提供 `910b_hccl_env_override.env` 模板。可通过 env override ConfigMap 注入到 `wings_control/config/env_overrides/*.env` 或 `*.sh`。新脚本会打印：
+本目录提供 `910b_hccl_env_override.env` 模板，并提供 `910b_hccl_env_override_configmap.yaml` 作为 Kubernetes 挂载示例。可通过 env override ConfigMap 注入到 `wings_control/config/env_overrides/*.env` 或 `*.sh`。新脚本会打印：
 
 ```text
 [mindie] Updated N rank table device_ip value(s) from HCCL_DEVICE_IPS

@@ -1,0 +1,44 @@
+# 910B dual-node HCCL env override ConfigMap template
+#
+# Replace namespace, Pod workload names, and HCCL_DEVICE_IPS before applying.
+# This ConfigMap should be mounted into the wings-control container at:
+#   /opt/wings-control/wings_control/config/env_overrides/910b_hccl.env
+#
+# Keep the HCCL_DEVICE_IPS value identical on both nodes. The generated
+# start_command.sh uses RANK to select the current node's IP group.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mindie-910b-hccl-env
+  namespace: namespace-0
+data:
+  910b_hccl.env: |
+    # Single-card dual-node example. Replace both placeholders with real 910B hccn/RDMA IPs.
+    HCCL_DEVICE_IPS=node0_card0_hccn_ip;node1_card0_hccn_ip
+
+    # Two-node x 8-card example. Uncomment and replace when running 2x8.
+    # HCCL_DEVICE_IPS=node0_card0_hccn_ip,node0_card1_hccn_ip,node0_card2_hccn_ip,node0_card3_hccn_ip,node0_card4_hccn_ip,node0_card5_hccn_ip,node0_card6_hccn_ip,node0_card7_hccn_ip;node1_card0_hccn_ip,node1_card1_hccn_ip,node1_card2_hccn_ip,node1_card3_hccn_ip,node1_card4_hccn_ip,node1_card5_hccn_ip,node1_card6_hccn_ip,node1_card7_hccn_ip
+
+    # Optional: enable for one diagnostic run only.
+    # ASCEND_GLOBAL_LOG_LEVEL=3
+    # ASCEND_SLOG_PRINT_TO_STDOUT=1
+
+---
+# Patch the workload spec manually or merge the following fragment into the
+# template that creates the wings-control container.
+#
+# spec:
+#   template:
+#     spec:
+#       volumes:
+#         - name: mindie-910b-hccl-env
+#           configMap:
+#             name: mindie-910b-hccl-env
+#       containers:
+#         - name: wings-control
+#           volumeMounts:
+#             - name: mindie-910b-hccl-env
+#               mountPath: /opt/wings-control/wings_control/config/env_overrides/910b_hccl.env
+#               subPath: 910b_hccl.env
+#               readOnly: true

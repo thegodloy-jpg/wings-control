@@ -17,6 +17,7 @@ Generated start scripts:
 - config.json
 - REDEPLOY_CHECKLIST.md
 - 910b_hccl_env_override.env
+- 910b_hccl_env_override_configmap.yaml
 
 Use `REDEPLOY_CHECKLIST.md` to verify the live Pod is not still running an old
 start script or ConfigMap. In this long-context scenario, the final MindIE
@@ -25,3 +26,5 @@ config must keep `dp/tp/sp/cp = 1/8/8/2` and should only print
 
 Use `910b_hccl_env_override.env` as a template when 910B dual-node HCCL group
 creation fails and the rank table needs real hccn/RDMA device IPs.
+Use `910b_hccl_env_override_configmap.yaml` as a Kubernetes mounting example
+for injecting that env override into the `wings-control` container.
