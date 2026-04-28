@@ -20,6 +20,7 @@ _build_distributed_env_commands = mindie_adapter._build_distributed_env_commands
 _build_mindie_distributed_env_default_commands = mindie_adapter._build_mindie_distributed_env_default_commands
 _build_model_config_overrides = mindie_adapter._build_model_config_overrides
 _build_server_overrides = mindie_adapter._build_server_overrides
+_collect_extra_overrides = mindie_adapter._collect_extra_overrides
 _drop_redundant_default_export_commands = mindie_adapter._drop_redundant_default_export_commands
 
 
@@ -104,6 +105,11 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(template["ServerConfig"]["allowAllZeroIpListening"], False)
         self.assertEqual(template["BackendConfig"]["multiNodesInferEnabled"], True)
         self.assertEqual(template["BackendConfig"]["interNodeTLSEnabled"], False)
+
+    def test_enable_ep_moe_is_root_passthrough_key(self):
+        extra = _collect_extra_overrides({"enable_ep_moe": True})
+
+        self.assertEqual(extra, {"enable_ep_moe": True})
 
     def test_defaults_only_render_for_multinode_distributed(self):
         path = self._write_script('export OMP_NUM_THREADS="${OMP_NUM_THREADS:-10}"\n')

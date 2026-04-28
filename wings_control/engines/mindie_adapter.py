@@ -1484,6 +1484,8 @@ _MINDIE_SAFE_PASSTHROUGH_KEYS: frozenset = frozenset({
     # 其他 MindIE 已知合法根键
     "enableLogits", "enablePromptLogprobs",
     "enablePrefill", "enableDecode",
+    # MoE expert parallel root switch (present in MindIE service config template)
+    "enable_ep_moe",
     "pp",
 })
 
