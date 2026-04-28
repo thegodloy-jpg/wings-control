@@ -68,24 +68,42 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
     def test_mindie_deepseek_long_context_triggers_cpsp_defaults(self):
         params = {}
-        ctx = {"distributed": True}
+        ctx = {
+            "distributed": True,
+            "nnodes": 2,
+            "node_ips": "10.0.0.1,10.0.0.2",
+            "device_count": 8,
+        }
         engine_cmd_parameter = {"input_length": 8192, "output_length": 1}
         model_info = _FakeModelInfo(architecture="DeepseekV3ForCausalLM")
-        env = {
-            "MINDIE_LONG_CONTEXT_THRESHOLD": "8192",
-            "MINDIE_DS_DP": "1",
-            "MINDIE_DS_SP": "8",
-            "MINDIE_DS_CP": "2",
-            "MINDIE_DS_TP": "2",
-        }
+        env = {"MINDIE_LONG_CONTEXT_THRESHOLD": "8192"}
 
-        with patch.dict(os.environ, env, clear=False):
+        with patch.dict(os.environ, env, clear=True):
             _apply_us8_long_ctx_strategy(params, ctx, engine_cmd_parameter, model_info)
 
         self.assertEqual(params["dp"], 1)
         self.assertEqual(params["sp"], 8)
         self.assertEqual(params["cp"], 2)
-        self.assertEqual(params["tp"], 2)
+        self.assertEqual(params["tp"], 8)
+
+    def test_mindie_deepseek_long_context_2x16_derives_sp_from_tp(self):
+        params = {}
+        ctx = {
+            "distributed": True,
+            "nnodes": 2,
+            "node_ips": "10.0.0.1,10.0.0.2",
+            "device_count": 16,
+        }
+        engine_cmd_parameter = {"input_length": 8192, "output_length": 1}
+        model_info = _FakeModelInfo(architecture="DeepseekV3ForCausalLM")
+
+        with patch.dict(os.environ, {"MINDIE_LONG_CONTEXT_THRESHOLD": "8192"}, clear=True):
+            _apply_us8_long_ctx_strategy(params, ctx, engine_cmd_parameter, model_info)
+
+        self.assertEqual(params["dp"], 1)
+        self.assertEqual(params["sp"], 16)
+        self.assertEqual(params["cp"], 2)
+        self.assertEqual(params["tp"], 16)
 
     def test_mindie_deepseek_short_context_does_not_trigger_cpsp(self):
         params = {}

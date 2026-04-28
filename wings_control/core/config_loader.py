@@ -929,10 +929,13 @@ def _apply_us8_long_ctx_strategy(params: Dict[str, Any],
             except (ValueError, TypeError):
                 logger.warning("Invalid %s=%r, using default %s", name, val, default)
                 return int(default)
+        nnodes_actual = _resolve_distributed_node_count(ctx.get("node_ips"), ctx.get("nnodes"))
+        global_world_size = int(ctx.get("device_count", 1) or 1) * nnodes_actual
         params['dp'] = _safe_int_env("MINDIE_DS_DP", "1")
-        params['sp'] = _safe_int_env("MINDIE_DS_SP", "8")
         params['cp'] = _safe_int_env("MINDIE_DS_CP", "2")
-        params['tp'] = _safe_int_env("MINDIE_DS_TP", "2")
+        tp_default = max(1, global_world_size // max(1, params['dp'] * params['cp']))
+        params['tp'] = _safe_int_env("MINDIE_DS_TP", str(tp_default))
+        params['sp'] = _safe_int_env("MINDIE_DS_SP", str(params['tp']))
         logger.info(
             "[US8] DeepSeek long-context enabled (seq=%d > %d): "
             "dp=%d, sp=%d, cp=%d, tp=%d",

@@ -1162,12 +1162,29 @@ def _inject_multinode_tp_dp(
     """MindIE 2.3.0 多节点必须显式设置 tp/dp，否则内部 DP 计算返回 0 触发 C++ 崩溃。
 
     多节点服务化场景沿用社区常见配置：ModelConfig.worldSize 保持本节点
-    可见 NPU 数，跨节点模型并行由全局 TP 承载，DP 固定为 1。
+    可见 NPU 数。普通多节点模型由全局 TP 承载，DP 固定为 1；CP/SP
+    场景遵循 CP * DP * TP = globalWorldSize 且 SP = TP。
     """
     if not (is_distributed and nnodes > 1 and global_world_size > 0):
         return
-    effective_dp = 1
-    effective_tp = int(global_world_size)
+    effective_dp = int(overrides.get("dp", 1) or 1)
+    effective_cp = int(overrides.get("cp", 0) or 0)
+    if effective_cp > 0:
+        divisor = max(1, effective_dp * effective_cp)
+        if global_world_size % divisor != 0:
+            logger.warning(
+                "[mindie] CP/SP parallelism mismatch: globalWorldSize=%d is not divisible by dp=%d * cp=%d; "
+                "fallback to tp=globalWorldSize",
+                global_world_size, effective_dp, effective_cp,
+            )
+            effective_tp = int(global_world_size)
+        else:
+            effective_tp = int(global_world_size // divisor)
+        overrides["cp"] = effective_cp
+        overrides["sp"] = effective_tp
+    else:
+        effective_dp = 1
+        effective_tp = int(global_world_size)
     overrides["dp"] = effective_dp
     overrides["tp"] = effective_tp
     if engine_config.get("isMOE", False):
