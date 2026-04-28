@@ -5,10 +5,11 @@
 ## 1. 代码版本
 
 - 最新修复提交应至少包含：
+  - `44342d6 Skip implicit MindIE GPU memory default`
   - `de0462c Remove MindIE default NPU memory override`
   - `772c8b8 Add DeepSeek V3.1 long-context start scripts`
   - `46ccc08 Align MindIE CP SP parallel defaults`
-- 如果部署镜像内能看到源码，确认仓库 HEAD 不早于 `de0462c`。
+- 如果部署镜像内能看到源码，确认仓库 HEAD 不早于 `44342d6`。
 
 ## 2. 启动脚本来源
 
