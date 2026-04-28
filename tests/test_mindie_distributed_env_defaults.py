@@ -131,6 +131,12 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
 
         self.assertIn('export OMP_NUM_THREADS="${OMP_NUM_THREADS:-10}"', commands)
 
+    def test_distributed_defaults_do_not_override_npu_memory_fraction(self):
+        commands = _build_mindie_distributed_env_default_commands({"distributed": True, "nnodes": 2})
+
+        rendered = "\n".join(commands)
+        self.assertNotIn("NPU_MEMORY_FRACTION", rendered)
+
     def test_dynamic_topology_keys_are_not_rendered_from_defaults(self):
         path = self._write_script("\n".join([
             "export RANK=9",

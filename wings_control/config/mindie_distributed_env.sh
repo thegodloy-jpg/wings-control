@@ -2,7 +2,6 @@
 # 保持仅包含 export 命令；adapter 会将这些命令内联到 start_command.sh。
 
 export PYTORCH_NPU_ALLOC_CONF="${PYTORCH_NPU_ALLOC_CONF:-expandable_segments:True}"
-export NPU_MEMORY_FRACTION="${NPU_MEMORY_FRACTION:-0.9}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-10}"
 export HCCL_DETERMINISTIC="${HCCL_DETERMINISTIC:-false}"
 export HCCL_OP_EXPANSION_MODE="${HCCL_OP_EXPANSION_MODE:-AIV}"
