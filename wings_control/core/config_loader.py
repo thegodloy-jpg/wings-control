@@ -1015,6 +1015,13 @@ def _set_mindie_common_params(params, engine_cmd_parameter):
         # 用户显式设置的参数（CLI 或环境变量）：始终覆盖
         if key in explicit_keys:
             params[value] = cli_val
+        # MindIE 的 NPU_MEMORY_FRACTION 默认值由 set_mindie_env.sh 统一提供。
+        # argparse 的 gpu_memory_utilization 默认值是 0.9；如果在这里按“缺省补充”
+        # 翻译成 npu_memory_fraction，会在启动脚本中把 set_mindie_env.sh 的 0.96
+        # 二次覆盖成 0.9。只有用户显式传入 --gpu-memory-utilization 或
+        # GPU_MEMORY_UTILIZATION 时，才允许覆盖 MindIE 默认值。
+        elif key == "gpu_memory_utilization" and value == "npu_memory_fraction":
+            continue
         # 模型默认配置中不存在的参数：用 argparse 默认值补充
         elif value not in params:
             params[value] = cli_val

@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "wings_control"))
 from core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
     _detect_mtp_moe_features,
+    _set_mindie_common_params,
     _select_ascend_engine,
     _select_nvidia_engine,
     _validate_user_engine,
@@ -65,6 +66,26 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         _detect_mtp_moe_features({"model_name": "Qwen3-32B"}, params)
 
         self.assertEqual(params["isMOE"], True)
+
+    def test_mindie_implicit_gpu_memory_default_does_not_set_npu_fraction(self):
+        params = {}
+        engine_cmd_parameter = {"gpu_memory_utilization": 0.9}
+
+        with patch.object(sys, "argv", ["wings-launcher-v4"]):
+            with patch.dict(os.environ, {}, clear=True):
+                _set_mindie_common_params(params, engine_cmd_parameter)
+
+        self.assertNotIn("npu_memory_fraction", params)
+
+    def test_mindie_explicit_gpu_memory_can_set_npu_fraction(self):
+        params = {}
+        engine_cmd_parameter = {"gpu_memory_utilization": 0.95}
+
+        with patch.object(sys, "argv", ["wings-launcher-v4", "--gpu-memory-utilization", "0.95"]):
+            with patch.dict(os.environ, {}, clear=True):
+                _set_mindie_common_params(params, engine_cmd_parameter)
+
+        self.assertEqual(params["npu_memory_fraction"], 0.95)
 
     def test_mindie_deepseek_long_context_triggers_cpsp_defaults(self):
         params = {}

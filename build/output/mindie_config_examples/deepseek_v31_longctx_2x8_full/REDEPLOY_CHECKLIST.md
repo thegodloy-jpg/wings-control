@@ -51,6 +51,7 @@
 
 如果仍看到 `0.9`，优先检查 Pod 是否仍挂载旧 `start_command.sh` 或旧 ConfigMap。
 如果看到 `0.8`，优先检查镜像内源码是否未包含 `de0462c`。
+如果现场显式设置了 `GPU_MEMORY_UTILIZATION` 或 `--gpu-memory-utilization`，则会按用户显式值覆盖 `0.96`；未显式设置时不应由 argparse 默认值 `0.9` 自动覆盖。
 
 ## 5. 分布式环境关键字段
 
