@@ -137,6 +137,14 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         rendered = "\n".join(commands)
         self.assertNotIn("NPU_MEMORY_FRACTION", rendered)
 
+    def test_mindie_engine_defaults_do_not_override_npu_memory_fraction(self):
+        defaults = json.loads(
+            (ROOT / "wings_control" / "config" / "defaults" / "mindie_default.json")
+            .read_text(encoding="utf-8")
+        )
+
+        self.assertNotIn("npu_memory_fraction", defaults)
+
     def test_dynamic_topology_keys_are_not_rendered_from_defaults(self):
         path = self._write_script("\n".join([
             "export RANK=9",

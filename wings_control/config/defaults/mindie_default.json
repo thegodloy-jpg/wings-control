@@ -2,7 +2,6 @@
   "maxInputTokenLen": 2048,
   "maxIterTimes": 2048,
   "trustRemoteCode": true,
-  "npu_memory_fraction": 0.8,
   "cacheBlockSize": 16,
   "maxBatchSize": 256,
   "maxPrefillBatchSize": 50,

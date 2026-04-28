@@ -50,8 +50,6 @@ printf '[mindie-env] RANK_TABLE_FILE=%s\n' "${RANK_TABLE_FILE:-}"
 # 保持仅包含 export 命令；adapter 会将这些命令内联到 start_command.sh。
 export PYTORCH_NPU_ALLOC_CONF="${PYTORCH_NPU_ALLOC_CONF:-expandable_segments:True}"
 printf '[mindie-env] PYTORCH_NPU_ALLOC_CONF=%s\n' "${PYTORCH_NPU_ALLOC_CONF:-}"
-export NPU_MEMORY_FRACTION="${NPU_MEMORY_FRACTION:-0.9}"
-printf '[mindie-env] NPU_MEMORY_FRACTION=%s\n' "${NPU_MEMORY_FRACTION:-}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-10}"
 printf '[mindie-env] OMP_NUM_THREADS=%s\n' "${OMP_NUM_THREADS:-}"
 export HCCL_DETERMINISTIC="${HCCL_DETERMINISTIC:-false}"
