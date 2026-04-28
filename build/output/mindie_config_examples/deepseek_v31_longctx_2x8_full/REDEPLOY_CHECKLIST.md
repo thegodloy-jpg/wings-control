@@ -166,3 +166,79 @@ kubectl -n "$NS" logs "$POD1" -c "$ENGINE_CONTAINER" --tail=500 | grep -Ei 'mind
 2. 重新生成或更新挂载 start script 的 ConfigMap。
 3. 删除或滚动重启两个 Pod，确保共享卷中的 `/shared-volume/start_command.sh` 重新生成。
 4. 重启后先检查 `/shared-volume/start_command.sh`，再看 MindIE 最终 `config.json` 和 engine 日志。
+
+## 9. 910B 双机 HCCL 建组失败专项检查
+
+如果 engine 日志报：
+
+```text
+External Comm Manager: Create the hccl communication group failed
+```
+
+优先按 910B HCCN/RDMA 网络排查，而不是先怀疑 MindIE config 的 `tp/dp`。910B 双机通常比 910C 更依赖正确的 HCCN device IP 和 `/etc/hccn.conf` 挂载。
+
+### 9.1 必查现象
+
+从日志中确认以下字段：
+
+- `WORLD_SIZE` 是否等于全局 rank 数。
+- `RANK` 在两个节点是否分别为 `0` 和 `1`。
+- `RANK_TABLE_FILE` 是否两个节点都指向 `/shared-volume/hccl_ranktable.json`。
+- rank table 中每个 `device_ip` 是否为 HCCN/RDMA IP，而不是 Pod IP、宿主业务 IP、`server_id` 或 `container_ip`。
+- engine 容器内是否能看到 `/etc/hccn.conf`。
+
+### 9.2 直接检查 rank table 和 hccn
+
+```bash
+kubectl -n "$NS" exec "$POD0" -c "$ENGINE_CONTAINER" -- sh -lc \
+  'cat /shared-volume/hccl_ranktable.json; echo; cat /etc/hccn.conf 2>/dev/null || true; ip -o -4 addr show | grep -E "hccn|eth|bond|en|ib" || true'
+
+kubectl -n "$NS" exec "$POD1" -c "$ENGINE_CONTAINER" -- sh -lc \
+  'cat /shared-volume/hccl_ranktable.json; echo; cat /etc/hccn.conf 2>/dev/null || true; ip -o -4 addr show | grep -E "hccn|eth|bond|en|ib" || true'
+```
+
+如果 rank table 的 `device_ip` 等于 `112.x.x.x` 这类业务网络 IP，而不是 hccn/RDMA IP，910B 上很容易在 ATB warmup 阶段建 HCCL group 失败。
+
+### 9.3 用 HCCL_DEVICE_IPS 强制覆盖 rank table device_ip
+
+新版本启动脚本支持通过 `HCCL_DEVICE_IPS` 在 engine 容器内覆盖 rank table 的 `device_ip`。格式：
+
+```bash
+export HCCL_DEVICE_IPS='node0_card0_hccn_ip,node0_card1_hccn_ip;node1_card0_hccn_ip,node1_card1_hccn_ip'
+```
+
+单卡双机场景示例：
+
+```bash
+export HCCL_DEVICE_IPS='192.168.100.10;192.168.101.10'
+```
+
+两机八卡示例：
+
+```bash
+export HCCL_DEVICE_IPS='192.168.100.10,192.168.100.11,192.168.100.12,192.168.100.13,192.168.100.14,192.168.100.15,192.168.100.16,192.168.100.17;192.168.101.10,192.168.101.11,192.168.101.12,192.168.101.13,192.168.101.14,192.168.101.15,192.168.101.16,192.168.101.17'
+```
+
+可通过 env override ConfigMap 注入到 `wings_control/config/env_overrides/*.env` 或 `*.sh`。新脚本会打印：
+
+```text
+[mindie] Updated N rank table device_ip value(s) from HCCL_DEVICE_IPS
+```
+
+### 9.4 保留显式 HCCL_IF_IP / HCCL_SOCKET_IFNAME
+
+新版本启动脚本不会再强行覆盖用户显式设置的：
+
+- `HCCL_IF_IP`
+- `HCCL_SOCKET_IFNAME`
+- `GLOO_SOCKET_IFNAME`
+
+如果 910B 环境要求指定 HCCN 网卡或 RDMA 网卡，可通过 env override 显式注入。
+
+### 9.5 与当前日志对应的判断
+
+当前日志中出现：
+
+- `NPU_MEMORY_FRACTION=0.96` 后又出现 `NPU_MEMORY_FRACTION=0.8`：说明现场镜像仍旧，或显式配置了 `gpu_memory_utilization/npu_memory_fraction=0.8`。
+- `WORLD_SIZE=2`、`worldSize=1`、`tp=2`：双机单卡普通 TP 语义本身成立。
+- 真正 fatal 是 `Create the hccl communication group failed`：优先检查 rank table 的 `device_ip` 是否为 910B HCCN/RDMA IP，以及 `/etc/hccn.conf` 是否挂载进 engine 容器。

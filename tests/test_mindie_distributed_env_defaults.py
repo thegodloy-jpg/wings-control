@@ -183,6 +183,28 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertNotIn("HCCL_EXEC_TIMEOUT", rendered)
         self.assertIn("export RANK_TABLE_FILE=/shared-volume/hccl_ranktable.json", rendered)
 
+    def test_hccl_diagnostics_and_device_ip_patch_are_rendered(self):
+        params = {
+            "distributed": True,
+            "nnodes": 2,
+            "node_rank": 0,
+            "device_count": 1,
+            "node_ips": "10.0.0.1,10.0.0.2",
+            "mindie_master_addr": "10.0.0.1",
+            "worldSize": 2,
+        }
+        with patch("engines.mindie_adapter._resolve_external_rank_table_path", return_value="/tmp/rank_table.json"):
+            with patch("engines.mindie_adapter._resolve_rank_table", return_value=([], "/shared-volume/hccl_ranktable.json")):
+                commands = _build_distributed_env_commands(params)
+
+        rendered = "\n".join(commands)
+        self.assertIn("HCCL_DEVICE_IPS_PATCH_EOF", rendered)
+        self.assertIn("HCCL_RANK_TABLE_DIAG_EOF", rendered)
+        self.assertIn("HCCL_DEVICE_IPS", rendered)
+        self.assertIn("910B multi-node usually needs hccn/RDMA IP", rendered)
+        self.assertIn("${HCCL_IF_IP:-}", rendered)
+        self.assertIn('export HCCL_SOCKET_IFNAME="${HCCL_SOCKET_IFNAME:-eth0}"', rendered)
+
     def test_multinode_rank0_server_ip_uses_master_ip(self):
         overrides = _build_server_overrides(
             {"ipAddress": "10.0.0.99"},

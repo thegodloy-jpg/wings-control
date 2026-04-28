@@ -461,6 +461,10 @@ def _build_env_commands(params: Dict[str, Any]) -> List[str]:
             if not (0.0 < frac_val <= 1.0):
                 logger.warning("[mindie] NPU_MEMORY_FRACTION=%s out of range (0,1], ignoring", frac_val)
             else:
+                cmds.append(
+                    f"echo '[mindie] Apply engine_config.npu_memory_fraction as "
+                    f"NPU_MEMORY_FRACTION={frac_val}'"
+                )
                 cmds.append(f"export NPU_MEMORY_FRACTION={shlex.quote(str(frac_val))}")
         except (ValueError, TypeError):
             logger.warning("[mindie] Invalid NPU_MEMORY_FRACTION=%r, ignoring", npu_memory_fraction)
@@ -481,14 +485,102 @@ def _resolve_hccl_if_ip(
     master_addr: str,
 ) -> str:
     """返回设置 HCCL_IF_IP 的 shell 命令。"""
-    if node_rank < len(node_ips_list):
-        return f'export HCCL_IF_IP={shlex.quote(node_ips_list[node_rank])}'
-    # hostname -i 可能返回多个 IP（多网卡），用 awk 取第一个
-    return (
-        f"export HCCL_IF_IP=$(hostname -i 2>/dev/null | awk '{{print $1}}' "
-        f"|| python3 -c 'import socket; print(socket.gethostbyname(socket.gethostname()))' 2>/dev/null "
-        f"|| echo {shlex.quote(master_addr)})"
+    derive_from_device_ips = (
+        "python3 -c 'import os; "
+        "rank=int(os.environ.get(\"RANK\",\"0\")); "
+        "groups=[[ip.strip() for ip in part.split(\",\") if ip.strip()] "
+        "for part in os.environ.get(\"HCCL_DEVICE_IPS\",\"\").split(\";\")]; "
+        "print(groups[rank][0] if rank < len(groups) and groups[rank] else \"\")'"
     )
+    if node_rank < len(node_ips_list):
+        fallback_cmd = shlex.quote(node_ips_list[node_rank])
+    else:
+        # hostname -i 可能返回多个 IP（多网卡），用 awk 取第一个
+        fallback_cmd = (
+            f"$(hostname -i 2>/dev/null | awk '{{print $1}}' "
+            f"|| python3 -c 'import socket; print(socket.gethostbyname(socket.gethostname()))' 2>/dev/null "
+            f"|| echo {shlex.quote(master_addr)})"
+        )
+    return "\n".join([
+        "if [ -n \"${HCCL_IF_IP:-}\" ]; then",
+        "    export HCCL_IF_IP=\"${HCCL_IF_IP}\"",
+        "elif [ -n \"${HCCL_DEVICE_IPS:-}\" ]; then",
+        f"    export HCCL_IF_IP=$({derive_from_device_ips} 2>/dev/null || true)",
+        "    if [ -z \"${HCCL_IF_IP:-}\" ]; then",
+        f"        export HCCL_IF_IP={fallback_cmd}",
+        "    fi",
+        "else",
+        f"    export HCCL_IF_IP={fallback_cmd}",
+        "fi",
+        _build_export_echo_command("HCCL_IF_IP"),
+    ])
+
+
+def _build_rank_table_postprocess_commands() -> List[str]:
+    """构建 rank table 运行时修正和诊断命令。
+
+    910B 多机场景对 HCCN/RDMA device_ip 更敏感。若外部 rank table 写入
+    Pod/宿主机 IP，MindIE 能解析 rank table，但 ATB 初始化 HCCL 通信组时
+    会失败。这里允许用户通过 ``HCCL_DEVICE_IPS`` 在 engine 容器中覆盖
+    rank table 的 device_ip，并打印 rank table / hccn 诊断信息。
+    """
+    return [
+        "# ── HCCL rank table postprocess and diagnostics ──",
+        "if [ -n \"${HCCL_DEVICE_IPS:-}\" ] && [ -f \"${RANK_TABLE_FILE:-}\" ]; then",
+        "python3 << 'HCCL_DEVICE_IPS_PATCH_EOF'",
+        "import json, os",
+        "path = os.environ.get('RANK_TABLE_FILE', '')",
+        "groups = [[ip.strip() for ip in part.split(',') if ip.strip()] for part in os.environ.get('HCCL_DEVICE_IPS', '').split(';')]",
+        "with open(path, 'r', encoding='utf-8') as f:",
+        "    rank_table = json.load(f)",
+        "changed = 0",
+        "for server_idx, server in enumerate(rank_table.get('server_list', [])):",
+        "    devices = server.get('device', []) if isinstance(server, dict) else []",
+        "    device_ips = groups[server_idx] if server_idx < len(groups) else []",
+        "    for dev_idx, device in enumerate(devices):",
+        "        if not isinstance(device, dict) or dev_idx >= len(device_ips):",
+        "            continue",
+        "        new_ip = device_ips[dev_idx]",
+        "        if device.get('device_ip') != new_ip:",
+        "            device['device_ip'] = new_ip",
+        "            changed += 1",
+        "if changed:",
+        "    with open(path, 'w', encoding='utf-8') as f:",
+        "        json.dump(rank_table, f, indent=2, ensure_ascii=False)",
+        "print(f'[mindie] Updated {changed} rank table device_ip value(s) from HCCL_DEVICE_IPS')",
+        "HCCL_DEVICE_IPS_PATCH_EOF",
+        "fi",
+        "echo '[mindie] HCCL network interfaces:'",
+        "ip -o -4 addr show 2>/dev/null | grep -E 'hccn|eth|bond|en|ib' || true",
+        "if [ -f /etc/hccn.conf ]; then echo '[mindie] /etc/hccn.conf:'; sed -n '1,120p' /etc/hccn.conf; else echo '[mindie] WARN: /etc/hccn.conf not found'; fi",
+        "python3 << 'HCCL_RANK_TABLE_DIAG_EOF'",
+        "import json, os",
+        "path = os.environ.get('RANK_TABLE_FILE', '')",
+        "print(f'[mindie] RANK_TABLE_FILE={path}')",
+        "print(f'[mindie] HCCL_IF_IP={os.environ.get(\"HCCL_IF_IP\", \"\")}')",
+        "print(f'[mindie] HCCL_SOCKET_IFNAME={os.environ.get(\"HCCL_SOCKET_IFNAME\", \"\")}')",
+        "print(f'[mindie] HCCL_DEVICE_IPS={\"set\" if os.environ.get(\"HCCL_DEVICE_IPS\") else \"unset\"}')",
+        "if not path or not os.path.isfile(path):",
+        "    print(f'[mindie] WARN: rank table file not found for diagnostics: {path}')",
+        "else:",
+        "    with open(path, 'r', encoding='utf-8') as f:",
+        "        rank_table = json.load(f)",
+        "    servers = rank_table.get('server_list', [])",
+        "    print(f'[mindie] rank table server_count={rank_table.get(\"server_count\")} actual_servers={len(servers)}')",
+        "    for server_idx, server in enumerate(servers):",
+        "        if not isinstance(server, dict):",
+        "            continue",
+        "        host_like = {str(server.get(k, '')) for k in ('server_id', 'container_ip', 'host_nic_ip') if server.get(k)}",
+        "        print(f'[mindie] rank table server[{server_idx}] server_id={server.get(\"server_id\")} container_ip={server.get(\"container_ip\")}')",
+        "        for device in server.get('device', []) or []:",
+        "            if not isinstance(device, dict):",
+        "                continue",
+        "            device_ip = str(device.get('device_ip', ''))",
+        "            print(f'[mindie] rank table device rank={device.get(\"rank_id\")} device_id={device.get(\"device_id\")} device_ip={device_ip}')",
+        "            if device_ip in host_like:",
+        "                print(f'[mindie] WARN: rank table device_ip {device_ip} equals server/container IP; 910B multi-node usually needs hccn/RDMA IP')",
+        "HCCL_RANK_TABLE_DIAG_EOF",
+    ]
 
 
 def _copy_external_rank_table(
@@ -722,12 +814,12 @@ def _build_distributed_env_commands(params: Dict[str, Any]) -> List[str]:
         f"export MINDIE_MODEL_WORLD_SIZE={global_world_size}",
         "export HCCL_WHITELIST_DISABLE=1",
         hccl_if_ip_cmd,
-        f"export HCCL_SOCKET_IFNAME={os.getenv('HCCL_SOCKET_IFNAME', 'eth0')}",
-        f"export GLOO_SOCKET_IFNAME={os.getenv('GLOO_SOCKET_IFNAME', 'eth0')}",
+        f"export HCCL_SOCKET_IFNAME=\"${{HCCL_SOCKET_IFNAME:-{os.getenv('HCCL_SOCKET_IFNAME', 'eth0')}}}\"",
+        f"export GLOO_SOCKET_IFNAME=\"${{GLOO_SOCKET_IFNAME:-{os.getenv('GLOO_SOCKET_IFNAME', 'eth0')}}}\"",
         f"export MIES_CONTAINER_IP={shlex.quote(container_ip)}",
     ] + rank_table_cmds + [
         f"export RANK_TABLE_FILE={ranktable_path}",
-    ]
+    ] + _build_rank_table_postprocess_commands()
 
 
 def _parse_hccl_device_ips() -> List[List[str]]:
