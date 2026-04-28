@@ -2,6 +2,11 @@
 
 This document focuses only on one scenario: DeepSeek-V3.1, 2 nodes x 8 NPUs.
 
+> NOTE: This is the baseline non-long-context 2x8 example. It intentionally uses
+> global TP (`tp=16`) without CP/SP. For DeepSeek-V3.1 long-context CP/SP, use
+> `../deepseek_v31_longctx_2x8_full/`, where the expected values are
+> `dp/tp/sp/cp = 1/8/8/2` and `enable_ep_moe=true`.
+
 ## config.json
 
 Source: config.json

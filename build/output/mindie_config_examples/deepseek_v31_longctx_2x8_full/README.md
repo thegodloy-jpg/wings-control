@@ -15,3 +15,9 @@ Generated start scripts:
 - start_command_node0.sh
 - start_command_node1.sh
 - config.json
+- REDEPLOY_CHECKLIST.md
+
+Use `REDEPLOY_CHECKLIST.md` to verify the live Pod is not still running an old
+start script or ConfigMap. In this long-context scenario, the final MindIE
+config must keep `dp/tp/sp/cp = 1/8/8/2` and should only print
+`NPU_MEMORY_FRACTION=0.96`.
