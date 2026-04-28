@@ -74,3 +74,93 @@
 - 若最终 config 为 `dp=1,tp=8,sp=8,cp=2` 且 `enable_ep_moe=true`：CP/SP 配置正确。
 - 若 `NPU_MEMORY_FRACTION` 只剩 `0.96`：环境默认值没有二次覆盖。
 - 若仍出现旧值，优先重建镜像、刷新 ConfigMap，并重启两个 Pod，确保启动脚本来自最新提交。
+
+## 8. Kubernetes 现场排查命令
+
+以下命令以 Bash 写法为例；执行前替换命名空间、Pod 名和容器名。
+
+```bash
+NS=<namespace>
+POD0=<node0-pod-name>
+POD1=<node1-pod-name>
+ENGINE_CONTAINER=engine
+CONTROL_CONTAINER=wings-control
+```
+
+### 8.1 确认 Pod、节点和镜像
+
+```bash
+kubectl -n "$NS" get pod "$POD0" "$POD1" -o wide
+kubectl -n "$NS" get pod "$POD0" -o jsonpath='{range .spec.containers[*]}{.name}{"\t"}{.image}{"\n"}{end}'
+kubectl -n "$NS" get pod "$POD1" -o jsonpath='{range .spec.containers[*]}{.name}{"\t"}{.image}{"\n"}{end}'
+```
+
+重点确认：两个 Pod 使用的新镜像必须包含 `8cf2e47` 或更晚提交。
+
+### 8.2 确认挂载和 ConfigMap 没有使用旧脚本
+
+```bash
+kubectl -n "$NS" describe pod "$POD0" | sed -n '/Volumes:/,/QoS Class:/p'
+kubectl -n "$NS" describe pod "$POD1" | sed -n '/Volumes:/,/QoS Class:/p'
+kubectl -n "$NS" get configmap | grep -Ei 'mindie|wings|start|engine|deepseek'
+```
+
+重点确认：如果启动脚本来自 ConfigMap，必须重新生成并滚动重启 Pod；只更新镜像但仍挂载旧 ConfigMap 会继续复现旧值。
+
+### 8.3 直接检查共享卷中的 start_command.sh
+
+```bash
+kubectl -n "$NS" exec "$POD0" -c "$ENGINE_CONTAINER" -- sh -lc \
+  'grep -nE "NPU_MEMORY_FRACTION|\"tp\"|\"sp\"|\"cp\"|\"moe_ep\"|enable_ep_moe" /shared-volume/start_command.sh || true'
+
+kubectl -n "$NS" exec "$POD1" -c "$ENGINE_CONTAINER" -- sh -lc \
+  'grep -nE "NPU_MEMORY_FRACTION|\"tp\"|\"sp\"|\"cp\"|\"moe_ep\"|enable_ep_moe" /shared-volume/start_command.sh || true'
+```
+
+期望看到：
+
+- `export NPU_MEMORY_FRACTION=0.96`
+- `"tp": 8`
+- `"sp": 8`
+- `"cp": 2`
+- `"moe_ep": 16`
+- `"enable_ep_moe": true`
+
+不应看到：
+
+- `NPU_MEMORY_FRACTION=0.9`
+- `NPU_MEMORY_FRACTION=0.8`
+- CP/SP 长上下文场景下的 `"tp": 16`
+
+### 8.4 检查 MindIE 最终 config.json
+
+```bash
+kubectl -n "$NS" exec "$POD0" -c "$ENGINE_CONTAINER" -- sh -lc \
+  'grep -nE "\"worldSize\"|\"dp\"|\"tp\"|\"sp\"|\"cp\"|\"moe_tp\"|\"moe_ep\"|enable_ep_moe|maxSeqLen|maxInputTokenLen" /usr/local/Ascend/mindie/latest/mindie-service/conf/config.json || true'
+
+kubectl -n "$NS" exec "$POD1" -c "$ENGINE_CONTAINER" -- sh -lc \
+  'grep -nE "\"worldSize\"|\"dp\"|\"tp\"|\"sp\"|\"cp\"|\"moe_tp\"|\"moe_ep\"|enable_ep_moe|maxSeqLen|maxInputTokenLen" /usr/local/Ascend/mindie/latest/mindie-service/conf/config.json || true'
+```
+
+如果这里仍是旧值，但 `/shared-volume/start_command.sh` 已经是新值，说明 MindIE 进程没有重启或配置文件没有被重新 merge。
+
+### 8.5 检查 launcher 和 engine 日志
+
+```bash
+kubectl -n "$NS" logs "$POD0" -c "$CONTROL_CONTAINER" --tail=300 | grep -Ei 'start_command|globalWorldSize|configWorldSize|cp|sp|tp|NPU_MEMORY_FRACTION|enable_ep_moe'
+kubectl -n "$NS" logs "$POD1" -c "$CONTROL_CONTAINER" --tail=300 | grep -Ei 'start_command|globalWorldSize|configWorldSize|cp|sp|tp|NPU_MEMORY_FRACTION|enable_ep_moe'
+
+kubectl -n "$NS" logs "$POD0" -c "$ENGINE_CONTAINER" --tail=500 | grep -Ei 'mindie-env|config.json|World size|NPU_MEMORY_FRACTION|enable_ep_moe|moe_ep|\"tp\"|\"sp\"|\"cp\"'
+kubectl -n "$NS" logs "$POD1" -c "$ENGINE_CONTAINER" --tail=500 | grep -Ei 'mindie-env|config.json|World size|NPU_MEMORY_FRACTION|enable_ep_moe|moe_ep|\"tp\"|\"sp\"|\"cp\"'
+```
+
+若 engine 日志仍报 `World size must equal to attention's dp_size * attention's cp_size * attention's tp_size`，优先看同一段日志上方打印的最终 `config.json`，确认是否仍为旧的 `dp=1,tp=16,cp=2`。
+
+### 8.6 强制刷新建议
+
+如果上述检查发现旧脚本或旧 config，建议按顺序处理：
+
+1. 重新构建并推送包含 `8cf2e47` 或更晚提交的镜像。
+2. 重新生成或更新挂载 start script 的 ConfigMap。
+3. 删除或滚动重启两个 Pod，确保共享卷中的 `/shared-volume/start_command.sh` 重新生成。
+4. 重启后先检查 `/shared-volume/start_command.sh`，再看 MindIE 最终 `config.json` 和 engine 日志。
