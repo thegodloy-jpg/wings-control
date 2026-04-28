@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]  # wings-control/
 sys.path.insert(0, str(ROOT / "wings_control"))
 
 from core.config_loader import (  # noqa: E402
+    _apply_us8_long_ctx_strategy,
     _detect_mtp_moe_features,
     _select_ascend_engine,
     _select_nvidia_engine,
@@ -64,6 +65,39 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         _detect_mtp_moe_features({"model_name": "Qwen3-32B"}, params)
 
         self.assertEqual(params["isMOE"], True)
+
+    def test_mindie_deepseek_long_context_triggers_cpsp_defaults(self):
+        params = {}
+        ctx = {"distributed": True}
+        engine_cmd_parameter = {"input_length": 8192, "output_length": 1}
+        model_info = _FakeModelInfo(architecture="DeepseekV3ForCausalLM")
+        env = {
+            "MINDIE_LONG_CONTEXT_THRESHOLD": "8192",
+            "MINDIE_DS_DP": "1",
+            "MINDIE_DS_SP": "8",
+            "MINDIE_DS_CP": "2",
+            "MINDIE_DS_TP": "2",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            _apply_us8_long_ctx_strategy(params, ctx, engine_cmd_parameter, model_info)
+
+        self.assertEqual(params["dp"], 1)
+        self.assertEqual(params["sp"], 8)
+        self.assertEqual(params["cp"], 2)
+        self.assertEqual(params["tp"], 2)
+
+    def test_mindie_deepseek_short_context_does_not_trigger_cpsp(self):
+        params = {}
+        ctx = {"distributed": True}
+        engine_cmd_parameter = {"input_length": 4096, "output_length": 4096}
+        model_info = _FakeModelInfo(architecture="DeepseekV3ForCausalLM")
+
+        with patch.dict(os.environ, {"MINDIE_LONG_CONTEXT_THRESHOLD": "8192"}, clear=False):
+            _apply_us8_long_ctx_strategy(params, ctx, engine_cmd_parameter, model_info)
+
+        self.assertNotIn("sp", params)
+        self.assertNotIn("cp", params)
 
 
 if __name__ == "__main__":

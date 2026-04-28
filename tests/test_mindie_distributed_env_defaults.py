@@ -289,6 +289,21 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(overrides["dp"], 1)
         self.assertEqual(overrides["tp"], 4)
 
+    def test_mindie_multinode_preserves_cpsp_fields(self):
+        overrides = _build_model_config_overrides(
+            {"dp": 1, "tp": 2, "sp": 8, "cp": 2},
+            is_distributed=True,
+            world_size=8,
+            global_world_size=16,
+            nnodes=2,
+        )
+
+        self.assertEqual(overrides["worldSize"], 8)
+        self.assertEqual(overrides["dp"], 1)
+        self.assertEqual(overrides["tp"], 16)
+        self.assertEqual(overrides["sp"], 8)
+        self.assertEqual(overrides["cp"], 2)
+
     def test_qwen3_multinode_final_config_is_identical_on_two_nodes(self):
         node0 = self._build_final_multinode_config(node_rank=0)
         node1 = self._build_final_multinode_config(node_rank=1)
