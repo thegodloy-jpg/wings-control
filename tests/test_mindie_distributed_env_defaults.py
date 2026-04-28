@@ -20,6 +20,7 @@ _build_distributed_env_commands = mindie_adapter._build_distributed_env_commands
 _build_mindie_distributed_env_default_commands = mindie_adapter._build_mindie_distributed_env_default_commands
 _build_model_config_overrides = mindie_adapter._build_model_config_overrides
 _build_server_overrides = mindie_adapter._build_server_overrides
+_drop_redundant_default_export_commands = mindie_adapter._drop_redundant_default_export_commands
 
 
 class TestMindieDistributedEnvDefaults(unittest.TestCase):
@@ -414,6 +415,20 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
             "export OMP_NUM_THREADS=10",
             "printf '[mindie-env] OMP_NUM_THREADS=%s\\n' \"${OMP_NUM_THREADS:-}\"",
             "echo done",
+        ])
+
+    def test_redundant_default_exports_are_dropped(self):
+        commands = _drop_redundant_default_export_commands([
+            "export NPU_MEMORY_FRACTION=0.96",
+            'export NPU_MEMORY_FRACTION="${NPU_MEMORY_FRACTION:-0.9}"',
+            'export OMP_NUM_THREADS="${OMP_NUM_THREADS:-10}"',
+            "export OMP_NUM_THREADS=20",
+        ])
+
+        self.assertEqual(commands, [
+            "export NPU_MEMORY_FRACTION=0.96",
+            'export OMP_NUM_THREADS="${OMP_NUM_THREADS:-10}"',
+            "export OMP_NUM_THREADS=20",
         ])
 
 
