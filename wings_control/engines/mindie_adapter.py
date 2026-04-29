@@ -65,6 +65,21 @@ class _MindieParallelTopology:
     world_size: int
     global_world_size: int
 
+
+@dataclass
+class _MindieStartScriptContext:
+    """Resolved values required to render a MindIE start script."""
+
+    params: Dict[str, Any]
+    engine_config: Dict[str, Any]
+    is_distributed: bool
+    nnodes: int
+    node_rank: int
+    topology: Optional[Dict[str, Any]]
+    npu_device_ids: Any
+    global_world_size: int
+    config_world_size: int
+
 _EXPORT_LINE_RE = re.compile(r"^export\s+([A-Za-z_][A-Za-z0-9_]*)=")
 _EXPORT_ASSIGNMENT_RE = re.compile(r"^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
@@ -288,6 +303,16 @@ def _build_mindie_distributed_env_default_commands(params: Dict[str, Any]) -> Li
     return ["# ── MindIE distributed env defaults ──"] + default_lines
 
 
+def _read_mindie_env_script_lines(script_path: str) -> Optional[List[str]]:
+    """Read MindIE env script lines, or return None when the file is unavailable."""
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            return f.read().splitlines()
+    except OSError as e:
+        logger.warning("Failed to read MindIE env script %s: %s", script_path, e)
+        return None
+
+
 def _read_and_inline_mindie_env_script(script_path: str) -> List[str]:
     """读取并内联 MindIE 基础环境脚本。
 
@@ -304,18 +329,11 @@ def _read_and_inline_mindie_env_script(script_path: str) -> List[str]:
         - shebang 行会被跳过
         - 脚本中的 export 会在最终组装阶段追加环境变量打印
     """
-    commands: List[str] = []
-    try:
-        with open(script_path, "r", encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.rstrip("\n\r")
-                if line.startswith("#!"):
-                    continue
-                commands.append(line)
-    except OSError as e:
-        logger.warning("Failed to read MindIE env script %s: %s", script_path, e)
+    raw_lines = _read_mindie_env_script_lines(script_path)
+    if raw_lines is None:
         return []
 
+    commands = [line for line in raw_lines if not line.startswith("#!")]
     logger.info("Inlined MindIE env script %s (%d lines)", script_path, len(commands))
     return commands
 
@@ -527,16 +545,9 @@ def _resolve_hccl_if_ip(
     ])
 
 
-def _build_rank_table_postprocess_commands() -> List[str]:
-    """构建 rank table 运行时修正和诊断命令。
-
-    910B 多机场景对 HCCN/RDMA device_ip 更敏感。若外部 rank table 写入
-    Pod/宿主机 IP，MindIE 能解析 rank table，但 ATB 初始化 HCCL 通信组时
-    会失败。这里允许用户通过 ``HCCL_DEVICE_IPS`` 在 engine 容器中覆盖
-    rank table 的 device_ip，并打印 rank table / hccn 诊断信息。
-    """
+def _build_rank_table_device_ip_patch_commands() -> List[str]:
+    """Build commands that patch rank table device_ip from HCCL_DEVICE_IPS."""
     return [
-        "# ── HCCL rank table postprocess and diagnostics ──",
         "if [ -n \"${HCCL_DEVICE_IPS:-}\" ] && [ -f \"${RANK_TABLE_FILE:-}\" ]; then",
         "python3 << 'HCCL_DEVICE_IPS_PATCH_EOF'",
         "import json, os",
@@ -564,6 +575,12 @@ def _build_rank_table_postprocess_commands() -> List[str]:
         "print(f'[mindie] Updated {changed} rank table device_ip value(s) from HCCL_DEVICE_IPS')",
         "HCCL_DEVICE_IPS_PATCH_EOF",
         "fi",
+    ]
+
+
+def _build_rank_table_diagnostics_commands() -> List[str]:
+    """Build HCCL network and rank table diagnostic commands."""
+    return [
         "echo '[mindie] HCCL network interfaces:'",
         "ip -o -4 addr show 2>/dev/null | grep -E 'hccn|eth|bond|en|ib' || true",
         (
@@ -614,6 +631,21 @@ def _build_rank_table_postprocess_commands() -> List[str]:
             "equals server/container IP; 910B multi-node usually needs hccn/RDMA IP')"
         ),
         "HCCL_RANK_TABLE_DIAG_EOF",
+    ]
+
+
+def _build_rank_table_postprocess_commands() -> List[str]:
+    """构建 rank table 运行时修正和诊断命令。
+
+    910B 多机场景对 HCCN/RDMA device_ip 更敏感。若外部 rank table 写入
+    Pod/宿主机 IP，MindIE 能解析 rank table，但 ATB 初始化 HCCL 通信组时
+    会失败。这里允许用户通过 ``HCCL_DEVICE_IPS`` 在 engine 容器中覆盖
+    rank table 的 device_ip，并打印 rank table / hccn 诊断信息。
+    """
+    return [
+        "# ── HCCL rank table postprocess and diagnostics ──",
+        *_build_rank_table_device_ip_patch_commands(),
+        *_build_rank_table_diagnostics_commands(),
     ]
 
 
@@ -699,12 +731,8 @@ def _copy_and_normalize_rank_table(external_path: str, shared_path: str) -> None
         )
 
 
-def _build_runtime_rank_table_check(
-    external_path: str,
-    shared_path: str,
-    copy_error: str | None = None,
-) -> tuple:
-    """策略 2: sidecar 无法复制时，将 copy-only 逻辑写入启动脚本。"""
+def _log_runtime_rank_table_copy_deferral(external_path: str, copy_error: str | None) -> None:
+    """Log why rank table copying is deferred to the engine container."""
     if copy_error:
         logger.warning(
             "[mindie] Deferring rank table copy to engine startup because sidecar copy failed: %s",
@@ -716,15 +744,17 @@ def _build_runtime_rank_table_check(
             "Will copy it at engine startup.",
             external_path,
         )
+
+
+def _build_runtime_rank_table_copy_commands(
+    external_path: str,
+    shared_path: str,
+    reason: str,
+) -> List[str]:
+    """Build engine-side rank table copy and normalization commands."""
     safe_ext = shlex.quote(external_path)
     safe_shared = shlex.quote(shared_path)
-    reason = (
-        f"sidecar copy failed: {copy_error}"
-        if copy_error
-        else f"sidecar cannot access {external_path}"
-    )
-
-    cmds = [
+    return [
         f"# HCCL rank table (runtime copy from {external_path}; {reason})",
         f"if [ -f {safe_ext} ]; then",
         f"    cp {safe_ext} {safe_shared}",
@@ -758,7 +788,21 @@ def _build_runtime_rank_table_check(
         "    exit 1",
         "fi",
     ]
-    return cmds, shared_path
+
+
+def _build_runtime_rank_table_check(
+    external_path: str,
+    shared_path: str,
+    copy_error: str | None = None,
+) -> tuple:
+    """策略 2: sidecar 无法复制时，将 copy-only 逻辑写入启动脚本。"""
+    _log_runtime_rank_table_copy_deferral(external_path, copy_error)
+    reason = (
+        f"sidecar copy failed: {copy_error}"
+        if copy_error
+        else f"sidecar cannot access {external_path}"
+    )
+    return _build_runtime_rank_table_copy_commands(external_path, shared_path, reason), shared_path
 
 
 def _resolve_rank_table(
@@ -1687,6 +1731,118 @@ def _collect_extra_overrides(engine_config: Dict[str, Any]) -> Dict[str, Any]:
     return extra
 
 
+def _promote_engine_config_fields(params: Dict[str, Any], engine_config: Dict[str, Any]) -> None:
+    """Promote topology fields from engine_config into params when absent."""
+    for key in ("node_ips", "device_count", "worldSize", "multiNodesInferEnabled"):
+        if (key not in params or params[key] is None) and engine_config.get(key) is not None:
+            params[key] = engine_config[key]
+
+
+def _resolve_mindie_master_addr(params: Dict[str, Any]) -> Any:
+    """Resolve the MindIE master address from accepted parameter aliases."""
+    return (
+        params.get("mindie_master_addr")
+        or params.get("master_ip")
+        or params.get("head_node_addr")
+    )
+
+
+def _resolve_config_world_sizes(
+    engine_config: Dict[str, Any],
+    topology: Optional[Dict[str, Any]],
+    is_distributed: bool,
+) -> tuple:
+    """Resolve global and config-local world sizes for MindIE ModelConfig."""
+    global_world_size = engine_config.get(
+        "worldSize",
+        topology["global_world_size"] if topology else (8 if is_distributed else 1),
+    )
+    if topology and topology["nnodes"] > 1:
+        return global_world_size, topology["device_count"]
+    return global_world_size, global_world_size
+
+
+def _build_start_script_context(params: Dict[str, Any]) -> _MindieStartScriptContext:
+    """Resolve mutable launch params into a compact start-script context."""
+    params = dict(params)
+    engine_config = params.get("engine_config", {})
+    is_distributed = params.get("distributed", False)
+    nnodes = params.get("nnodes", 1)
+    node_rank = params.get("node_rank", 0)
+
+    _promote_engine_config_fields(params, engine_config)
+    topology = _resolve_distributed_topology(params) if (is_distributed and nnodes > 1) else None
+    local_device_count = int(params.get("device_count", 1) or 1)
+    npu_device_ids = _resolve_npu_device_ids(engine_config, is_distributed, local_device_count)
+    global_world_size, config_world_size = _resolve_config_world_sizes(
+        engine_config, topology, is_distributed
+    )
+
+    return _MindieStartScriptContext(
+        params,
+        engine_config,
+        is_distributed,
+        nnodes,
+        node_rank,
+        topology,
+        npu_device_ids,
+        global_world_size,
+        config_world_size,
+    )
+
+
+def _build_start_script_overrides_json(ctx: _MindieStartScriptContext) -> str:
+    """Build serialized MindIE config overrides for start_command.sh."""
+    server_overrides = _build_server_overrides(
+        ctx.engine_config,
+        ctx.is_distributed,
+        ctx.node_rank,
+        ctx.nnodes,
+        _resolve_mindie_master_addr(ctx.params),
+    )
+    return json.dumps({
+        "server": server_overrides,
+        "backend": _build_backend_overrides(
+            ctx.engine_config, ctx.is_distributed, ctx.nnodes, ctx.npu_device_ids
+        ),
+        "model_deploy": _build_model_deploy_overrides(ctx.engine_config),
+        "model_config": _build_model_config_overrides(
+            ctx.engine_config,
+            ctx.is_distributed,
+            ctx.config_world_size,
+            global_world_size=ctx.global_world_size,
+            nnodes=ctx.nnodes,
+        ),
+        "schedule": _build_schedule_overrides(ctx.engine_config),
+        "extra": _collect_extra_overrides(ctx.engine_config),
+    }, indent=2, ensure_ascii=False)
+
+
+def _build_start_script_env_block(params: Dict[str, Any]) -> str:
+    """Build the rendered MindIE environment command block."""
+    all_cmds = list(_build_env_commands(params))
+    dist_cmds = _build_distributed_env_commands(params)
+    dist_default_cmds = _build_mindie_distributed_env_default_commands(params)
+    if dist_cmds:
+        all_cmds.extend([""] + dist_cmds)
+    if dist_default_cmds:
+        all_cmds.extend([""] + dist_default_cmds)
+
+    all_cmds = _drop_redundant_default_export_commands(all_cmds)
+    all_cmds = _append_export_echoes(all_cmds)
+    return "\n".join(all_cmds) + "\n" if all_cmds else ""
+
+
+def _log_start_script_generation(ctx: _MindieStartScriptContext) -> None:
+    """Log a concise description of the generated MindIE start script."""
+    is_multinode = ctx.is_distributed and ctx.nnodes > 1
+    dist_label = f"distributed rank={ctx.node_rank}/{ctx.nnodes}" if is_multinode else "single-node"
+    logger.info(
+        "[mindie] Generating start_command.sh: %s, globalWorldSize=%d, configWorldSize=%d",
+        dist_label, ctx.global_world_size, ctx.config_world_size,
+    )
+
+
 def build_start_script(params: Dict[str, Any]) -> str:
     """返回完整的 bash 启动脚本内容（不含 shebang 行）。
 
@@ -1702,86 +1858,10 @@ def build_start_script(params: Dict[str, Any]) -> str:
     Returns:
         str: 完整的 bash 脚本内容（不含 #!/bin/bash）
     """
-    # 浅拷贝 params，避免原地修改调用方传入的字典
-    # (上游 wings_entry.build_launcher_plan 会将同一个 dict 存入 LauncherPlan.merged_params)
-    params = dict(params)
-    engine_config = params.get("engine_config", {})
-    is_distributed = params.get("distributed", False)
-    nnodes = params.get("nnodes", 1)
-    node_rank = params.get("node_rank", 0)
-
-    # 将 engine_config 中的关键字段提升到 params 顶层（供下游 helpers 使用）
-    # 使用 `key not in params or params[key] is None` 而非 `not params.get(key)`，
-    # 避免将 falsy 但合法的值（如 0、False）误判为未设置并被覆盖。
-    for key in ("node_ips", "device_count", "worldSize", "multiNodesInferEnabled"):
-        if (key not in params or params[key] is None) and engine_config.get(key) is not None:
-            params[key] = engine_config[key]
-
-    topology = _resolve_distributed_topology(params) if (is_distributed and nnodes > 1) else None
-    local_device_count = int(params.get("device_count", 1) or 1)
-    npu_device_ids = _resolve_npu_device_ids(engine_config, is_distributed, local_device_count)
-
-    # 构建各配置覆盖区块
-    master_addr = (
-        params.get("mindie_master_addr")
-        or params.get("master_ip")
-        or params.get("head_node_addr")
-    )
-    server_overrides = _build_server_overrides(
-        engine_config, is_distributed, node_rank, nnodes, master_addr
-    )
-    backend_overrides = _build_backend_overrides(engine_config, is_distributed, nnodes, npu_device_ids)
-    model_deploy_overrides = _build_model_deploy_overrides(engine_config)
-
-    # ── worldSize / TP / DP 语义修正 (多节点) ───────────────────────
-    # MindIE 2.3.0 多机社区示例中，config.json 两端保持一致，
-    # ModelConfig.worldSize 使用当前节点可见芯片数；全局卡数由 WORLD_SIZE / rank table
-    # 承载。并行参数按全局 TP 设置：tp=globalWorldSize, dp=1。
-    global_world_size = engine_config.get(
-        "worldSize",
-        topology["global_world_size"] if topology else (8 if is_distributed else 1),
-    )
-    if topology and topology["nnodes"] > 1:
-        config_world_size = topology["device_count"]
-    else:
-        config_world_size = global_world_size
-
-    model_config_overrides = _build_model_config_overrides(
-        engine_config, is_distributed, config_world_size,
-        global_world_size=global_world_size,
-        nnodes=nnodes,
-    )
-    schedule_overrides = _build_schedule_overrides(engine_config)
-    extra_overrides = _collect_extra_overrides(engine_config)
-
-    overrides_json = json.dumps({
-        "server": server_overrides,
-        "backend": backend_overrides,
-        "model_deploy": model_deploy_overrides,
-        "model_config": model_config_overrides,
-        "schedule": schedule_overrides,
-        "extra": extra_overrides,
-    }, indent=2, ensure_ascii=False)
-
-    # 组装环境变量命令块
-    env_cmds = _build_env_commands(params)
-    dist_cmds = _build_distributed_env_commands(params)
-    dist_default_cmds = _build_mindie_distributed_env_default_commands(params)
-    all_cmds = list(env_cmds)
-    if dist_cmds:
-        all_cmds.extend([""] + dist_cmds)
-    if dist_default_cmds:
-        all_cmds.extend([""] + dist_default_cmds)
-    all_cmds = _drop_redundant_default_export_commands(all_cmds)
-    all_cmds = _append_export_echoes(all_cmds)
-    env_block = "\n".join(all_cmds) + "\n" if all_cmds else ""
-
-    dist_label = f"distributed rank={node_rank}/{nnodes}" if (is_distributed and nnodes > 1) else "single-node"
-    logger.info(
-        "[mindie] Generating start_command.sh: %s, globalWorldSize=%d, configWorldSize=%d",
-        dist_label, global_world_size, config_world_size,
-    )
-
+    ctx = _build_start_script_context(params)
+    overrides_json = _build_start_script_overrides_json(ctx)
+    env_block = _build_start_script_env_block(ctx.params)
+    _log_start_script_generation(ctx)
     merge_script = _build_config_merge_script(
         overrides_json, shlex.quote(MINDIE_CONFIG_PATH), shlex.quote(MINDIE_WORK_DIR)
     )
