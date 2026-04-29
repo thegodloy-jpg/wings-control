@@ -912,36 +912,50 @@ def _apply_us8_long_ctx_strategy(params: Dict[str, Any],
                                   ctx: Dict[str, Any],
                                   engine_cmd_parameter: Dict[str, Any],
                                   model_info) -> None:
-    """US8: DeepSeek 满血模型分布式长上下文时注入 dp/sp/cp/tp 并行策略。"""
+    """US8: DeepSeek 满血模型 16 卡长上下文时注入 dp/sp/cp/tp 并行策略。"""
     long_ctx_threshold = int(os.getenv("MINDIE_LONG_CONTEXT_THRESHOLD", "8192"))
     model_architecture = getattr(model_info, "model_architecture", None) if model_info else None
     total_seq_len = (
         (int(engine_cmd_parameter.get("input_length") or 0))
         + (int(engine_cmd_parameter.get("output_length") or 0))
     )
-    if (ctx.get('distributed')
-            and model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
+    if not (model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
             and total_seq_len > long_ctx_threshold):
-        def _safe_int_env(name: str, default: str) -> int:
-            val = os.getenv(name, default)
-            try:
-                return int(val)
-            except (ValueError, TypeError):
-                logger.warning("Invalid %s=%r, using default %s", name, val, default)
-                return int(default)
+        return
+
+    device_count = int(ctx.get("device_count", 1) or 1)
+    if ctx.get('distributed'):
         nnodes_actual = _resolve_distributed_node_count(ctx.get("node_ips"), ctx.get("nnodes"))
-        global_world_size = int(ctx.get("device_count", 1) or 1) * nnodes_actual
-        params['dp'] = _safe_int_env("MINDIE_DS_DP", "1")
-        params['cp'] = _safe_int_env("MINDIE_DS_CP", "2")
-        tp_default = max(1, global_world_size // max(1, params['dp'] * params['cp']))
-        params['tp'] = _safe_int_env("MINDIE_DS_TP", str(tp_default))
-        params['sp'] = _safe_int_env("MINDIE_DS_SP", str(params['tp']))
+    else:
+        nnodes_actual = 1
+    global_world_size = device_count * nnodes_actual
+    if global_world_size != 16 or (nnodes_actual, device_count) not in [(1, 16), (2, 8)]:
         logger.info(
-            "[US8] DeepSeek long-context enabled (seq=%d > %d): "
-            "dp=%d, sp=%d, cp=%d, tp=%d",
-            total_seq_len, long_ctx_threshold,
-            params['dp'], params['sp'], params['cp'], params['tp'],
+            "[US8] DeepSeek long-context CP/SP skipped: only 1x16 or 2x8 is supported "
+            "(nnodes=%d, device_count=%d, globalWorldSize=%d)",
+            nnodes_actual, device_count, global_world_size,
         )
+        return
+
+    def _safe_int_env(name: str, default: str) -> int:
+        val = os.getenv(name, default)
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            logger.warning("Invalid %s=%r, using default %s", name, val, default)
+            return int(default)
+
+    params['dp'] = _safe_int_env("MINDIE_DS_DP", "1")
+    params['cp'] = _safe_int_env("MINDIE_DS_CP", "2")
+    tp_default = max(1, global_world_size // max(1, params['dp'] * params['cp']))
+    params['tp'] = _safe_int_env("MINDIE_DS_TP", str(tp_default))
+    params['sp'] = _safe_int_env("MINDIE_DS_SP", str(params['tp']))
+    logger.info(
+        "[US8] DeepSeek long-context enabled (seq=%d > %d): "
+        "dp=%d, sp=%d, cp=%d, tp=%d",
+        total_seq_len, long_ctx_threshold,
+        params['dp'], params['sp'], params['cp'], params['tp'],
+    )
 
 
 def _set_mindie_distributed_params(params, ctx):

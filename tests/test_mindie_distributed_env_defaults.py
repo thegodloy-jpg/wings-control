@@ -363,7 +363,7 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(overrides["sp"], 8)
         self.assertEqual(overrides["cp"], 2)
 
-    def test_mindie_multinode_2x16_derives_cpsp_tp(self):
+    def test_mindie_multinode_2x16_preserves_explicit_cpsp_tp(self):
         overrides = _build_model_config_overrides(
             {"dp": 1, "tp": 16, "sp": 16, "cp": 2},
             is_distributed=True,
