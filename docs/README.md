@@ -12,6 +12,7 @@
 | [design-model-file-config-integration.md](design-model-file-config-integration.md) | 集成方案，说明如何接入 `config_loader.py` 和 `wings_entry.py` |
 | [design-model-file-config-mindie.md](design-model-file-config-mindie.md) | MindIE 专项说明，解释扁平参数到嵌套 `config.json` 的映射 |
 | [design-engine-version-defaults-analysis.md](design-engine-version-defaults-analysis.md) | 背景分析文档，记录版本默认配置方案的评审与演进路径 |
+| [vllm-advanced-start-command.md](vllm-advanced-start-command.md) | vLLM / vLLM-Ascend 高级特性开启后 `start_command.sh` 关键片段验证 |
 
 ## 本轮评审后的统一结论
 

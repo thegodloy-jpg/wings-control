@@ -131,6 +131,23 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
 
         self.assertIn('export OMP_NUM_THREADS="${OMP_NUM_THREADS:-10}"', commands)
 
+    def test_builtin_distributed_defaults_include_910b_atb_compat_env(self):
+        commands = _build_mindie_distributed_env_default_commands({"distributed": True, "nnodes": 2})
+        rendered = "\n".join(commands)
+
+        self.assertIn('export ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE="${ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE:-3}"', rendered)
+        self.assertIn('export ATB_WORKSPACE_MEM_ALLOC_GLOBAL="${ATB_WORKSPACE_MEM_ALLOC_GLOBAL:-1}"', rendered)
+        self.assertIn('export TASK_QUEUE_ENABLE="${TASK_QUEUE_ENABLE:-2}"', rendered)
+        self.assertIn('export CPU_AFFINITY_CONF="${CPU_AFFINITY_CONF:-1}"', rendered)
+        self.assertIn('export ATB_LAYER_INTERNAL_TENSOR_REUSE="${ATB_LAYER_INTERNAL_TENSOR_REUSE:-1}"', rendered)
+        self.assertIn('export ATB_OPERATION_EXECUTE_ASYNC="${ATB_OPERATION_EXECUTE_ASYNC:-1}"', rendered)
+        self.assertIn('export ATB_CONVERT_NCHW_TO_ND="${ATB_CONVERT_NCHW_TO_ND:-1}"', rendered)
+        self.assertIn('export ATB_CONTEXT_WORKSPACE_SIZE="${ATB_CONTEXT_WORKSPACE_SIZE:-0}"', rendered)
+        self.assertIn('export ATB_LAUNCH_KERNEL_WITH_TILING="${ATB_LAUNCH_KERNEL_WITH_TILING:-1}"', rendered)
+        self.assertIn('export ATB_LLM_ENABLE_AUTO_TRANSPOSE="${ATB_LLM_ENABLE_AUTO_TRANSPOSE:-0}"', rendered)
+        self.assertIn('export ATB_LLM_LCOC_ENABLE="${ATB_LLM_LCOC_ENABLE:-0}"', rendered)
+        self.assertIn("export MINDIE_LOG_TO_STDOUT=1", rendered)
+
     def test_distributed_defaults_do_not_override_npu_memory_fraction(self):
         commands = _build_mindie_distributed_env_default_commands({"distributed": True, "nnodes": 2})
 

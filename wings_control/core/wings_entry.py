@@ -54,12 +54,12 @@ logger = logging.getLogger(__name__)
 # 此时直接使用用户提供的值，不再按特性开关自动生成。
 # ────────────────────────────────────────────────────────────────────────────
 
-# 引擎名到 patch options key 的映射
-# 仅包含 supported_features.json 中实际注册的引擎
-# vllm_ascend 复用 vllm 的补丁体系（install.py _ENGINE_TO_EXTRAS 中统一为 "vllm"）
+# 引擎名到 patch options key 的映射。
+# 仅包含 supported_features.json 中实际注册的引擎；vllm_ascend 必须保持原始 key，
+# 避免把页面/配置中最终选定的 vllm_ascend 改写为 vllm。
 _ENGINE_PATCH_KEY_MAP = {
     "vllm": "vllm",
-    "vllm_ascend": "vllm",
+    "vllm_ascend": "vllm_ascend",
 }
 
 # 高级特性环境变量 → features 名称映射（与 supported_features.json 中的 feature key 对齐）

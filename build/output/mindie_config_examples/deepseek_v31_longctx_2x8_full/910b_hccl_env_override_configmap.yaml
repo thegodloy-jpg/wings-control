@@ -17,6 +17,26 @@ data:
     # Single-card dual-node example. Replace both placeholders with real 910B hccn/RDMA IPs.
     HCCL_DEVICE_IPS=node0_card0_hccn_ip;node1_card0_hccn_ip
 
+    # 910B MindIE/ATB compatibility values. These are also useful as explicit
+    # site-level overrides and document the manual 910B launch baseline.
+    ATB_WORKSPACE_MEM_ALLOC_ALG_TYPE=3
+    ATB_WORKSPACE_MEM_ALLOC_GLOBAL=1
+    TASK_QUEUE_ENABLE=2
+    CPU_AFFINITY_CONF=1
+    ATB_LAYER_INTERNAL_TENSOR_REUSE=1
+    ATB_OPERATION_EXECUTE_ASYNC=1
+    ATB_CONVERT_NCHW_TO_ND=1
+    ATB_CONTEXT_WORKSPACE_SIZE=0
+    ATB_LAUNCH_KERNEL_WITH_TILING=1
+    ATB_LLM_ENABLE_AUTO_TRANSPOSE=0
+    ATB_LLM_LCOC_ENABLE=0
+    HCCL_EXEC_TIMEOUT=0
+
+    # Do not set NPU_MEMORY_FRACTION here if you want it to override the project
+    # default. set_mindie_env.sh runs later and exports NPU_MEMORY_FRACTION=0.96.
+    # To intentionally use 0.9, set GPU_MEMORY_UTILIZATION=0.9 in the sidecar/CLI.
+    # NPU_MEMORY_FRACTION=0.9
+
     # Two-node x 8-card example. Uncomment and replace when running 2x8.
     # HCCL_DEVICE_IPS=node0_card0_hccn_ip,node0_card1_hccn_ip,node0_card2_hccn_ip,node0_card3_hccn_ip,node0_card4_hccn_ip,node0_card5_hccn_ip,node0_card6_hccn_ip,node0_card7_hccn_ip;node1_card0_hccn_ip,node1_card1_hccn_ip,node1_card2_hccn_ip,node1_card3_hccn_ip,node1_card4_hccn_ip,node1_card5_hccn_ip,node1_card6_hccn_ip,node1_card7_hccn_ip
 

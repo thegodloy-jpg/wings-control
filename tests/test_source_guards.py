@@ -75,6 +75,12 @@ class TestSourceGuards(unittest.TestCase):
             "set -u",
         ])
 
+    def test_vllm_ascend_accel_patch_key_is_not_rewritten_to_vllm(self):
+        source = (ROOT / "wings_control" / "core" / "wings_entry.py").read_text(encoding="utf-8")
+
+        self.assertIn('"vllm_ascend": "vllm_ascend"', source)
+        self.assertNotIn('"vllm_ascend": "vllm"', source)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
