@@ -19,6 +19,7 @@ import os
 import re
 import shlex
 import shutil
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,16 @@ DEFAULT_SERVER_PORT = int(os.getenv("ENGINE_PORT", "17000"))
 DEFAULT_MINDIE_MASTER_PORT = int(os.getenv("MINDIE_MASTER_PORT", "27070"))  # 分布式主节点端口
 DEFAULT_HCCL_IP_EXCHANGE_PORT = int(os.getenv("HCCL_IP_EXCHANGE_PORT", "27071"))  # hccnX IP 交换端口
 MINDIE_DISTRIBUTED_ENV_DEFAULTS_FILENAME = "mindie_distributed_env.sh"
+
+
+@dataclass(frozen=True)
+class _MindieParallelTopology:
+    """Topology values used for MindIE parallel parameter derivation."""
+
+    is_distributed: bool
+    nnodes: int
+    world_size: int
+    global_world_size: int
 
 _EXPORT_LINE_RE = re.compile(r"^export\s+([A-Za-z_][A-Za-z0-9_]*)=")
 _EXPORT_ASSIGNMENT_RE = re.compile(r"^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -530,7 +541,10 @@ def _build_rank_table_postprocess_commands() -> List[str]:
         "python3 << 'HCCL_DEVICE_IPS_PATCH_EOF'",
         "import json, os",
         "path = os.environ.get('RANK_TABLE_FILE', '')",
-        "groups = [[ip.strip() for ip in part.split(',') if ip.strip()] for part in os.environ.get('HCCL_DEVICE_IPS', '').split(';')]",
+        (
+            "groups = [[ip.strip() for ip in part.split(',') if ip.strip()] "
+            "for part in os.environ.get('HCCL_DEVICE_IPS', '').split(';')]"
+        ),
         "with open(path, 'r', encoding='utf-8') as f:",
         "    rank_table = json.load(f)",
         "changed = 0",
@@ -552,7 +566,11 @@ def _build_rank_table_postprocess_commands() -> List[str]:
         "fi",
         "echo '[mindie] HCCL network interfaces:'",
         "ip -o -4 addr show 2>/dev/null | grep -E 'hccn|eth|bond|en|ib' || true",
-        "if [ -f /etc/hccn.conf ]; then echo '[mindie] /etc/hccn.conf:'; sed -n '1,120p' /etc/hccn.conf; else echo '[mindie] WARN: /etc/hccn.conf not found'; fi",
+        (
+            "if [ -f /etc/hccn.conf ]; then echo '[mindie] /etc/hccn.conf:'; "
+            "sed -n '1,120p' /etc/hccn.conf; "
+            "else echo '[mindie] WARN: /etc/hccn.conf not found'; fi"
+        ),
         "python3 << 'HCCL_RANK_TABLE_DIAG_EOF'",
         "import json, os",
         "path = os.environ.get('RANK_TABLE_FILE', '')",
@@ -566,19 +584,35 @@ def _build_rank_table_postprocess_commands() -> List[str]:
         "    with open(path, 'r', encoding='utf-8') as f:",
         "        rank_table = json.load(f)",
         "    servers = rank_table.get('server_list', [])",
-        "    print(f'[mindie] rank table server_count={rank_table.get(\"server_count\")} actual_servers={len(servers)}')",
+        (
+            "    print(f'[mindie] rank table server_count="
+            "{rank_table.get(\"server_count\")} actual_servers={len(servers)}')"
+        ),
         "    for server_idx, server in enumerate(servers):",
         "        if not isinstance(server, dict):",
         "            continue",
-        "        host_like = {str(server.get(k, '')) for k in ('server_id', 'container_ip', 'host_nic_ip') if server.get(k)}",
-        "        print(f'[mindie] rank table server[{server_idx}] server_id={server.get(\"server_id\")} container_ip={server.get(\"container_ip\")}')",
+        (
+            "        host_like = {str(server.get(k, '')) "
+            "for k in ('server_id', 'container_ip', 'host_nic_ip') if server.get(k)}"
+        ),
+        (
+            "        print(f'[mindie] rank table server[{server_idx}] "
+            "server_id={server.get(\"server_id\")} "
+            "container_ip={server.get(\"container_ip\")}')"
+        ),
         "        for device in server.get('device', []) or []:",
         "            if not isinstance(device, dict):",
         "                continue",
         "            device_ip = str(device.get('device_ip', ''))",
-        "            print(f'[mindie] rank table device rank={device.get(\"rank_id\")} device_id={device.get(\"device_id\")} device_ip={device_ip}')",
+        (
+            "            print(f'[mindie] rank table device rank={device.get(\"rank_id\")} "
+            "device_id={device.get(\"device_id\")} device_ip={device_ip}')"
+        ),
         "            if device_ip in host_like:",
-        "                print(f'[mindie] WARN: rank table device_ip {device_ip} equals server/container IP; 910B multi-node usually needs hccn/RDMA IP')",
+        (
+            "                print(f'[mindie] WARN: rank table device_ip {device_ip} "
+            "equals server/container IP; 910B multi-node usually needs hccn/RDMA IP')"
+        ),
         "HCCL_RANK_TABLE_DIAG_EOF",
     ]
 
@@ -1245,10 +1279,7 @@ def _build_model_deploy_overrides(engine_config: Dict[str, Any]) -> Dict[str, An
 
 def _inject_multinode_tp_dp(
     engine_config: Dict[str, Any],
-    is_distributed: bool,
-    nnodes: int,
-    world_size: int,
-    global_world_size: int,
+    topology: _MindieParallelTopology,
     overrides: Dict[str, Any],
 ) -> None:
     """MindIE 2.3.0 多节点必须显式设置 tp/dp，否则内部 DP 计算返回 0 触发 C++ 崩溃。
@@ -1257,35 +1288,35 @@ def _inject_multinode_tp_dp(
     可见 NPU 数。普通多节点模型由全局 TP 承载，DP 固定为 1；CP/SP
     场景遵循 CP * DP * TP = globalWorldSize 且 SP = TP。
     """
-    if not (is_distributed and nnodes > 1 and global_world_size > 0):
+    if not (topology.is_distributed and topology.nnodes > 1 and topology.global_world_size > 0):
         return
     effective_dp = int(overrides.get("dp", 1) or 1)
     effective_cp = int(overrides.get("cp", 0) or 0)
     if effective_cp > 0:
         divisor = max(1, effective_dp * effective_cp)
-        if global_world_size % divisor != 0:
+        if topology.global_world_size % divisor != 0:
             logger.warning(
                 "[mindie] CP/SP parallelism mismatch: globalWorldSize=%d is not divisible by dp=%d * cp=%d; "
                 "fallback to tp=globalWorldSize",
-                global_world_size, effective_dp, effective_cp,
+                topology.global_world_size, effective_dp, effective_cp,
             )
-            effective_tp = int(global_world_size)
+            effective_tp = int(topology.global_world_size)
         else:
-            effective_tp = int(global_world_size // divisor)
+            effective_tp = int(topology.global_world_size // divisor)
         overrides["cp"] = effective_cp
         overrides["sp"] = effective_tp
     else:
         effective_dp = 1
-        effective_tp = int(global_world_size)
+        effective_tp = int(topology.global_world_size)
     overrides["dp"] = effective_dp
     overrides["tp"] = effective_tp
     if engine_config.get("isMOE", False):
-        overrides["moe_ep"] = int(global_world_size)
+        overrides["moe_ep"] = int(topology.global_world_size)
         overrides["moe_tp"] = 1
     logger.info(
         "[mindie] Multi-node: set dp=%d, tp=%d from globalWorldSize=%d "
         "(config worldSize=%d is local device count)",
-        effective_dp, effective_tp, global_world_size, world_size,
+        effective_dp, effective_tp, topology.global_world_size, topology.world_size,
     )
 
 
@@ -1385,7 +1416,9 @@ def _build_model_config_overrides(
     _inject_moe_config(engine_config, world_size, overrides)
     _inject_parallel_passthrough(engine_config, overrides)
     _inject_multinode_tp_dp(
-        engine_config, is_distributed, nnodes, world_size, global_world_size, overrides
+        engine_config,
+        _MindieParallelTopology(is_distributed, nnodes, world_size, global_world_size),
+        overrides,
     )
     _inject_mtp_plugin(engine_config, overrides)
     _inject_function_call_config(engine_config, overrides)

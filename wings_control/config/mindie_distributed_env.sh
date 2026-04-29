@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # MindIE 多节点分布式环境变量默认值。
 # 保持仅包含 export 命令；adapter 会将这些命令内联到 start_command.sh。
 
