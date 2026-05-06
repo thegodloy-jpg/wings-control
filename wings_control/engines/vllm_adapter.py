@@ -1888,14 +1888,19 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
     """返回 dp_deployment 模式的分布式通信环境变量命令。"""
     net_if = os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0"))
     if is_ascend:
+        hccl_connect_timeout = os.getenv('HCCL_CONNECT_TIMEOUT', '1800')
+        hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
         return [
             # 与 Ray 路径保持一致：先建立 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），
             # HCCL_IF_IP 直接复用，避免多网卡场景下与 vLLM 通信走错网卡。
             _SH_VLLM_HOST,
+            "export HCCL_WHITELIST_DISABLE=1",
             "export HCCL_IF_IP=$VLLM_HOST_IP",
             f"export GLOO_SOCKET_IFNAME={net_if}",
             f"export TP_SOCKET_IFNAME={net_if}",
             f"export HCCL_SOCKET_IFNAME={net_if}",
+            f"export HCCL_CONNECT_TIMEOUT={hccl_connect_timeout}",
+            f"export HCCL_EXEC_TIMEOUT={hccl_exec_timeout}",
             "export OMP_PROC_BIND=false",
             f"export OMP_NUM_THREADS={os.getenv('OMP_NUM_THREADS', '100')}",
             "export HCCL_BUFFSIZE=1024",
@@ -1934,6 +1939,7 @@ def _transform_dp_cmd(cmd: str) -> str:
 def _build_dp_deployment_commands(
     params: Dict[str, Any],
     ctx: DistScriptCtx,
+    sparse_args: str = "",
 ) -> List[str]:
     """构建 dp_deployment 模式的脚本命令列表。"""
     parts: List[str] = []
@@ -1951,6 +1957,8 @@ def _build_dp_deployment_commands(
 
     parts.extend(_build_dp_env_commands(ctx.is_ascend, params))
     dp_cmd = _transform_dp_cmd(ctx.cmd)
+    speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
+    dp_cmd = f"{dp_cmd}{speculative_extra}{sparse_args}"
 
     if ctx.node_rank == 0:
         parts.append(
@@ -2041,7 +2049,7 @@ def _build_vllm_distributed_script(
         else:
             script_parts.extend(_build_ray_worker_commands(params, ctx))
     else:
-        script_parts.extend(_build_dp_deployment_commands(params, ctx))
+        script_parts.extend(_build_dp_deployment_commands(params, ctx, sparse_args))
     return "\n".join(script_parts) + "\n"
 
 

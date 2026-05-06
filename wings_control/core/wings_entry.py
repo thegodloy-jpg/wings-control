@@ -165,8 +165,13 @@ def _prepare_merged_params(launch_args: LaunchArgs, port_plan: PortPlan, hardwar
     merged["nnodes"] = getattr(launch_args, "nnodes", 1)
     merged["node_rank"] = node_rank
     merged["head_node_addr"] = getattr(launch_args, "head_node_addr", "127.0.0.1")
-    merged["distributed_executor_backend"] = getattr(
-        launch_args, "distributed_executor_backend", "ray",
+    # load_and_merge_configs() may auto-select a safer backend for specific
+    # model/hardware combinations (for example Ascend DeepSeek uses
+    # dp_deployment instead of Ray). Do not overwrite that decision with the
+    # LaunchArgs parser default of "ray" unless the merge layer left it unset.
+    merged.setdefault(
+        "distributed_executor_backend",
+        getattr(launch_args, "distributed_executor_backend", "ray"),
     )
     _inject_legacy_distributed_aliases(merged, launch_args)
     engine_cfg = dict(merged.get("engine_config", {}))
