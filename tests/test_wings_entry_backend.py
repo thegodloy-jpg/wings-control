@@ -63,6 +63,33 @@ def _launch_args(**overrides):
 
 
 class TestWingsEntryBackend(unittest.TestCase):
+    def test_load_merge_auto_selects_dp_for_ascend_deepseek(self):
+        class _FakeDeepSeekModelInfo:
+            model_architecture = "DeepseekV3ForCausalLM"
+            model_name = "DeepSeek-V3.1-w8a8"
+            model_path = "/models/deepseek-v31"
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def identify_model_architecture(self):
+                return self.model_architecture
+
+            def identify_model_type(self):
+                return "llm"
+
+        from core.config_loader import load_and_merge_configs
+
+        launch_args = _launch_args().to_namespace()
+        hardware = {"device": "ascend", "count": 8, "details": []}
+
+        with patch("core.config_loader.ModelIdentifier", _FakeDeepSeekModelInfo):
+            merged = load_and_merge_configs(hardware, launch_args)
+
+        self.assertEqual(merged["distributed_executor_backend"], "dp_deployment")
+        self.assertIn("rpc_port", merged)
+        self.assertIn("nixl_port", merged)
+
     def test_preserves_auto_selected_dp_deployment_backend(self):
         merged_from_config_loader = {
             "engine": "vllm_ascend",

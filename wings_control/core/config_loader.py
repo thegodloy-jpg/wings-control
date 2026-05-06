@@ -2095,6 +2095,8 @@ def load_and_merge_configs(
 
     # 2. 引擎自动选择/校验
     cmd_known_params = _auto_select_engine(hardware_env, cmd_known_params, model_info)
+    if cmd_known_params.get("distributed"):
+        _handle_distributed(cmd_known_params.get("engine"), cmd_known_params, model_info)
 
     # 3. 加载用户配置
     config = known_args.config_file
