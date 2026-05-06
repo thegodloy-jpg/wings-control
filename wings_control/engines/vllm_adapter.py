@@ -2022,7 +2022,6 @@ def _build_dp_deployment_commands(
             f" --data-parallel-rpc-port {dp_rpc_port}"
             f" --data-parallel-size {dp_size}"
             f" --data-parallel-size-local {dp_size_local}"
-            f" --data-parallel-external-lb"
         )
     else:
         dp_cmd_headless = re.sub(r"\s*--host\s+(?:'[^']*'|\S+)", "", dp_cmd)
@@ -2033,7 +2032,7 @@ def _build_dp_deployment_commands(
             f" --data-parallel-rpc-port {dp_rpc_port}"
             f" --data-parallel-size {dp_size}"
             f" --data-parallel-size-local {dp_size_local}"
-            f" --data-parallel-external-lb --headless"
+            f" --headless"
             f" --data-parallel-start-rank {dp_start_rank}"
         )
     return parts
