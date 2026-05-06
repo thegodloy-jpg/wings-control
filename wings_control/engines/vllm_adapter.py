@@ -1924,7 +1924,7 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
     if is_ascend:
         hccl_connect_timeout = os.getenv('HCCL_CONNECT_TIMEOUT', '1800')
         hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
-        return [
+        env_commands = [
             # 与 Ray 路径保持一致：先建立 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），
             # HCCL_IF_IP 直接复用，避免多网卡场景下与 vLLM 通信走错网卡。
             _SH_VLLM_HOST,
@@ -1944,6 +1944,10 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
             "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
             "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
         ]
+        if _is_deepseek_ascend_dp_deployment(params):
+            engine_ready_timeout = os.getenv("VLLM_ENGINE_READY_TIMEOUT_S", "7200")
+            env_commands.append(f"export VLLM_ENGINE_READY_TIMEOUT_S={engine_ready_timeout}")
+        return env_commands
     return [
         f"export GLOO_SOCKET_IFNAME={net_if}",
         f"export TP_SOCKET_IFNAME={net_if}",

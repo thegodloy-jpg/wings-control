@@ -78,6 +78,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("${LD_LIBRARY_PATH:-}", script)
         self.assertNotIn("${ASCEND_CUSTOM_OPP_PATH}", script)
         self.assertNotIn("${LD_LIBRARY_PATH}", script)
+        self.assertIn("export VLLM_ENGINE_READY_TIMEOUT_S=7200", script)
         self.assertNotIn("ray start --head", script)
         self.assertNotIn("--distributed-executor-backend ray", script)
         self.assertNotIn("--speculative-config", script)
