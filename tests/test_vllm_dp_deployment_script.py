@@ -91,6 +91,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("--speculative-config", script)
         self.assertIn("--enable-expert-parallel", script)
         self.assertIn("--async-scheduling", script)
+        self.assertIn("--dtype bfloat16", script)
 
     def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
         params = _base_params(node_rank=0)
@@ -156,6 +157,16 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("--async-scheduling", script)
         self.assertNotIn("--enable-prefix-caching", script)
         self.assertIn("--no-enable-prefix-caching", script)
+
+    def test_deepseek_dp_deployment_forces_bfloat16_for_w8a8_quant_matmul(self):
+        params = _base_params(node_rank=0)
+        params["engine_config"]["dtype"] = "float16"
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertIn("--dtype bfloat16", script)
+        self.assertNotIn("--dtype float16", script)
 
 
 if __name__ == "__main__":

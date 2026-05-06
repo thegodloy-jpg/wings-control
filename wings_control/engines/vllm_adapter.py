@@ -981,6 +981,16 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         engine_config["enable_expert_parallel"] = True
         engine_config["async_scheduling"] = True
 
+        dtype_value = str(engine_config.get("dtype", "auto") or "auto").strip().lower()
+        if dtype_value in ("auto", "float16", "fp16", "half", "torch.float16"):
+            if dtype_value != "bfloat16":
+                logger.warning(
+                    "[DeepSeek Ascend DP] forcing dtype=bfloat16 for W8A8/ascend "
+                    "quantization because aclnnQuantMatmulV4 does not support "
+                    "FP16 scale tensors."
+                )
+            engine_config["dtype"] = "bfloat16"
+
     # "task" 在旧版 vLLM (v0.7) 中为 --task 参数，新版改为 --runner
     removed_task = engine_config.pop("task", None)
     if removed_task and removed_task != "generate":
