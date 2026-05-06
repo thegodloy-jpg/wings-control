@@ -664,15 +664,19 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
                     f"export OMP_NUM_THREADS={omp_threads}",
                     f"export HCCL_BUFFSIZE={hccl_buffsize}",
                     "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
-                    "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-                    "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-                    "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-                    "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
                 ])
                 if is_deepseek_v31:
                     env_commands.extend([
+                        "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
                         "export HCCL_INTRA_PCIE_ENABLE=1",
                         "export HCCL_INTRA_ROCE_ENABLE=0",
+                    ])
+                else:
+                    env_commands.extend([
+                        "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
+                        "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
+                        "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
+                        "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
                     ])
     return env_commands
 
@@ -694,6 +698,13 @@ def _build_deepseek_fp8_env_commands(params: Dict[str, Any], engine: str) -> Lis
     """
     env_commands = []
     model_path = params.get("model_path")
+
+    if _is_deepseek_v31_ascend_dp_deployment(params):
+        logger.info(
+            "[DeepSeek V3.1 Ascend DP] Skip generic DeepSeek FP8 env vars; "
+            "online dp_deployment follows official V3.1 command envs."
+        )
+        return env_commands
 
     if engine == "vllm_ascend" and model_path and is_deepseek_series_fp8(model_path):
         env_commands.extend([
@@ -986,16 +997,6 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
             )
         engine_config["enable_expert_parallel"] = True
         engine_config["async_scheduling"] = True
-
-        dtype_value = str(engine_config.get("dtype", "auto") or "auto").strip().lower()
-        if dtype_value in ("auto", "float16", "fp16", "half", "torch.float16"):
-            if dtype_value != "bfloat16":
-                logger.warning(
-                    "[DeepSeek Ascend DP] forcing dtype=bfloat16 for W8A8/ascend "
-                    "quantization because aclnnQuantMatmulV4 does not support "
-                    "FP16 scale tensors."
-                )
-            engine_config["dtype"] = "bfloat16"
 
     # "task" 在旧版 vLLM (v0.7) 中为 --task 参数，新版改为 --runner
     removed_task = engine_config.pop("task", None)
@@ -1982,15 +1983,19 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
             f"export OMP_NUM_THREADS={omp_threads}",
             f"export HCCL_BUFFSIZE={hccl_buffsize}",
             "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
-            "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-            "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-            "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-            "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
         ]
         if is_deepseek_v31:
             env_commands.extend([
+                "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
                 "export HCCL_INTRA_PCIE_ENABLE=1",
                 "export HCCL_INTRA_ROCE_ENABLE=0",
+            ])
+        else:
+            env_commands.extend([
+                "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
+                "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
+                "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
+                "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
             ])
         if _is_deepseek_ascend_dp_deployment(params):
             engine_ready_timeout = os.getenv("VLLM_ENGINE_READY_TIMEOUT_S", "7200")

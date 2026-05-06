@@ -19,6 +19,12 @@ class _FakeDeepSeekModelIdentifier:
         self.model_quantize = ""
 
 
+class _FakeDeepSeekV32ModelIdentifier:
+    def __init__(self, *args, **kwargs):
+        self.model_architecture = "DeepseekV32ForCausalLM"
+        self.model_quantize = ""
+
+
 def _base_params(node_rank=0, enable_speculative_decode=False):
     engine_config = {
         "trust_remote_code": True,
@@ -67,6 +73,13 @@ def _generic_deepseek_params(node_rank=0):
     return params
 
 
+def _deepseek_named_params(model_name, node_rank=0):
+    params = _base_params(node_rank=node_rank)
+    params["model_name"] = model_name
+    params["engine_config"]["served_model_name"] = model_name
+    return params
+
+
 class TestVllmDpDeploymentScript(unittest.TestCase):
     def test_deepseek_dp_deployment_rank0_uses_vllm_serve_not_ray(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
@@ -85,20 +98,19 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export HCCL_EXEC_TIMEOUT=7200", script)
         self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertIn("export HCCL_BUFFSIZE=200", script)
+        self.assertIn("export VLLM_ASCEND_BALANCE_SCHEDULING=1", script)
+        self.assertNotIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
+        self.assertNotIn("export VLLM_ASCEND_ENABLE_NZ=0", script)
+        self.assertNotIn("deepseek-v32/vendors/customize", script)
         self.assertNotIn("export TASK_QUEUE_ENABLE=1", script)
         self.assertNotIn("export VLLM_USE_V1=1", script)
         self.assertNotIn("export ASCEND_BUFFER_POOL=4:8", script)
-        self.assertIn("${ASCEND_CUSTOM_OPP_PATH:-}", script)
-        self.assertIn("${LD_LIBRARY_PATH:-}", script)
-        self.assertNotIn("${ASCEND_CUSTOM_OPP_PATH}", script)
-        self.assertNotIn("${LD_LIBRARY_PATH}", script)
         self.assertIn("export VLLM_ENGINE_READY_TIMEOUT_S=7200", script)
         self.assertNotIn("ray start --head", script)
         self.assertNotIn("--distributed-executor-backend ray", script)
         self.assertNotIn("--speculative-config", script)
         self.assertIn("--enable-expert-parallel", script)
         self.assertIn("--async-scheduling", script)
-        self.assertIn("--dtype bfloat16", script)
 
     def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
         params = _base_params(node_rank=0)
@@ -148,6 +160,24 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export OMP_NUM_THREADS=100", script)
         self.assertIn("export HCCL_BUFFSIZE=1024", script)
 
+    def test_deepseek_v31_official_dp_envs_do_not_leak_to_deepseek_v3(self):
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(_deepseek_named_params("DeepSeek-V3-w8a8", node_rank=0))
+
+        self.assertNotIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
+        self.assertNotIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
+        self.assertIn("export OMP_NUM_THREADS=100", script)
+        self.assertIn("export HCCL_BUFFSIZE=1024", script)
+
+    def test_deepseek_v31_official_dp_envs_do_not_leak_to_deepseek_v32(self):
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekV32ModelIdentifier):
+            script = build_start_script(_deepseek_named_params("DeepSeek-V3.2-w8a8", node_rank=0))
+
+        self.assertNotIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
+        self.assertNotIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
+        self.assertIn("export OMP_NUM_THREADS=100", script)
+        self.assertIn("export HCCL_BUFFSIZE=1024", script)
+
     def test_deepseek_dp_deployment_speculative_switch_appends_mtp(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(_base_params(node_rank=0, enable_speculative_decode=True))
@@ -173,16 +203,6 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("--async-scheduling", script)
         self.assertNotIn("--enable-prefix-caching", script)
         self.assertIn("--no-enable-prefix-caching", script)
-
-    def test_deepseek_dp_deployment_forces_bfloat16_for_w8a8_quant_matmul(self):
-        params = _base_params(node_rank=0)
-        params["engine_config"]["dtype"] = "float16"
-
-        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
-            script = build_start_script(params)
-
-        self.assertIn("--dtype bfloat16", script)
-        self.assertNotIn("--dtype float16", script)
 
 
 if __name__ == "__main__":
