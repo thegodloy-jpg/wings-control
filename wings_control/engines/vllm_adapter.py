@@ -652,22 +652,28 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
                     "export NCCL_NET_GDR_LEVEL=SYS",
                 ])
             elif engine == "vllm_ascend":
+                is_deepseek_v31 = _is_deepseek_v31_ascend_dp_deployment(params)
+                omp_threads = os.getenv('OMP_NUM_THREADS', '1' if is_deepseek_v31 else '10')
+                hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '200' if is_deepseek_v31 else '1024')
                 env_commands.extend([
                     f"export HCCL_IF_IP={shlex.quote(current_ip)}",
                     f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
                     f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
                     f"export HCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    "export HCCL_INTRA_PCIE_ENABLE=1",
-                    "export HCCL_INTRA_ROCE_ENABLE=0",
                     "export OMP_PROC_BIND=false",
-                    f"export OMP_NUM_THREADS={os.getenv('OMP_NUM_THREADS', '1')}",
-                    f"export HCCL_BUFFSIZE={os.getenv('HCCL_BUFFSIZE', '200')}",
+                    f"export OMP_NUM_THREADS={omp_threads}",
+                    f"export HCCL_BUFFSIZE={hccl_buffsize}",
                     "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
                     "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
                     "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
                     "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
                     "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
                 ])
+                if is_deepseek_v31:
+                    env_commands.extend([
+                        "export HCCL_INTRA_PCIE_ENABLE=1",
+                        "export HCCL_INTRA_ROCE_ENABLE=0",
+                    ])
     return env_commands
 
 
@@ -1015,6 +1021,28 @@ def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
         params.get("model_type"),
     )
     return model_info.model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
+
+
+def _is_deepseek_v31_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
+    """判断当前启动是否为 DeepSeek-V3.1 Ascend dp_deployment 路径。"""
+    if not _is_deepseek_ascend_dp_deployment(params):
+        return False
+    candidates: List[str] = []
+    for key in ("model_name", "model_path"):
+        value = params.get(key)
+        if value:
+            candidates.append(str(value))
+    served_name = params.get("engine_config", {}).get("served_model_name")
+    if isinstance(served_name, list):
+        candidates.extend(str(item) for item in served_name)
+    elif served_name:
+        candidates.append(str(served_name))
+
+    for item in candidates:
+        normalized = item.lower().replace("_", "-")
+        if "deepseek" in normalized and ("v3.1" in normalized or "v31" in normalized):
+            return True
+    return False
 
 
 def _strip_cli_flag(cmd: str, flag: str) -> str:
@@ -1936,6 +1964,9 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
     if is_ascend:
         hccl_connect_timeout = os.getenv('HCCL_CONNECT_TIMEOUT', '1800')
         hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
+        is_deepseek_v31 = _is_deepseek_v31_ascend_dp_deployment(params)
+        omp_threads = os.getenv('OMP_NUM_THREADS', '1' if is_deepseek_v31 else '100')
+        hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '200' if is_deepseek_v31 else '1024')
         env_commands = [
             # 与 Ray 路径保持一致：先建立 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），
             # HCCL_IF_IP 直接复用，避免多网卡场景下与 vLLM 通信走错网卡。
@@ -1945,19 +1976,22 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
             f"export GLOO_SOCKET_IFNAME={net_if}",
             f"export TP_SOCKET_IFNAME={net_if}",
             f"export HCCL_SOCKET_IFNAME={net_if}",
-            "export HCCL_INTRA_PCIE_ENABLE=1",
-            "export HCCL_INTRA_ROCE_ENABLE=0",
             f"export HCCL_CONNECT_TIMEOUT={hccl_connect_timeout}",
             f"export HCCL_EXEC_TIMEOUT={hccl_exec_timeout}",
             "export OMP_PROC_BIND=false",
-            f"export OMP_NUM_THREADS={os.getenv('OMP_NUM_THREADS', '1')}",
-            f"export HCCL_BUFFSIZE={os.getenv('HCCL_BUFFSIZE', '200')}",
+            f"export OMP_NUM_THREADS={omp_threads}",
+            f"export HCCL_BUFFSIZE={hccl_buffsize}",
             "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
             "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
             "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
             "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
             "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
         ]
+        if is_deepseek_v31:
+            env_commands.extend([
+                "export HCCL_INTRA_PCIE_ENABLE=1",
+                "export HCCL_INTRA_ROCE_ENABLE=0",
+            ])
         if _is_deepseek_ascend_dp_deployment(params):
             engine_ready_timeout = os.getenv("VLLM_ENGINE_READY_TIMEOUT_S", "7200")
             env_commands.append(f"export VLLM_ENGINE_READY_TIMEOUT_S={engine_ready_timeout}")

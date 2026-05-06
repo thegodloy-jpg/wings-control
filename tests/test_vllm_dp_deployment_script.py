@@ -60,6 +60,13 @@ def _base_params(node_rank=0, enable_speculative_decode=False):
     }
 
 
+def _generic_deepseek_params(node_rank=0):
+    params = _base_params(node_rank=node_rank)
+    params["model_name"] = "DeepSeek-R1-w8a8"
+    params["engine_config"]["served_model_name"] = "DeepSeek-R1-w8a8"
+    return params
+
+
 class TestVllmDpDeploymentScript(unittest.TestCase):
     def test_deepseek_dp_deployment_rank0_uses_vllm_serve_not_ray(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
@@ -131,6 +138,15 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("ray start --address", script)
         self.assertNotIn("--host 10.254.124.178", script)
         self.assertNotIn("--port 17000", script)
+
+    def test_deepseek_v31_official_dp_envs_do_not_leak_to_generic_deepseek(self):
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(_generic_deepseek_params(node_rank=0))
+
+        self.assertNotIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
+        self.assertNotIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
+        self.assertIn("export OMP_NUM_THREADS=100", script)
+        self.assertIn("export HCCL_BUFFSIZE=1024", script)
 
     def test_deepseek_dp_deployment_speculative_switch_appends_mtp(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
