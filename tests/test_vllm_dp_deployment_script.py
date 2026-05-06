@@ -72,6 +72,8 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("--data-parallel-rank 0", script)
         self.assertNotIn("--data-parallel-external-lb", script)
         self.assertIn("export HCCL_WHITELIST_DISABLE=1", script)
+        self.assertIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
+        self.assertIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
         self.assertIn("export HCCL_CONNECT_TIMEOUT=1800", script)
         self.assertIn("export HCCL_EXEC_TIMEOUT=7200", script)
         self.assertIn("export OMP_NUM_THREADS=10", script)
