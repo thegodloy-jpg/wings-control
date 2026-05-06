@@ -1012,6 +1012,14 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
             engine_config["async_scheduling"] = True
 
         if _is_deepseek_v31_ascend_dp_deployment(params):
+            # DeepSeek-V3.1 W8A8 dynamic quant on Ascend can fail in
+            # npu_quant_matmul when dtype=auto resolves to float16:
+            # output_dtype=float16 requires per-token scale to be float32, but
+            # vllm-ascend may produce float16 fake tensors during Dynamo checks.
+            # Default to bfloat16 for this official W8A8 DP path while keeping
+            # explicit --dtype / DTYPE overrides intact.
+            if "dtype" not in explicit_keys:
+                engine_config["dtype"] = "bfloat16"
             # DeepSeek-V3.1-w8a8-mtp-QuaRot is an official Ascend quantized
             # model, not a generic software FP8 fallback path. The official
             # vLLM-Ascend online DP command does not use --enforce-eager; if an
@@ -1285,16 +1293,27 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
                     engine_config[key] = merged
                     deep_merged.append(key)
             else:
-                # 用户给了非 dict 非空值（如 JSON 字符串）→ 强制覆盖以保证 JSON 正确性
-                # （上层 _merge_vllm_params 会把 dict 序列化为 str，导致 _format_cli_arg
-                #  走字符串规范化分支，可能丢失我们注入的子键。这里强制以 dict 覆盖。）
-                logger.warning(
-                    "[GLM-4.7-W8A8] %s already present as non-dict (%s); "
-                    "overriding with merged dict to ensure injection.",
-                    key, type(existing).__name__,
-                )
-                engine_config[key] = dict(default_val)
-                injected.append(key)
+                # 用户给了非 dict 非空值（如 JSON 字符串）：先尝试解析后深合并；
+                # 若无法解析，保留用户原值，避免模型特化注入覆盖上层显式传参。
+                parsed_existing = None
+                if isinstance(existing, str):
+                    try:
+                        parsed_existing = json.loads(existing)
+                    except (json.JSONDecodeError, ValueError):
+                        try:
+                            parsed_existing = ast.literal_eval(existing)
+                        except (ValueError, SyntaxError):
+                            parsed_existing = None
+                if isinstance(parsed_existing, dict):
+                    engine_config[key] = _deep_merge_user_priority(parsed_existing, default_val)
+                    deep_merged.append(key)
+                else:
+                    logger.warning(
+                        "[GLM-4.7-W8A8] %s already present as non-dict (%s); "
+                        "keeping user value and skipping default injection for this key.",
+                        key, type(existing).__name__,
+                    )
+                    skipped.append(key)
         else:
             if not is_empty:
                 skipped.append(key)

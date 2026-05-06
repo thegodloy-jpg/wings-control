@@ -111,6 +111,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("--speculative-config", script)
         self.assertIn("--enable-expert-parallel", script)
         self.assertIn("--async-scheduling", script)
+        self.assertIn("--dtype bfloat16", script)
         self.assertNotIn("--enforce-eager", script)
 
     def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
@@ -214,6 +215,16 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
 
         self.assertIn("--enforce-eager", script)
 
+    def test_deepseek_v31_preserves_explicit_dtype_override(self):
+        params = _base_params(node_rank=0)
+        params["_explicit_cli_keys"] = ["dtype"]
+        params["engine_config"]["dtype"] = "float16"
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertIn("--dtype float16", script)
+        self.assertNotIn("--dtype bfloat16", script)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

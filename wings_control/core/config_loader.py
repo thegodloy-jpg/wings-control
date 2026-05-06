@@ -376,6 +376,8 @@ def _set_deepseek_v31_ascend_quant_params(params, ctx, model_info) -> bool:
 
     if 'quantization' not in explicit_keys:
         params['quantization'] = 'ascend'
+    if 'dtype' not in explicit_keys:
+        params['dtype'] = 'bfloat16'
     if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
         params['no_enable_prefix_caching'] = True
     if 'enable_expert_parallel' not in explicit_keys:
@@ -532,6 +534,7 @@ def _set_soft_fp8(params, ctx, model_info):
     model_architecture = model_info.model_architecture
     model_name = model_info.model_name
     model_path = model_info.model_path
+    explicit_keys = _detect_explicit_cli_keys()
 
     if _is_deepseek_v31_model(model_name, model_path):
         logger.info("DeepSeek-V3.1 is handled by official Ascend quantized path, skip Soft FP8")
@@ -557,21 +560,26 @@ def _set_soft_fp8(params, ctx, model_info):
         logger.warning("Soft FP8 is only supported on Ascend devices")
         return
     elif is_qwen3_series_fp8(model_path, model_name):
-        params['quantization'] = 'ascend'
+        if 'quantization' not in explicit_keys:
+            params['quantization'] = 'ascend'
         # 对于 Qwen3MoeForCausalLM 模型，禁用专家并行
-        if model_architecture == "Qwen3MoeForCausalLM":
+        if model_architecture == "Qwen3MoeForCausalLM" and 'enable_expert_parallel' not in explicit_keys:
             params['enable_expert_parallel'] = False
             logger.info("Soft FP8 configured for Qwen3 MOE Series models")
         else:
             logger.info("Soft FP8 configured for Qwen3 Series models")
     elif is_deepseek_series_fp8(model_path):
-        params['quantization'] = 'ascend'
+        if 'quantization' not in explicit_keys:
+            params['quantization'] = 'ascend'
         is_deepseek_v31 = _is_deepseek_v31_model(model_name, model_path)
-        if not is_deepseek_v31:
+        if not is_deepseek_v31 and 'enforce_eager' not in explicit_keys:
             params["enforce_eager"] = True
-        params['no_enable_prefix_caching'] = True
-        params['enable_expert_parallel'] = True
-        params['async_scheduling'] = True
+        if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
+            params['no_enable_prefix_caching'] = True
+        if 'enable_expert_parallel' not in explicit_keys:
+            params['enable_expert_parallel'] = True
+        if 'async_scheduling' not in explicit_keys:
+            params['async_scheduling'] = True
         # 根据硬件配置设置张量并行大小，DeepSeek FP8 模型推荐使用 TP=4/DP=4
         # 但必须确保 device_count 足够，否则回退为全部设备
         try:
@@ -581,8 +589,10 @@ def _set_soft_fp8(params, ctx, model_info):
             device_count_val = 0
         recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
         recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
-        params['data_parallel_size'] = recommended_dp
-        params['tensor_parallel_size'] = recommended_tp
+        if 'data_parallel_size' not in explicit_keys:
+            params['data_parallel_size'] = recommended_dp
+        if 'tensor_parallel_size' not in explicit_keys:
+            params['tensor_parallel_size'] = recommended_tp
         params['use_kunlun_atb'] = False
         if is_deepseek_v31:
             logger.info("DeepSeek-V3.1 Ascend FP8/W8A8 configured without enforce_eager")
@@ -630,7 +640,8 @@ def _set_soft_fp4(params, ctx, model_info):
         return
 
     logger.info("Will use Soft FP4 configuration")
-    params['quantization'] = 'ascend'
+    if 'quantization' not in _detect_explicit_cli_keys():
+        params['quantization'] = 'ascend'
 
 
 def _validate_embedding_rerank_params(params, ctx):
@@ -693,6 +704,10 @@ def _set_common_params(params, engine_cmd_parameter, config_path):
 
 def _set_sequence_length(params, engine_cmd_parameter):
     """将 input_length + output_length 合并为 max_model_len 并写入 params。"""
+    explicit_keys = _detect_explicit_cli_keys()
+    if not explicit_keys.intersection({"input_length", "output_length"}):
+        return
+
     input_len = engine_cmd_parameter.get("input_length")
     output_len = engine_cmd_parameter.get("output_length")
 
@@ -1494,6 +1509,8 @@ _CLI_ENV_MAP: Dict[str, str] = {
     "quantization": "QUANTIZATION",
     "host": "HOST",
     "port": "PORT",
+    "input_length": "INPUT_LENGTH",
+    "output_length": "OUTPUT_LENGTH",
     "max_num_batched_tokens": "MAX_NUM_BATCHED_TOKENS",
     "trust_remote_code": "TRUST_REMOTE_CODE",
     "enable_chunked_prefill": "ENABLE_CHUNKED_PREFILL",
@@ -1706,7 +1723,6 @@ def _auto_select_engine(hardware_env: Dict[str, Any],
     device_name = _resolve_device_name(hardware_env)
     gpu_usage_mode = cmd_known_params.get("gpu_usage_mode", "full")
     engine = _resolve_engine_choice(device_type, device_name, gpu_usage_mode, cmd_known_params, model_info)
-
     if engine == 'mindie':
         _prepare_mindie_model_config(cmd_known_params, device_name)
 

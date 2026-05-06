@@ -3,6 +3,7 @@
 
 import os
 import sys
+import json
 import unittest
 from pathlib import Path
 
@@ -112,6 +113,24 @@ class TestInjectGlm47W8A8(unittest.TestCase):
         sc = p["engine_config"]["speculative_config"]
         self.assertEqual(sc["method"], "mtp")  # 用户优先
         self.assertEqual(sc["num_speculative_tokens"], 3)
+
+    def test_json_string_dict_config_is_merged_with_user_priority(self):
+        p = _params("glm47_w8a8", engine_config={
+            "speculative_config": json.dumps({"method": "custom_mtp"})
+        })
+        _inject_glm47_w8a8_engine_config(p)
+
+        sc = p["engine_config"]["speculative_config"]
+        self.assertEqual(sc["method"], "custom_mtp")
+        self.assertEqual(sc["num_speculative_tokens"], 3)
+
+    def test_unparseable_string_dict_config_is_not_overridden(self):
+        p = _params("glm47_w8a8", engine_config={
+            "speculative_config": "user-owned-value"
+        })
+        _inject_glm47_w8a8_engine_config(p)
+
+        self.assertEqual(p["engine_config"]["speculative_config"], "user-owned-value")
 
     def test_compilation_config_injected_when_absent(self):
         p = _params("glm47_w8a8")

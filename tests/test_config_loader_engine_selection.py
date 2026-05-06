@@ -17,6 +17,7 @@ from core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
     _detect_mtp_moe_features,
     _set_deepseek_v31_ascend_quant_params,
+    _set_sequence_length,
     _set_soft_fp8,
     _set_mindie_common_params,
     _select_ascend_engine,
@@ -189,6 +190,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertTrue(handled)
         self.assertEqual(params["quantization"], "ascend")
+        self.assertEqual(params["dtype"], "bfloat16")
         self.assertNotIn("enforce_eager", params)
         self.assertEqual(params["tensor_parallel_size"], 4)
         self.assertEqual(params["data_parallel_size"], 2)
@@ -210,15 +212,19 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "device_count": 8,
                 "enforce_eager": True,
                 "tensor_parallel_size": 8,
+                "dtype": "float16",
             }
 
-            with patch.object(sys, "argv", ["prog", "--enforce-eager", "--tensor-parallel-size", "8"]):
+            with patch.object(sys, "argv", [
+                "prog", "--enforce-eager", "--tensor-parallel-size", "8", "--dtype", "float16"
+            ]):
                 handled = _set_deepseek_v31_ascend_quant_params(params, {"device": "ascend"}, model_info)
 
         self.assertTrue(handled)
         self.assertIs(params["enforce_eager"], True)
         self.assertEqual(params["tensor_parallel_size"], 8)
         self.assertEqual(params["data_parallel_size"], 2)
+        self.assertEqual(params["dtype"], "float16")
 
     def test_deepseek_v31_does_not_enter_soft_fp8_branch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -266,6 +272,51 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertEqual(params["quantization"], "ascend")
         self.assertIs(params["enforce_eager"], True)
+
+    def test_generic_deepseek_fp8_preserves_explicit_upper_overrides(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            (model_dir / "config.json").write_text(
+                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
+                encoding="utf-8",
+            )
+            (model_dir / "quant_model_description.json").write_text(
+                json.dumps({"quant_type": "fp8"}),
+                encoding="utf-8",
+            )
+            model_info = _FakeModelInfo(
+                architecture="DeepseekV3ForCausalLM",
+                model_name="DeepSeek-R1-w8a8",
+                model_path=str(model_dir),
+            )
+            params = {
+                "device_count": 8,
+                "enforce_eager": False,
+                "tensor_parallel_size": 8,
+            }
+
+            with patch.object(sys, "argv", ["prog", "--enforce-eager", "false", "--tensor-parallel-size", "8"]):
+                _set_soft_fp8(params, {"device": "ascend"}, model_info)
+
+        self.assertIs(params["enforce_eager"], False)
+        self.assertEqual(params["tensor_parallel_size"], 8)
+        self.assertEqual(params["data_parallel_size"], 2)
+
+    def test_sequence_length_does_not_override_without_explicit_input_or_output(self):
+        params = {"max_model_len": 9999}
+
+        with patch.object(sys, "argv", ["prog"]):
+            _set_sequence_length(params, {"input_length": 4096, "output_length": 1024})
+
+        self.assertEqual(params["max_model_len"], 9999)
+
+    def test_sequence_length_applies_when_input_or_output_is_explicit(self):
+        params = {"max_model_len": 9999}
+
+        with patch.object(sys, "argv", ["prog", "--input-length", "4096"]):
+            _set_sequence_length(params, {"input_length": 4096, "output_length": 1024})
+
+        self.assertEqual(params["max_model_len"], 5120)
 
 
 if __name__ == "__main__":
