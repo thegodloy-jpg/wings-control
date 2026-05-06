@@ -998,6 +998,53 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         engine_config["enable_expert_parallel"] = True
         engine_config["async_scheduling"] = True
 
+        if _is_deepseek_v31_ascend_dp_deployment(params):
+            # Official DeepSeek-V3.1 online DP examples omit these generic Wings
+            # defaults. Keeping them can push vLLM-Ascend onto a different
+            # profiling / graph / dtype path than the validated command.
+            for key, default_value in (
+                ("dtype", "auto"),
+                ("kv_cache_dtype", "auto"),
+                ("enable_chunked_prefill", True),
+                ("block_size", 128),
+                ("enforce_eager", True),
+            ):
+                if engine_config.get(key) == default_value:
+                    engine_config.pop(key, None)
+            try:
+                if int(engine_config.get("max_num_seqs", 0) or 0) > 16:
+                    logger.info(
+                        "[DeepSeek V3.1 Ascend DP] cap max_num_seqs to official value 16."
+                    )
+                    engine_config["max_num_seqs"] = 16
+            except (TypeError, ValueError):
+                pass
+            try:
+                if float(engine_config.get("gpu_memory_utilization", 0) or 0) > 0.92:
+                    logger.info(
+                        "[DeepSeek V3.1 Ascend DP] cap gpu_memory_utilization to official value 0.92."
+                    )
+                    engine_config["gpu_memory_utilization"] = 0.92
+            except (TypeError, ValueError):
+                pass
+            try:
+                if int(engine_config.get("max_model_len", 0) or 0) > 16384:
+                    logger.info(
+                        "[DeepSeek V3.1 Ascend DP] cap max_model_len to official value 16384."
+                    )
+                    engine_config["max_model_len"] = 16384
+            except (TypeError, ValueError):
+                pass
+            if engine_config.get("host") not in (None, "", "0.0.0.0"):
+                logger.info("[DeepSeek V3.1 Ascend DP] bind host to official value 0.0.0.0.")
+                engine_config["host"] = "0.0.0.0"
+            if engine_config.get("seed") in (None, 42, "42"):
+                engine_config["seed"] = 1024
+            engine_config.setdefault("compilation_config", {
+                "cudagraph_capture_sizes": [4, 16, 32, 48, 64],
+                "cudagraph_mode": "FULL_DECODE_ONLY",
+            })
+
     # "task" 在旧版 vLLM (v0.7) 中为 --task 参数，新版改为 --runner
     removed_task = engine_config.pop("task", None)
     if removed_task and removed_task != "generate":
