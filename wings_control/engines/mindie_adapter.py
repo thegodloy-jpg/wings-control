@@ -1331,9 +1331,7 @@ def _build_model_deploy_overrides(engine_config: Dict[str, Any]) -> Dict[str, An
 
 def _resolve_deepseek_cpsp_seq_len(engine_config: Dict[str, Any]) -> int:
     """Resolve the aligned long-context sequence length for DeepSeek CPSP."""
-    if engine_config.get("mindie_model_type") != "deepseekv2":
-        return 0
-    if engine_config.get("cp") is None or engine_config.get("sp") is None:
+    if not _is_deepseek_cpsp_enabled(engine_config):
         return 0
     candidates = []
     for key in ("maxSeqLen", "maxInputTokenLen", "maxPrefillTokens"):
@@ -1345,6 +1343,19 @@ def _resolve_deepseek_cpsp_seq_len(engine_config: Dict[str, Any]) -> int:
         if value > 0:
             candidates.append(value)
     return max(candidates) if candidates else 0
+
+
+def _is_deepseek_cpsp_enabled(engine_config: Dict[str, Any]) -> bool:
+    """Return True when DeepSeek CPSP/SPCP parallelism is enabled."""
+    if engine_config.get("cp") is None or engine_config.get("sp") is None:
+        return False
+    if engine_config.get("mindie_model_type") == "deepseekv2":
+        return True
+    for key in ("modelName", "model_name", "served_model_name"):
+        value = engine_config.get(key)
+        if value and "deepseek" in str(value).lower():
+            return True
+    return False
 
 
 def _inject_multinode_tp_dp(
@@ -1461,9 +1472,7 @@ def _inject_function_call_config(engine_config: Dict[str, Any], overrides: Dict[
 
 def _inject_deepseek_cpsp_runtime_options(engine_config: Dict[str, Any], overrides: Dict[str, Any]) -> None:
     """Inject DeepSeek CPSP reference runtime options into ModelConfig[0]."""
-    if engine_config.get("mindie_model_type") != "deepseekv2":
-        return
-    if engine_config.get("cp") is None or engine_config.get("sp") is None:
+    if not _is_deepseek_cpsp_enabled(engine_config):
         return
 
     model_entry = overrides.setdefault("models", {}).setdefault("deepseekv2", {})

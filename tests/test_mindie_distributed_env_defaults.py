@@ -382,7 +382,6 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
             "tp": 8,
             "cp": 2,
             "isMOE": True,
-            "mindie_model_type": "deepseekv2",
         }
         params = {
             "engine_config": engine_config,
