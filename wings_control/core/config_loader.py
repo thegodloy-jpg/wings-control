@@ -478,7 +478,7 @@ def _set_soft_fp8(params, ctx, model_info):
 
     自动检测模型是否为 FP8 模型，并根据模型系列设置对应的量化参数：
       - Qwen3 系列：设置 quantization='ascend'，MOE 模型禁用专家并行
-      - DeepSeek 系列：设置 quantization='ascend'，禁用 prefix caching/EP，固定 TP=4/DP=4
+            - DeepSeek 系列：设置 quantization='ascend'，禁用 prefix caching，启用 EP/async，固定 TP=4/DP=4
 
     如果模型不是 FP8 模型，则跳过此函数，交由 _set_soft_fp4 处理。
     """
@@ -517,8 +517,8 @@ def _set_soft_fp8(params, ctx, model_info):
         params['quantization'] = 'ascend'
         params["enforce_eager"] = True
         params['no_enable_prefix_caching'] = True
-        # 使用 DP 并行要禁用该功能
-        params['enable_expert_parallel'] = False
+        params['enable_expert_parallel'] = True
+        params['async_scheduling'] = True
         # 根据硬件配置设置张量并行大小，DeepSeek FP8 模型推荐使用 TP=4/DP=4
         # 但必须确保 device_count 足够，否则回退为全部设备
         try:

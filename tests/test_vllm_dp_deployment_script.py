@@ -81,6 +81,8 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("ray start --head", script)
         self.assertNotIn("--distributed-executor-backend ray", script)
         self.assertNotIn("--speculative-config", script)
+        self.assertIn("--enable-expert-parallel", script)
+        self.assertIn("--async-scheduling", script)
 
     def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
         params = _base_params(node_rank=0)
@@ -133,16 +135,17 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         )
         self.assertLess(script.index("--speculative-config"), script.index("--data-parallel-address"))
 
-    def test_deepseek_dp_deployment_sanitizes_conflicting_cli_flags(self):
+    def test_deepseek_dp_deployment_sanitizes_conflicting_prefix_cache_flags(self):
         params = _base_params(node_rank=0)
-        params["engine_config"]["enable_expert_parallel"] = True
+        params["engine_config"]["enable_expert_parallel"] = False
         params["engine_config"]["enable_prefix_caching"] = True
         params["engine_config"]["no_enable_prefix_caching"] = True
 
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(params)
 
-        self.assertNotIn("--enable-expert-parallel", script)
+        self.assertIn("--enable-expert-parallel", script)
+        self.assertIn("--async-scheduling", script)
         self.assertNotIn("--enable-prefix-caching", script)
         self.assertIn("--no-enable-prefix-caching", script)
 

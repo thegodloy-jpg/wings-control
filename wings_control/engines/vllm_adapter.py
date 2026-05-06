@@ -971,12 +971,13 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         engine_config.pop("enable_prefix_caching", None)
         engine_config["no_enable_prefix_caching"] = True
 
-        if engine_config.get("enable_expert_parallel") not in (None, False, "False", 0, "0"):
-            logger.warning(
-                "[DeepSeek Ascend DP] expert parallel is incompatible with the "
-                "current dp_deployment launch strategy; disabling it."
+        if engine_config.get("enable_expert_parallel") in (None, False, "False", 0, "0"):
+            logger.info(
+                "[DeepSeek Ascend DP] enabling expert parallel to align with "
+                "vLLM-Ascend DeepSeek multi-node launch examples."
             )
-        engine_config["enable_expert_parallel"] = False
+        engine_config["enable_expert_parallel"] = True
+        engine_config["async_scheduling"] = True
 
     # "task" 在旧版 vLLM (v0.7) 中为 --task 参数，新版改为 --runner
     removed_task = engine_config.pop("task", None)
