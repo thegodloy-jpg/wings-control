@@ -3,6 +3,8 @@
 
 import os
 import sys
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +16,7 @@ sys.path.insert(0, str(ROOT / "wings_control"))
 from core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
     _detect_mtp_moe_features,
+    _set_soft_fp8,
     _set_mindie_common_params,
     _select_ascend_engine,
     _select_nvidia_engine,
@@ -22,10 +25,13 @@ from core.config_loader import (  # noqa: E402
 
 
 class _FakeModelInfo:
-    def __init__(self, architecture="FakeCausalLM", model_type="generate", supported=True):
+    def __init__(self, architecture="FakeCausalLM", model_type="generate", supported=True,
+                 model_name="fake", model_path=""):
         self.model_architecture = architecture
         self._model_type = model_type
         self._supported = supported
+        self.model_name = model_name
+        self.model_path = model_path
 
     def identify_model_type(self):
         return self._model_type
@@ -161,6 +167,48 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertNotIn("sp", params)
         self.assertNotIn("cp", params)
+
+    def test_deepseek_v31_fp8_does_not_force_enforce_eager(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            (model_dir / "config.json").write_text(
+                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
+                encoding="utf-8",
+            )
+            (model_dir / "quant_model_description.json").write_text("{}", encoding="utf-8")
+            model_info = _FakeModelInfo(
+                architecture="DeepseekV3ForCausalLM",
+                model_name="DeepSeek-V3.1-w8a8",
+                model_path=str(model_dir),
+            )
+            params = {"device_count": 8}
+
+            _set_soft_fp8(params, {"device": "ascend"}, model_info)
+
+        self.assertEqual(params["quantization"], "ascend")
+        self.assertNotIn("enforce_eager", params)
+        self.assertEqual(params["tensor_parallel_size"], 4)
+        self.assertEqual(params["data_parallel_size"], 2)
+
+    def test_generic_deepseek_fp8_still_forces_enforce_eager(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            (model_dir / "config.json").write_text(
+                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
+                encoding="utf-8",
+            )
+            (model_dir / "quant_model_description.json").write_text("{}", encoding="utf-8")
+            model_info = _FakeModelInfo(
+                architecture="DeepseekV3ForCausalLM",
+                model_name="DeepSeek-R1-w8a8",
+                model_path=str(model_dir),
+            )
+            params = {"device_count": 8}
+
+            _set_soft_fp8(params, {"device": "ascend"}, model_info)
+
+        self.assertEqual(params["quantization"], "ascend")
+        self.assertIs(params["enforce_eager"], True)
 
 
 if __name__ == "__main__":

@@ -515,7 +515,9 @@ def _set_soft_fp8(params, ctx, model_info):
             logger.info("Soft FP8 configured for Qwen3 Series models")
     elif is_deepseek_series_fp8(model_path):
         params['quantization'] = 'ascend'
-        params["enforce_eager"] = True
+        is_deepseek_v31 = _is_deepseek_v31_model(model_name, model_path)
+        if not is_deepseek_v31:
+            params["enforce_eager"] = True
         params['no_enable_prefix_caching'] = True
         params['enable_expert_parallel'] = True
         params['async_scheduling'] = True
@@ -531,7 +533,20 @@ def _set_soft_fp8(params, ctx, model_info):
         params['data_parallel_size'] = recommended_dp
         params['tensor_parallel_size'] = recommended_tp
         params['use_kunlun_atb'] = False
-        logger.info("Soft FP8 configured for Deekseek Series models")
+        if is_deepseek_v31:
+            logger.info("DeepSeek-V3.1 Ascend FP8/W8A8 configured without enforce_eager")
+        else:
+            logger.info("Soft FP8 configured for Deekseek Series models")
+
+
+def _is_deepseek_v31_model(model_name: str, model_path: str) -> bool:
+    """Return True when model name or path identifies a DeepSeek-V3.1 variant."""
+    candidates = [str(item) for item in (model_name, model_path) if item]
+    for item in candidates:
+        normalized = item.lower().replace("_", "-")
+        if "deepseek" in normalized and ("v3.1" in normalized or "v31" in normalized):
+            return True
+    return False
 
 
 def _set_soft_fp4(params, ctx, model_info):
