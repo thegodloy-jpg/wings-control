@@ -980,23 +980,36 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     engine_config = dict(params.get("engine_config", {}))
     engine_config.pop("use_kunlun_atb", None)
+    explicit_keys = set(params.get("_explicit_cli_keys") or [])
 
     if _is_deepseek_ascend_dp_deployment(params):
-        if engine_config.get("enable_prefix_caching") not in (None, False, "False", 0, "0"):
+        prefix_cache_explicit = bool(
+            explicit_keys.intersection({"enable_prefix_caching", "no_enable_prefix_caching"})
+        )
+        if (
+            not prefix_cache_explicit
+            and engine_config.get("enable_prefix_caching") not in (None, False, "False", 0, "0")
+        ):
             logger.warning(
                 "[DeepSeek Ascend DP] prefix caching is incompatible with the "
                 "dp_deployment path; forcing --no-enable-prefix-caching."
             )
-        engine_config.pop("enable_prefix_caching", None)
-        engine_config["no_enable_prefix_caching"] = True
+        if not prefix_cache_explicit:
+            engine_config.pop("enable_prefix_caching", None)
+            engine_config["no_enable_prefix_caching"] = True
 
-        if engine_config.get("enable_expert_parallel") in (None, False, "False", 0, "0"):
+        if (
+            "enable_expert_parallel" not in explicit_keys
+            and engine_config.get("enable_expert_parallel") in (None, False, "False", 0, "0")
+        ):
             logger.info(
                 "[DeepSeek Ascend DP] enabling expert parallel to align with "
                 "vLLM-Ascend DeepSeek multi-node launch examples."
             )
-        engine_config["enable_expert_parallel"] = True
-        engine_config["async_scheduling"] = True
+        if "enable_expert_parallel" not in explicit_keys:
+            engine_config["enable_expert_parallel"] = True
+        if "async_scheduling" not in explicit_keys:
+            engine_config["async_scheduling"] = True
 
         if _is_deepseek_v31_ascend_dp_deployment(params):
             # DeepSeek-V3.1-w8a8-mtp-QuaRot is an official Ascend quantized
@@ -1004,7 +1017,8 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
             # vLLM-Ascend online DP command does not use --enforce-eager; if an
             # older soft-FP8/default config injected it, remove only this
             # misclassified side effect and keep other generic CLI parameters.
-            engine_config.pop("enforce_eager", None)
+            if "enforce_eager" not in explicit_keys:
+                engine_config.pop("enforce_eager", None)
 
     # "task" 在旧版 vLLM (v0.7) 中为 --task 参数，新版改为 --runner
     removed_task = engine_config.pop("task", None)

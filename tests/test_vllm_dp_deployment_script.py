@@ -205,6 +205,15 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("--enable-prefix-caching", script)
         self.assertIn("--no-enable-prefix-caching", script)
 
+    def test_deepseek_v31_preserves_explicit_enforce_eager_override(self):
+        params = _base_params(node_rank=0)
+        params["_explicit_cli_keys"] = ["enforce_eager"]
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertIn("--enforce-eager", script)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

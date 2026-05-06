@@ -372,10 +372,16 @@ def _set_deepseek_v31_ascend_quant_params(params, ctx, model_info) -> bool:
     if not is_deepseek_series_modelslim_quant(model_path):
         return False
 
-    params['quantization'] = 'ascend'
-    params['no_enable_prefix_caching'] = True
-    params['enable_expert_parallel'] = True
-    params['async_scheduling'] = True
+    explicit_keys = _detect_explicit_cli_keys()
+
+    if 'quantization' not in explicit_keys:
+        params['quantization'] = 'ascend'
+    if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
+        params['no_enable_prefix_caching'] = True
+    if 'enable_expert_parallel' not in explicit_keys:
+        params['enable_expert_parallel'] = True
+    if 'async_scheduling' not in explicit_keys:
+        params['async_scheduling'] = True
     try:
         device_count_val = int(params.get('device_count', 0))
     except (ValueError, TypeError):
@@ -383,10 +389,13 @@ def _set_deepseek_v31_ascend_quant_params(params, ctx, model_info) -> bool:
         device_count_val = 0
     recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
     recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
-    params['data_parallel_size'] = recommended_dp
-    params['tensor_parallel_size'] = recommended_tp
+    if 'data_parallel_size' not in explicit_keys:
+        params['data_parallel_size'] = recommended_dp
+    if 'tensor_parallel_size' not in explicit_keys:
+        params['tensor_parallel_size'] = recommended_tp
     params['use_kunlun_atb'] = False
-    params.pop('enforce_eager', None)
+    if 'enforce_eager' not in explicit_keys:
+        params.pop('enforce_eager', None)
     logger.info("DeepSeek-V3.1 Ascend official W8A8/ModelSlim quantization configured")
     return True
 
@@ -1489,7 +1498,12 @@ _CLI_ENV_MAP: Dict[str, str] = {
     "trust_remote_code": "TRUST_REMOTE_CODE",
     "enable_chunked_prefill": "ENABLE_CHUNKED_PREFILL",
     "enable_prefix_caching": "ENABLE_PREFIX_CACHING",
+    "no_enable_prefix_caching": "NO_ENABLE_PREFIX_CACHING",
     "enable_expert_parallel": "ENABLE_EXPERT_PARALLEL",
+    "async_scheduling": "ASYNC_SCHEDULING",
+    "enforce_eager": "ENFORCE_EAGER",
+    "data_parallel_size": "DATA_PARALLEL_SIZE",
+    "tensor_parallel_size": "TENSOR_PARALLEL_SIZE",
 }
 
 
@@ -2104,6 +2118,7 @@ def _merge_final_config(engine_config: Dict[str, Any],
         追加了 engine_config 字段的 cmd_known_params 字典。
     """
     cmd_known_params['engine_config'] = engine_config
+    cmd_known_params['_explicit_cli_keys'] = sorted(_detect_explicit_cli_keys())
 
     return cmd_known_params
 
