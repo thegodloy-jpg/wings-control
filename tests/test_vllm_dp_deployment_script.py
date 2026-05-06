@@ -226,5 +226,16 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("--dtype float16", script)
         self.assertNotIn("--dtype bfloat16", script)
 
+    def test_deepseek_v31_converts_explicit_dtype_auto_to_bfloat16(self):
+        params = _base_params(node_rank=0)
+        params["_explicit_cli_keys"] = ["dtype"]
+        params["engine_config"]["dtype"] = "auto"
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertIn("--dtype bfloat16", script)
+        self.assertNotIn("--dtype auto", script)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

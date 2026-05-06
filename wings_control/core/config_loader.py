@@ -376,7 +376,7 @@ def _set_deepseek_v31_ascend_quant_params(params, ctx, model_info) -> bool:
 
     if 'quantization' not in explicit_keys:
         params['quantization'] = 'ascend'
-    if 'dtype' not in explicit_keys:
+    if 'dtype' not in explicit_keys or str(params.get('dtype', '')).lower() == 'auto':
         params['dtype'] = 'bfloat16'
     if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
         params['no_enable_prefix_caching'] = True

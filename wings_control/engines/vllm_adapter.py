@@ -1018,7 +1018,7 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
             # vllm-ascend may produce float16 fake tensors during Dynamo checks.
             # Default to bfloat16 for this official W8A8 DP path while keeping
             # explicit --dtype / DTYPE overrides intact.
-            if "dtype" not in explicit_keys:
+            if "dtype" not in explicit_keys or str(engine_config.get("dtype", "")).lower() == "auto":
                 engine_config["dtype"] = "bfloat16"
             # DeepSeek-V3.1-w8a8-mtp-QuaRot is an official Ascend quantized
             # model, not a generic software FP8 fallback path. The official
