@@ -68,7 +68,8 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("exec vllm serve /usr/local/serving/models/", script)
         self.assertIn("--data-parallel-size 4", script)
         self.assertIn("--data-parallel-size-local 2", script)
-        self.assertIn("--data-parallel-rank 0", script)
+        self.assertIn("--data-parallel-start-rank 0", script)
+        self.assertNotIn("--data-parallel-rank 0", script)
         self.assertIn("export HCCL_WHITELIST_DISABLE=1", script)
         self.assertIn("export HCCL_CONNECT_TIMEOUT=1800", script)
         self.assertIn("export HCCL_EXEC_TIMEOUT=7200", script)
@@ -79,6 +80,33 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("ray start --head", script)
         self.assertNotIn("--distributed-executor-backend ray", script)
         self.assertNotIn("--speculative-config", script)
+
+    def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
+        params = _base_params(node_rank=0)
+        params["engine_config"].update({
+            "data_parallel_size": 8,
+            "data_parallel_size_local": 1,
+            "data_parallel_rank": 0,
+            "data_parallel_address": "1.2.3.4",
+            "data_parallel_rpc_port": 9999,
+            "data_parallel_external_lb": True,
+        })
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        exec_line = next(line for line in script.splitlines() if line.startswith("exec vllm serve"))
+        self.assertEqual(exec_line.count("--data-parallel-size "), 1)
+        self.assertEqual(exec_line.count("--data-parallel-size-local "), 1)
+        self.assertEqual(exec_line.count("--data-parallel-address "), 1)
+        self.assertEqual(exec_line.count("--data-parallel-rpc-port "), 1)
+        self.assertEqual(exec_line.count("--data-parallel-external-lb"), 1)
+        self.assertIn("--data-parallel-size 4", exec_line)
+        self.assertIn("--data-parallel-size-local 2", exec_line)
+        self.assertIn("--data-parallel-start-rank 0", exec_line)
+        self.assertNotIn("--data-parallel-rank", exec_line)
+        self.assertNotIn("1.2.3.4", exec_line)
+        self.assertNotIn("9999", exec_line)
 
     def test_deepseek_dp_deployment_rank1_is_headless(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
@@ -102,6 +130,19 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
             script,
         )
         self.assertLess(script.index("--speculative-config"), script.index("--data-parallel-address"))
+
+    def test_deepseek_dp_deployment_sanitizes_conflicting_cli_flags(self):
+        params = _base_params(node_rank=0)
+        params["engine_config"]["enable_expert_parallel"] = True
+        params["engine_config"]["enable_prefix_caching"] = True
+        params["engine_config"]["no_enable_prefix_caching"] = True
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertNotIn("--enable-expert-parallel", script)
+        self.assertNotIn("--enable-prefix-caching", script)
+        self.assertIn("--no-enable-prefix-caching", script)
 
 
 if __name__ == "__main__":

@@ -962,6 +962,22 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     engine_config = dict(params.get("engine_config", {}))
     engine_config.pop("use_kunlun_atb", None)
 
+    if _is_deepseek_ascend_dp_deployment(params):
+        if engine_config.get("enable_prefix_caching") not in (None, False, "False", 0, "0"):
+            logger.warning(
+                "[DeepSeek Ascend DP] prefix caching is incompatible with the "
+                "dp_deployment path; forcing --no-enable-prefix-caching."
+            )
+        engine_config.pop("enable_prefix_caching", None)
+        engine_config["no_enable_prefix_caching"] = True
+
+        if engine_config.get("enable_expert_parallel") not in (None, False, "False", 0, "0"):
+            logger.warning(
+                "[DeepSeek Ascend DP] expert parallel is incompatible with the "
+                "current dp_deployment launch strategy; disabling it."
+            )
+        engine_config["enable_expert_parallel"] = False
+
     # "task" 在旧版 vLLM (v0.7) 中为 --task 参数，新版改为 --runner
     removed_task = engine_config.pop("task", None)
     if removed_task and removed_task != "generate":
@@ -969,6 +985,23 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         engine_config.setdefault("runner", "pooling")
 
     return engine_config
+
+
+def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
+    """判断当前启动是否为 DeepSeek Ascend dp_deployment 路径。"""
+    if params.get("engine") != "vllm_ascend":
+        return False
+    if params.get("distributed_executor_backend") != "dp_deployment":
+        return False
+    model_path = params.get("model_path")
+    if not model_path:
+        return False
+    model_info = ModelIdentifier(
+        params.get("model_name"),
+        model_path,
+        params.get("model_type"),
+    )
+    return model_info.model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
 
 
 def _strip_cli_flag(cmd: str, flag: str) -> str:
@@ -1936,6 +1969,28 @@ def _transform_dp_cmd(cmd: str) -> str:
     )
 
 
+def _strip_dp_cli_flags(cmd: str) -> str:
+    """移除基础命令中已有的 data-parallel 参数，避免 dp_deployment 追加时重复传参。
+
+    vLLM 0.18 会对重复 CLI key 打印 warning；更重要的是，dp_deployment
+    的 rank / start-rank / local-size 组合由本模块按节点统一计算，不能被
+    engine_config 中的同名字段污染。
+    """
+    flags_with_value = [
+        "--data-parallel-address",
+        "--data-parallel-rpc-port",
+        "--data-parallel-size",
+        "--data-parallel-size-local",
+        "--data-parallel-rank",
+        "--data-parallel-start-rank",
+    ]
+    for flag in flags_with_value:
+        cmd = _strip_cli_flag(cmd, flag)
+    cmd = re.sub(r"\s+--data-parallel-external-lb\b", "", cmd)
+    cmd = re.sub(r"\s+--headless\b", "", cmd)
+    return cmd
+
+
 def _build_dp_deployment_commands(
     params: Dict[str, Any],
     ctx: DistScriptCtx,
@@ -1956,7 +2011,7 @@ def _build_dp_deployment_commands(
         dp_start_rank = str(ctx.node_rank)
 
     parts.extend(_build_dp_env_commands(ctx.is_ascend, params))
-    dp_cmd = _transform_dp_cmd(ctx.cmd)
+    dp_cmd = _strip_dp_cli_flags(_transform_dp_cmd(ctx.cmd))
     speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
     dp_cmd = f"{dp_cmd}{speculative_extra}{sparse_args}"
 
@@ -1968,7 +2023,7 @@ def _build_dp_deployment_commands(
             f" --data-parallel-size {dp_size}"
             f" --data-parallel-size-local {dp_size_local}"
             f" --data-parallel-external-lb"
-            f" --data-parallel-rank 0"
+            f" --data-parallel-start-rank 0"
         )
     else:
         dp_cmd_headless = re.sub(r"\s*--host\s+(?:'[^']*'|\S+)", "", dp_cmd)
