@@ -1638,9 +1638,6 @@ def _auto_select_engine(hardware_env: Dict[str, Any],
     cmd_known_params["engine"] = engine
     _apply_engine_runtime_flags(cmd_known_params)
 
-    if engine == "vllm":
-        _handle_ascend_vllm(device_type, cmd_known_params)
-
     final_engine = cmd_known_params.get("engine", engine)
     _warn_unsupported_lmcache_engine(final_engine)
     _record_selected_engine(final_engine)
@@ -1763,16 +1760,16 @@ def _select_ascend_engine(device_name: str, model_info) -> str:
 
 
 def _validate_user_engine(engine: str, device_name: str, gpu_usage_mode: str, model_info) -> str:
-    """校验用户指定的引擎并在不兼容时自动降级到兼容引擎。
+    """校验用户指定的引擎名称是否合法，engine 参数具有最高优先级，不做任何自动覆盖。
 
     参数:
         engine (str): 用户指定引擎，支持 'mindie', 'vllm', 'vllm_ascend', 'sglang'
-        device_name (str): 设备型号名称（含 '310' 时为昇腾 310 系列）
-        gpu_usage_mode (str): GPU 使用模式（'mig' 等）
+        device_name (str): 设备型号名称
+        gpu_usage_mode (str): GPU 使用模式
         model_info: 模型信息对象
 
     返回:
-        str: 实际使用的引擎名（可能因兼容性降级而与输入不同）
+        str: 用户传入的引擎名（原样返回）
 
     异常:
         ValueError: 引擎名不在支持列表中时抛出
@@ -1782,24 +1779,6 @@ def _validate_user_engine(engine: str, device_name: str, gpu_usage_mode: str, mo
             f"The engine {engine} is not supported yet! "
             "Please change to 'mindie', 'vllm', 'vllm_ascend' or 'sglang'"
         )
-
-    model_type = model_info.identify_model_type()
-    if engine == 'mindie':
-        # Ascend310 仅支持 mindie，不支持 vllm_ascend
-        if "310" in device_name:
-            return 'mindie'
-        # embedding/rerank 模型需切换到 vllm_ascend
-        elif model_type in ["embedding", "rerank"]:
-            logger.warning("model type is %s, automatically switched to VLLM_Ascend engine", model_type)
-            return "vllm_ascend"
-        elif get_router_env():
-            logger.warning("Wings router enabled, automatically switched to VLLM engine")
-            return 'vllm'
-        # 算子加速（如 KunLun ATB）要求 vllm_ascend
-        elif get_operator_acceleration_env():
-            logger.warning("operator_acceleration is enabled, "
-                           "automatically switched to VLLM_Ascend engine")
-            return "vllm_ascend"
     return engine
 
 
@@ -1900,17 +1879,6 @@ def _handle_sglang_distributed(distributed_config: Dict[str, Any], cmd_params: D
     cmd_params.update({
         'dist_port': dist_port
     })
-
-
-def _handle_ascend_vllm(device_type: str, cmd_params: Dict[str, Any]):
-    """在 Ascend 设备上将引擎名称从 vllm 升级为 vllm_ascend。
-
-    当硬件为昇腾 NPU 且用户指定引擎为 vllm 时，
-    自动将 cmd_params['engine'] 替换为 vllm_ascend，
-    以便后续使用昇腾专用的适配器和参数表。
-    """
-    if device_type == "ascend" and cmd_params.get("engine") == "vllm":
-        cmd_params["engine"] = "vllm_ascend"
 
 
 def _match_model_engine_config(

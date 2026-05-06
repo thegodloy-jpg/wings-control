@@ -830,6 +830,7 @@ def _build_minimaxm2_ascend_env(arch: str) -> List[str]:
     """
     logger.info("[MiniMax-M2.5] Set Ascend environment variables for %s", arch)
     return [
+        "export HCCL_OP_EXPANSION_MODE=AIV",
         "export VLLM_USE_GRAPH=1",
         "export VLLM_USE_V1=1",
         "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
@@ -846,7 +847,7 @@ def _build_deepseekv32_ascend_env(arch: str) -> List[str]:
         "export OMP_PROC_BIND=false",
         "export OMP_NUM_THREADS=10",
         "export VLLM_USE_V1=1",
-        "export HCCL_BUFFSIZE=200",
+        "export HCCL_BUFFSIZE=512",
         "export VLLM_ASCEND_ENABLE_MLAPO=1",
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
