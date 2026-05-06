@@ -998,6 +998,14 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         engine_config["enable_expert_parallel"] = True
         engine_config["async_scheduling"] = True
 
+        if _is_deepseek_v31_ascend_dp_deployment(params):
+            # DeepSeek-V3.1-w8a8-mtp-QuaRot is an official Ascend quantized
+            # model, not a generic software FP8 fallback path. The official
+            # vLLM-Ascend online DP command does not use --enforce-eager; if an
+            # older soft-FP8/default config injected it, remove only this
+            # misclassified side effect and keep other generic CLI parameters.
+            engine_config.pop("enforce_eager", None)
+
     # "task" 在旧版 vLLM (v0.7) 中为 --task 参数，新版改为 --runner
     removed_task = engine_config.pop("task", None)
     if removed_task and removed_task != "generate":

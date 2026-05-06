@@ -111,6 +111,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("--speculative-config", script)
         self.assertIn("--enable-expert-parallel", script)
         self.assertIn("--async-scheduling", script)
+        self.assertNotIn("--enforce-eager", script)
 
     def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
         params = _base_params(node_rank=0)
