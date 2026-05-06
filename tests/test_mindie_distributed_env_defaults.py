@@ -350,7 +350,7 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
 
     def test_mindie_multinode_preserves_cpsp_fields(self):
         overrides = _build_model_config_overrides(
-            {"dp": 1, "tp": 8, "sp": 8, "cp": 2},
+            {"dp": 1, "tp": 8, "sp": 8, "cp": 2, "mindie_model_type": "deepseekv2"},
             is_distributed=True,
             world_size=8,
             global_world_size=16,
@@ -362,6 +362,33 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(overrides["tp"], 8)
         self.assertEqual(overrides["sp"], 8)
         self.assertEqual(overrides["cp"], 2)
+        self.assertEqual(overrides["models"]["deepseekv2"]["ep_level"], 1)
+        self.assertEqual(overrides["models"]["deepseekv2"]["enable_init_routing_cutoff"], True)
+        self.assertEqual(overrides["models"]["deepseekv2"]["topk_scaling_factor"], 0.25)
+        self.assertEqual(overrides["models"]["deepseekv2"]["enable_oproj_prefetch"], True)
+        self.assertEqual(overrides["models"]["deepseekv2"]["enable_mlapo_prefetch"], True)
+        self.assertEqual(overrides["models"]["deepseekv2"]["kv_cache_options"], {"enable_nz": True})
+        self.assertEqual(overrides["llm"]["parallel_options"]["dense_mlp_local_tp"], 16)
+
+    def test_mindie_deepseek_cpsp_models_merge_with_function_call(self):
+        overrides = _build_model_config_overrides(
+            {
+                "dp": 1,
+                "tp": 8,
+                "sp": 8,
+                "cp": 2,
+                "mindie_model_type": "deepseekv2",
+                "mindie_tool_call_parser": "deepseek_v31",
+            },
+            is_distributed=True,
+            world_size=8,
+            global_world_size=16,
+            nnodes=2,
+        )
+
+        deepseekv2 = overrides["models"]["deepseekv2"]
+        self.assertEqual(deepseekv2["ep_level"], 1)
+        self.assertEqual(deepseekv2["tool_call_options"], {"tool_call_parser": "deepseek_v31"})
 
     def test_mindie_multinode_2x16_preserves_explicit_cpsp_tp(self):
         overrides = _build_model_config_overrides(

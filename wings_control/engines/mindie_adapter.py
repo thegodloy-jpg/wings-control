@@ -1421,17 +1421,37 @@ def _inject_function_call_config(engine_config: Dict[str, Any], overrides: Dict[
             mindie_tool_call_parser,
         )
         return
-    model_entry: Dict[str, Any] = {
-        "tool_call_options": {"tool_call_parser": mindie_tool_call_parser},
-    }
+    models = overrides.setdefault("models", {})
+    model_entry = models.setdefault(mindie_model_type, {})
+    model_entry["tool_call_options"] = {"tool_call_parser": mindie_tool_call_parser}
     chat_template = engine_config.get("mindie_chat_template")
     if chat_template:
         model_entry["chat_template"] = chat_template
-    overrides["models"] = {mindie_model_type: model_entry}
     logger.info(
         "[mindie] Function Call enabled: model_type=%s, parser=%s",
         mindie_model_type, mindie_tool_call_parser,
     )
+
+
+def _inject_deepseek_cpsp_runtime_options(engine_config: Dict[str, Any], overrides: Dict[str, Any]) -> None:
+    """Inject DeepSeek CPSP reference runtime options into ModelConfig[0]."""
+    if engine_config.get("mindie_model_type") != "deepseekv2":
+        return
+    if engine_config.get("cp") is None or engine_config.get("sp") is None:
+        return
+
+    model_entry = overrides.setdefault("models", {}).setdefault("deepseekv2", {})
+    model_entry.update({
+        "ep_level": 1,
+        "enable_init_routing_cutoff": True,
+        "topk_scaling_factor": 0.25,
+        "enable_oproj_prefetch": True,
+        "enable_mlapo_prefetch": True,
+        "kv_cache_options": {"enable_nz": True},
+    })
+    overrides.setdefault("llm", {}).setdefault("parallel_options", {})[
+        "dense_mlp_local_tp"
+    ] = 16
 
 
 def _build_model_config_overrides(
@@ -1465,6 +1485,7 @@ def _build_model_config_overrides(
         overrides,
     )
     _inject_mtp_plugin(engine_config, overrides)
+    _inject_deepseek_cpsp_runtime_options(engine_config, overrides)
     _inject_function_call_config(engine_config, overrides)
 
     return overrides

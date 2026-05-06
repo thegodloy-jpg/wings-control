@@ -95,7 +95,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             "node_ips": "10.0.0.1,10.0.0.2",
             "device_count": 8,
         }
-        engine_cmd_parameter = {"input_length": 8192, "output_length": 1}
+        engine_cmd_parameter = {"input_length": 131072, "output_length": 1024}
         model_info = _FakeModelInfo(architecture="DeepseekV3ForCausalLM")
         env = {"MINDIE_LONG_CONTEXT_THRESHOLD": "8192"}
 
@@ -106,6 +106,9 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertEqual(params["sp"], 8)
         self.assertEqual(params["cp"], 2)
         self.assertEqual(params["tp"], 8)
+        self.assertEqual(params["maxSeqLen"], 132096)
+        self.assertEqual(params["maxInputTokenLen"], 132096)
+        self.assertEqual(params["maxPrefillTokens"], 132096)
 
     def test_mindie_deepseek_long_context_1x16_triggers_cpsp_defaults(self):
         params = {}
@@ -124,6 +127,9 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertEqual(params["sp"], 8)
         self.assertEqual(params["cp"], 2)
         self.assertEqual(params["tp"], 8)
+        self.assertEqual(params["maxSeqLen"], 8193)
+        self.assertEqual(params["maxInputTokenLen"], 8193)
+        self.assertEqual(params["maxPrefillTokens"], 8193)
 
     def test_mindie_deepseek_long_context_2x16_does_not_auto_trigger_cpsp(self):
         params = {}

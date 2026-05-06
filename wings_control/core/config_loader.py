@@ -950,6 +950,11 @@ def _apply_us8_long_ctx_strategy(params: Dict[str, Any],
     tp_default = max(1, global_world_size // max(1, params['dp'] * params['cp']))
     params['tp'] = _safe_int_env("MINDIE_DS_TP", str(tp_default))
     params['sp'] = _safe_int_env("MINDIE_DS_SP", str(params['tp']))
+    # CPSP long-context reference requires the three length limits to stay
+    # aligned; otherwise MindIE may prefill against a smaller legacy default.
+    params['maxSeqLen'] = total_seq_len
+    params['maxInputTokenLen'] = total_seq_len
+    params['maxPrefillTokens'] = total_seq_len
     logger.info(
         "[US8] DeepSeek long-context enabled (seq=%d > %d): "
         "dp=%d, sp=%d, cp=%d, tp=%d",
