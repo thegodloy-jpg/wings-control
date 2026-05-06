@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "wings_control"))
 from core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
     _detect_mtp_moe_features,
+    _set_deepseek_v31_ascend_quant_params,
     _set_soft_fp8,
     _set_mindie_common_params,
     _select_ascend_engine,
@@ -168,7 +169,30 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertNotIn("sp", params)
         self.assertNotIn("cp", params)
 
-    def test_deepseek_v31_fp8_does_not_force_enforce_eager(self):
+    def test_deepseek_v31_w8a8_uses_official_quant_path_not_soft_fp8(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            (model_dir / "config.json").write_text(
+                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
+                encoding="utf-8",
+            )
+            (model_dir / "quant_model_description.json").write_text("{}", encoding="utf-8")
+            model_info = _FakeModelInfo(
+                architecture="DeepseekV3ForCausalLM",
+                model_name="DeepSeek-V3.1-w8a8",
+                model_path=str(model_dir),
+            )
+            params = {"device_count": 8}
+
+            handled = _set_deepseek_v31_ascend_quant_params(params, {"device": "ascend"}, model_info)
+
+        self.assertTrue(handled)
+        self.assertEqual(params["quantization"], "ascend")
+        self.assertNotIn("enforce_eager", params)
+        self.assertEqual(params["tensor_parallel_size"], 4)
+        self.assertEqual(params["data_parallel_size"], 2)
+
+    def test_deepseek_v31_does_not_enter_soft_fp8_branch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             model_dir = Path(tmpdir)
             (model_dir / "config.json").write_text(
@@ -185,10 +209,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
             _set_soft_fp8(params, {"device": "ascend"}, model_info)
 
-        self.assertEqual(params["quantization"], "ascend")
-        self.assertNotIn("enforce_eager", params)
-        self.assertEqual(params["tensor_parallel_size"], 4)
-        self.assertEqual(params["data_parallel_size"], 2)
+        self.assertEqual(params, {"device_count": 8})
 
     def test_generic_deepseek_fp8_still_forces_enforce_eager(self):
         with tempfile.TemporaryDirectory() as tmpdir:

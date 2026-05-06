@@ -340,7 +340,8 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _ensure_pd_head_dim(params, model_info)
     _set_router_config(params)
     _set_operator_acceleration(params, ctx)
-    _set_soft_fp8(params, ctx, model_info)
+    if not _set_deepseek_v31_ascend_quant_params(params, ctx, model_info):
+        _set_soft_fp8(params, ctx, model_info)
     _set_soft_fp4(params, ctx, model_info)
     _set_task(params, ctx)
 
@@ -351,6 +352,42 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     # 在 _apply_cli_overrides 之后执行，防止 CLI 覆盖硬件硬约束。
 
     return params
+
+
+def _set_deepseek_v31_ascend_quant_params(params, ctx, model_info) -> bool:
+    """配置 DeepSeek-V3.1 官方 Ascend W8A8/ModelSlim 量化路径。
+
+    DeepSeek-V3.1-w8a8-mtp-QuaRot 属于官方 Ascend 量化权重，不是通用
+    Soft FP8 fallback。这里单独设置官方 vLLM-Ascend 所需参数，避免误走
+    _set_soft_fp8() 并带出 --enforce-eager 等软 FP8 副作用。
+    """
+    model_path = model_info.model_path
+    model_name = model_info.model_name
+
+    if ctx.get('device') != "ascend":
+        return False
+    if not _is_deepseek_v31_model(model_name, model_path):
+        return False
+    if not is_deepseek_series_fp8(model_path):
+        return False
+
+    params['quantization'] = 'ascend'
+    params['no_enable_prefix_caching'] = True
+    params['enable_expert_parallel'] = True
+    params['async_scheduling'] = True
+    try:
+        device_count_val = int(params.get('device_count', 0))
+    except (ValueError, TypeError):
+        logger.warning("Invalid device_count value, defaulting to 0")
+        device_count_val = 0
+    recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
+    recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
+    params['data_parallel_size'] = recommended_dp
+    params['tensor_parallel_size'] = recommended_tp
+    params['use_kunlun_atb'] = False
+    params.pop('enforce_eager', None)
+    logger.info("DeepSeek-V3.1 Ascend official W8A8/ModelSlim quantization configured")
+    return True
 
 
 def _fix_ascend_block_size(params: dict, ctx: dict) -> None:
@@ -485,6 +522,10 @@ def _set_soft_fp8(params, ctx, model_info):
     model_architecture = model_info.model_architecture
     model_name = model_info.model_name
     model_path = model_info.model_path
+
+    if _is_deepseek_v31_model(model_name, model_path):
+        logger.info("DeepSeek-V3.1 is handled by official Ascend quantized path, skip Soft FP8")
+        return
 
     # 检查模型是否为 FP8 模型
     is_fp8_model = is_qwen3_series_fp8(model_path, model_name) or is_deepseek_series_fp8(model_path)
