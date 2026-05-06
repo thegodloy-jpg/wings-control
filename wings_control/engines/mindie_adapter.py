@@ -1314,11 +1314,37 @@ def _build_backend_overrides(
 
 def _build_model_deploy_overrides(engine_config: Dict[str, Any]) -> Dict[str, Any]:
     """构建 MindIE ModelDeployConfig 覆盖参数。"""
-    return {
+    overrides = {
         "maxSeqLen": engine_config.get("maxSeqLen", 2560),
         "maxInputTokenLen": engine_config.get("maxInputTokenLen", 2048),
         "truncation": engine_config.get("truncation", False),
     }
+    cpsp_seq_len = _resolve_deepseek_cpsp_seq_len(engine_config)
+    if cpsp_seq_len:
+        # CPSP 参考配置要求 maxSeqLen / maxInputTokenLen / maxPrefillTokens
+        # 三者保持一致。这里先对齐 ModelDeployConfig 中的两个长度字段，
+        # ScheduleConfig.maxPrefillTokens 在 _build_schedule_overrides 中对齐。
+        overrides["maxSeqLen"] = cpsp_seq_len
+        overrides["maxInputTokenLen"] = cpsp_seq_len
+    return overrides
+
+
+def _resolve_deepseek_cpsp_seq_len(engine_config: Dict[str, Any]) -> int:
+    """Resolve the aligned long-context sequence length for DeepSeek CPSP."""
+    if engine_config.get("mindie_model_type") != "deepseekv2":
+        return 0
+    if engine_config.get("cp") is None or engine_config.get("sp") is None:
+        return 0
+    candidates = []
+    for key in ("maxSeqLen", "maxInputTokenLen", "maxPrefillTokens"):
+        try:
+            value = int(engine_config.get(key) or 0)
+        except (TypeError, ValueError):
+            logger.warning("[mindie] Invalid %s=%r for DeepSeek CPSP length alignment", key, engine_config.get(key))
+            value = 0
+        if value > 0:
+            candidates.append(value)
+    return max(candidates) if candidates else 0
 
 
 def _inject_multinode_tp_dp(
@@ -1493,7 +1519,7 @@ def _build_model_config_overrides(
 
 def _build_schedule_overrides(engine_config: Dict[str, Any]) -> Dict[str, Any]:
     """构建 MindIE ScheduleConfig 覆盖参数。"""
-    return {
+    overrides = {
         "cacheBlockSize": engine_config.get("cacheBlockSize", 128),
         "maxPrefillBatchSize": engine_config.get("maxPrefillBatchSize", 50),
         "maxPrefillTokens": engine_config.get("maxPrefillTokens", 8192),
@@ -1510,6 +1536,13 @@ def _build_schedule_overrides(engine_config: Dict[str, Any]) -> Dict[str, Any]:
         "decodeExpectedTime": engine_config.get("decodeExpectedTime", 50),
         "prefillExpectedTime": engine_config.get("prefillExpectedTime", 1500),
     }
+    cpsp_seq_len = _resolve_deepseek_cpsp_seq_len(engine_config)
+    if cpsp_seq_len:
+        # maxPrefillTokens 属于 ScheduleConfig，不能只在 ModelDeployConfig
+        # 对齐 maxSeqLen/maxInputTokenLen；否则 MindIE 仍会按旧 prefill 上限运行。
+        overrides["maxPrefillTokens"] = cpsp_seq_len
+        overrides["maxIterTimes"] = cpsp_seq_len
+    return overrides
 
 
 def _build_config_merge_script(

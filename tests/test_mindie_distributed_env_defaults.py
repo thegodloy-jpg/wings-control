@@ -370,6 +370,68 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertEqual(overrides["models"]["deepseekv2"]["kv_cache_options"], {"enable_nz": True})
         self.assertEqual(overrides["llm"]["parallel_options"]["dense_mlp_local_tp"], 16)
 
+    def test_mindie_deepseek_cpsp_final_config_aligns_prefill_tokens(self):
+        engine_config = {
+            "modelName": "deepseekr1",
+            "modelWeightPath": "/usr/local/serving/models/",
+            "worldSize": 16,
+            "maxSeqLen": 132096,
+            "maxInputTokenLen": 132096,
+            "dp": 1,
+            "sp": 8,
+            "tp": 8,
+            "cp": 2,
+            "isMOE": True,
+            "mindie_model_type": "deepseekv2",
+        }
+        params = {
+            "engine_config": engine_config,
+            "distributed": True,
+            "nnodes": 2,
+            "node_rank": 0,
+            "device_count": 8,
+            "node_ips": "10.254.124.187,10.254.124.188",
+            "worldSize": 16,
+            "mindie_master_addr": "10.254.124.187",
+        }
+
+        with patch(
+            "engines.mindie_adapter._resolve_external_rank_table_path",
+            return_value="/tmp/rank_table.json",
+        ):
+            with patch(
+                "engines.mindie_adapter._resolve_rank_table",
+                return_value=([], "/shared-volume/hccl_ranktable.json"),
+            ):
+                script = mindie_adapter.build_start_script(params)
+        config = self._merge_mindie_config(self._extract_overrides_json(script))
+        backend = config["BackendConfig"]
+        model_deploy = backend["ModelDeployConfig"]
+        schedule = backend["ScheduleConfig"]
+        model_config = model_deploy["ModelConfig"][0]
+
+        self.assertEqual(model_deploy["maxSeqLen"], 132096)
+        self.assertEqual(model_deploy["maxInputTokenLen"], 132096)
+        self.assertEqual(schedule["maxPrefillTokens"], 132096)
+        self.assertEqual(schedule["maxIterTimes"], 132096)
+        self.assertEqual(backend["kvPoolConfig"], {"backend": "", "configPath": ""})
+        self.assertEqual(set(model_config["models"]["deepseekv2"].keys()), {
+            "ep_level",
+            "enable_init_routing_cutoff",
+            "topk_scaling_factor",
+            "enable_oproj_prefetch",
+            "enable_mlapo_prefetch",
+            "kv_cache_options",
+        })
+        self.assertEqual(model_config["models"]["deepseekv2"]["ep_level"], 1)
+        self.assertEqual(model_config["models"]["deepseekv2"]["enable_init_routing_cutoff"], True)
+        self.assertEqual(model_config["models"]["deepseekv2"]["topk_scaling_factor"], 0.25)
+        self.assertEqual(model_config["models"]["deepseekv2"]["enable_oproj_prefetch"], True)
+        self.assertEqual(model_config["models"]["deepseekv2"]["enable_mlapo_prefetch"], True)
+        self.assertEqual(model_config["models"]["deepseekv2"]["kv_cache_options"], {"enable_nz": True})
+        self.assertEqual(set(model_config["llm"]["parallel_options"].keys()), {"dense_mlp_local_tp"})
+        self.assertEqual(model_config["llm"]["parallel_options"]["dense_mlp_local_tp"], 16)
+
     def test_mindie_deepseek_cpsp_models_merge_with_function_call(self):
         overrides = _build_model_config_overrides(
             {
