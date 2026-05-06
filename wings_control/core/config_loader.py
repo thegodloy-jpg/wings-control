@@ -36,7 +36,8 @@ from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd
     get_operator_acceleration_env, get_local_ip
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
 from utils.model_utils import (ModelIdentifier, HYBRID_KV_CACHE_ARCHS,
-                               is_qwen3_32b_nvfp4, is_deepseek_series_fp8, is_qwen3_series_fp8)
+                               is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
+                               is_deepseek_series_modelslim_quant, is_qwen3_series_fp8)
 from utils.device_utils import check_pcie_cards
 
 logger = logging.getLogger(__name__)
@@ -368,7 +369,7 @@ def _set_deepseek_v31_ascend_quant_params(params, ctx, model_info) -> bool:
         return False
     if not _is_deepseek_v31_model(model_name, model_path):
         return False
-    if not is_deepseek_series_fp8(model_path):
+    if not is_deepseek_series_modelslim_quant(model_path):
         return False
 
     params['quantization'] = 'ascend'

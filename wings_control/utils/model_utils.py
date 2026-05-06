@@ -302,45 +302,79 @@ def is_qwen3_32b_nvfp4(model_path: str) -> bool:
         return False
 
 
-def is_deepseek_series_fp8(model_path: str) -> bool:
-    """判断模型是否为 DeepSeek 系列 FP8 模型
-
-    判断标准：
-    1. 模型架构 architectures 为 DeepseekV3ForCausalLM
-    2. config.json 中没有 quantization_config 字段
-    3. 权重路径下存在 quant_model_description.json 文件
-
-    Args:
-        model_path: 模型权重路径
-
-    Returns:
-        bool: 如果是 DeepSeek 系列 FP8 模型返回 True，否则返回 False
-    """
+def _is_deepseek_v3_modelslim_layout(model_path_obj: Path) -> bool:
+    """判断模型目录是否符合 DeepSeek V3 ModelSlim 量化权重布局。"""
     try:
-        model_path_obj = Path(model_path)
         config = load_json_config(model_path_obj / "config.json")
 
         architectures = config.get("architectures", [])
         if not architectures or architectures[0] != "DeepseekV3ForCausalLM":
-            logger.warning("is_deepseek_series_fp8: architectures check failed"
+            logger.warning("is_deepseek_v3_modelslim_layout: architectures check failed"
                            " - architectures=%s, expected=['DeepseekV3ForCausalLM']", architectures)
             return False
 
         if "quantization_config" in config:
-            logger.warning("is_deepseek_series_fp8: quantization_config check failed"
+            logger.warning("is_deepseek_v3_modelslim_layout: quantization_config check failed"
                            " - quantization_config exists in config.json")
             return False
 
         quant_model_desc_path = model_path_obj / "quant_model_description.json"
         if not quant_model_desc_path.exists():
-            logger.warning("is_deepseek_series_fp8: quant_model_description.json check failed"
+            logger.warning("is_deepseek_v3_modelslim_layout: quant_model_description.json check failed"
                            " - file not found at %s", quant_model_desc_path)
             return False
 
         return True
 
     except Exception as e:
-        logger.warning("Failed to check if model is DeepSeek series FP8: %s", e)
+        logger.warning("Failed to check if model is DeepSeek V3 ModelSlim layout: %s", e)
+        return False
+
+
+def is_deepseek_series_modelslim_quant(model_path: str) -> bool:
+    """判断模型是否为 DeepSeek V3 ModelSlim/Ascend 量化权重。
+
+    ModelSlim 导出的 DeepSeek V3.1 W8A8 权重也会带
+    quant_model_description.json。该布局只说明模型是 Ascend 量化权重，
+    不能直接等同于 Soft FP8。
+    """
+    return _is_deepseek_v3_modelslim_layout(Path(model_path))
+
+
+def is_deepseek_series_fp8(model_path: str) -> bool:
+    """判断模型是否为 DeepSeek 系列 Soft FP8 模型。
+
+    判断标准：
+    1. 模型目录符合 DeepSeek V3 ModelSlim 量化布局
+    2. quant_model_description.json 中存在明确 FP8/Float8 标记
+    3. W8A8/INT8 等 Ascend 量化标记优先排除，避免误走 Soft FP8 分支
+
+    Args:
+        model_path: 模型权重路径
+
+    Returns:
+        bool: 如果是 DeepSeek 系列 Soft FP8 模型返回 True，否则返回 False
+    """
+    try:
+        model_path_obj = Path(model_path)
+        if not _is_deepseek_v3_modelslim_layout(model_path_obj):
+            return False
+
+        quant_desc_text = (model_path_obj / "quant_model_description.json").read_text(
+            encoding="utf-8", errors="ignore"
+        ).lower()
+        if any(marker in quant_desc_text for marker in ("w8a8", "int8", "int4")):
+            logger.info("is_deepseek_series_fp8: detected non-FP8 quant marker in quant_model_description.json")
+            return False
+
+        if any(marker in quant_desc_text for marker in ("fp8", "float8")):
+            return True
+
+        logger.info("is_deepseek_series_fp8: no explicit FP8 marker in quant_model_description.json")
+        return False
+
+    except Exception as e:
+        logger.warning("Failed to check if model is DeepSeek series Soft FP8: %s", e)
         return False
 
 

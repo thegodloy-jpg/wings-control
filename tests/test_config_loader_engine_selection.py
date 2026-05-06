@@ -23,6 +23,7 @@ from core.config_loader import (  # noqa: E402
     _select_nvidia_engine,
     _validate_user_engine,
 )
+from utils.model_utils import is_deepseek_series_fp8, is_deepseek_series_modelslim_quant  # noqa: E402
 
 
 class _FakeModelInfo:
@@ -199,7 +200,10 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
                 encoding="utf-8",
             )
-            (model_dir / "quant_model_description.json").write_text("{}", encoding="utf-8")
+            (model_dir / "quant_model_description.json").write_text(
+                json.dumps({"quant_type": "w8a8"}),
+                encoding="utf-8",
+            )
             model_info = _FakeModelInfo(
                 architecture="DeepseekV3ForCausalLM",
                 model_name="DeepSeek-V3.1-w8a8",
@@ -207,6 +211,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             )
             params = {"device_count": 8}
 
+            self.assertTrue(is_deepseek_series_modelslim_quant(str(model_dir)))
+            self.assertFalse(is_deepseek_series_fp8(str(model_dir)))
             _set_soft_fp8(params, {"device": "ascend"}, model_info)
 
         self.assertEqual(params, {"device_count": 8})
@@ -218,7 +224,10 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
                 encoding="utf-8",
             )
-            (model_dir / "quant_model_description.json").write_text("{}", encoding="utf-8")
+            (model_dir / "quant_model_description.json").write_text(
+                json.dumps({"quant_type": "fp8"}),
+                encoding="utf-8",
+            )
             model_info = _FakeModelInfo(
                 architecture="DeepseekV3ForCausalLM",
                 model_name="DeepSeek-R1-w8a8",
