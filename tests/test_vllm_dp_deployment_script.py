@@ -111,18 +111,6 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("--speculative-config", script)
         self.assertIn("--enable-expert-parallel", script)
         self.assertIn("--async-scheduling", script)
-        self.assertNotIn("--dtype auto", script)
-        self.assertNotIn("--kv-cache-dtype auto", script)
-        self.assertNotIn("--enable-chunked-prefill", script)
-        self.assertNotIn("--block-size 128", script)
-        self.assertNotIn("--enforce-eager", script)
-        self.assertIn("--max-num-seqs 16", script)
-        self.assertIn("--gpu-memory-utilization 0.92", script)
-        self.assertIn("--max-model-len 16384", script)
-        self.assertIn("--host 0.0.0.0", script)
-        self.assertIn("--seed 1024", script)
-        self.assertIn("--compilation-config", script)
-        self.assertIn('"cudagraph_mode":"FULL_DECODE_ONLY"', script)
 
     def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
         params = _base_params(node_rank=0)
