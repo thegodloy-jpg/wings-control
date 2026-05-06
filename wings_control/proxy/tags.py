@@ -72,30 +72,24 @@ def make_upstream_headers(req: Request, want_gzip: bool = False) -> Dict[str, st
     return h
 
 
-async def read_json_body(req: Request, rid: Optional[str], max_request_bytes: int) -> bytes:
+async def read_json_body(req: Request, rid: Optional[str]) -> bytes:
     """读取并校验请求体中的 JSON 数据。
 
     依次执行以下检查：
       1. 读取原始请求体字节。
-      2. 若 max_request_bytes > 0 且体积超限，返回 HTTP 413。
-      3. 尝试用 orjson 反序列化以验证 JSON 合法性，失败则返回 HTTP 400。
+      2. 尝试用 orjson 反序列化以验证 JSON 合法性，失败则返回 HTTP 400。
 
     Args:
         req: 客户端发来的 FastAPI Request 对象。
         rid: 请求 ID，用于错误日志关联。
-        max_request_bytes: 请求体大小上限（字节），0 或负数表示不限制。
 
     Returns:
         bytes: 经过校验的原始 JSON 字节串（未修改内容）。
 
     Raises:
-        HTTPException: 413 - 请求体超过大小限制。
         HTTPException: 400 - 请求体不是合法 JSON。
     """
     body = await req.body()
-    if max_request_bytes and len(body) > max_request_bytes:
-        elog("req_too_large", rid=rid, body_len=len(body), limit=max_request_bytes)
-        raise HTTPException(413, "request entity too large")
     try:
         _ = orjson.loads(body)
     except Exception as e:

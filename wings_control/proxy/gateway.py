@@ -69,9 +69,6 @@ configure_worker_logging()
 # 全局配置常量
 # =============================================================================
 
-# 单请求体大小上限，超出会在读取阶段被拒绝，避免代理进程被大包压垮。
-MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(20 * 1024 * 1024)))
-
 # 由 launcher 通过 uvicorn 启动的 FastAPI 应用。
 app = FastAPI()
 
@@ -621,7 +618,7 @@ async def _forward_nonstream(req: Request, upstream_path: str):
     rid = req.headers.get("x-request-id")
 
     #
-    body_bytes = await read_json_body(req, rid, MAX_REQUEST_BYTES)
+    body_bytes = await read_json_body(req, rid)
     jlog("req_recv", rid=rid, path=str(req.url.path), body_len=len(body_bytes))
 
     #
@@ -922,7 +919,7 @@ async def _forward_stream(req: Request, upstream_path: str):
     gate: QueueGate = app.state.gate
     rid = req.headers.get("x-request-id")
 
-    body_bytes = await read_json_body(req, rid, MAX_REQUEST_BYTES)
+    body_bytes = await read_json_body(req, rid)
     jlog("req_recv", rid=rid, path=str(req.url.path), body_len=len(body_bytes))
 
     try:
