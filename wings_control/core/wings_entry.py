@@ -967,6 +967,7 @@ def _build_monitor_script(
     )
     write_progress = (
         '  CURR_TIME=$(date -Iseconds)\n'
+        '  SCRIPT_START_EPOCH="${SCRIPT_START_EPOCH:-$(date +%s)}"\n'
         '  START_TIME=$(date -Iseconds -d "@${SCRIPT_START_EPOCH}")\n'
         '  ELAPSED_TIME=$(( $(date +%s) - SCRIPT_START_EPOCH ))\n'
         '\n'
