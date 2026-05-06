@@ -662,9 +662,9 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
                     "export HCCL_BUFFSIZE=1024",
                     "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
                     "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-                    "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH}",
+                    "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
                     "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-                    "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH}",
+                    "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
                 ])
     return env_commands
 
@@ -1906,9 +1906,9 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
             "export HCCL_BUFFSIZE=1024",
             "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
             "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-            "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH}",
+            "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
             "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-            "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH}",
+            "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
         ]
     return [
         f"export GLOO_SOCKET_IFNAME={net_if}",
