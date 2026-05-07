@@ -2328,8 +2328,7 @@ def build_start_script(params: Dict[str, Any]) -> str:
     else:
         script = _build_vllm_single_script(params, cmd, common_env_cmds, engine, sparse_args)
 
-    if engine == "vllm_ascend":
-        script = _inject_env_echo(script)
+    script = _inject_env_echo(script)
 
     return script
 

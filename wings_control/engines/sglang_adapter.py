@@ -242,9 +242,15 @@ def build_start_script(params: Dict[str, Any]) -> str:
     if is_distributed and nnodes > 1:
         net_if = os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0"))
         lines.append(f"export GLOO_SOCKET_IFNAME={net_if}")
+        lines.append(f'echo "[wings-env] export GLOO_SOCKET_IFNAME=${{GLOO_SOCKET_IFNAME:-}}"')
         lines.append(f"export TP_SOCKET_IFNAME={net_if}")
+        lines.append(f'echo "[wings-env] export TP_SOCKET_IFNAME=${{TP_SOCKET_IFNAME:-}}"')
         lines.append(f"export NCCL_SOCKET_IFNAME={net_if}")
+        lines.append(f'echo "[wings-env] export NCCL_SOCKET_IFNAME=${{NCCL_SOCKET_IFNAME:-}}"')
 
+    preview = core_cmd[:800] + "...<truncated>" if len(core_cmd) > 800 else core_cmd
+    preview_safe = preview.replace("'", "'\"'\"'")
+    lines.append(f"echo '[wings-cmd] >>> exec {preview_safe}'")
     lines.append(f"exec {core_cmd}")
     return "\n".join(lines) + "\n"
 
