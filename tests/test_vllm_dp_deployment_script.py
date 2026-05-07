@@ -97,7 +97,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export HCCL_CONNECT_TIMEOUT=1800", script)
         self.assertIn("export HCCL_EXEC_TIMEOUT=7200", script)
         self.assertIn("export OMP_NUM_THREADS=1", script)
-        self.assertIn("export HCCL_BUFFSIZE=200", script)
+        self.assertIn("export HCCL_BUFFSIZE=512", script)
         self.assertIn("export VLLM_ASCEND_BALANCE_SCHEDULING=1", script)
         self.assertNotIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
         self.assertNotIn("export VLLM_ASCEND_ENABLE_NZ=0", script)

@@ -654,7 +654,10 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
             elif engine == "vllm_ascend":
                 is_deepseek_v31 = _is_deepseek_v31_ascend_dp_deployment(params)
                 omp_threads = os.getenv('OMP_NUM_THREADS', '1' if is_deepseek_v31 else '10')
-                hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '200' if is_deepseek_v31 else '1024')
+                # DeepSeek-V3.1 MoE dispatch on 16 EP can require >200MB window
+                # when maxBs grows (e.g. 64 needs ~479MB). Keep runtime override,
+                # but raise the safe default from the official minimal 200MB.
+                hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '512' if is_deepseek_v31 else '1024')
                 env_commands.extend([
                     f"export HCCL_IF_IP={shlex.quote(current_ip)}",
                     f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
@@ -2008,7 +2011,10 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
         hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
         is_deepseek_v31 = _is_deepseek_v31_ascend_dp_deployment(params)
         omp_threads = os.getenv('OMP_NUM_THREADS', '1' if is_deepseek_v31 else '100')
-        hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '200' if is_deepseek_v31 else '1024')
+        # DeepSeek-V3.1 MoE dispatch on 16 EP can require >200MB window
+        # when maxBs grows (e.g. 64 needs ~479MB). Keep runtime override,
+        # but raise the safe default from the official minimal 200MB.
+        hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '512' if is_deepseek_v31 else '1024')
         env_commands = [
             # 与 Ray 路径保持一致：先建立 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），
             # HCCL_IF_IP 直接复用，避免多网卡场景下与 vLLM 通信走错网卡。
