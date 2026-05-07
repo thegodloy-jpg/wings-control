@@ -412,8 +412,11 @@ def _collect_indexcache_patch_features(engine: str, merged: dict) -> list[str]:
 
 
 def _collect_ears_patch_features(engine: str, merged: dict) -> list[str]:
-    """Return EARS accel feature when speculative suffix/MTP is selected."""
-    if engine not in ("vllm", "vllm_ascend"):
+    """Return EARS accel feature when speculative suffix/MTP is selected.
+
+    vllm_ascend 不安装 EARS 补丁，已由 Ascend 侧自身实现同等优化。
+    """
+    if engine != "vllm":
         return []
     if not merged.get("enable_speculative_decode"):
         return []

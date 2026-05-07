@@ -237,7 +237,8 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(_base_params(node_rank=0, enable_speculative_decode=True))
 
-        self.assertIn("export VLLM_EARS_TOLERANCE=0.5", script)
+        # vllm_ascend 不注入 VLLM_EARS_TOLERANCE（Ascend 侧无需此参数）
+        self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script)
         self.assertIn(
             "--speculative-config '{\"method\": \"deepseek_mtp\", "
             "\"num_speculative_tokens\": 3}'",
@@ -289,6 +290,38 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
 
         self.assertIn("--dtype bfloat16", script)
         self.assertNotIn("--dtype auto", script)
+
+    # ------------------------------------------------------------------
+    # EARS 使能边界：vllm_ascend 场景各特性组合均不注入 VLLM_EARS_TOLERANCE
+    # ------------------------------------------------------------------
+
+    def test_vllm_ascend_speculative_plus_sparse_does_not_inject_ears(self):
+        """vllm_ascend：投机推理 + IndexCache 多特性并存，EARS 不注入。"""
+        params = _base_params(node_rank=0, enable_speculative_decode=True)
+        params["enable_sparse"] = True
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script)
+        self.assertIn("--speculative-config", script)
+
+    def test_vllm_ascend_speculative_plus_lmcache_does_not_inject_ears(self):
+        """vllm_ascend：投机推理 + LMCache 多特性并存，EARS 不注入，策略降级为 suffix。"""
+        with patch.dict(os.environ, {"LMCACHE_OFFLOAD": "true"}, clear=False):
+            with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+                script = build_start_script(_base_params(node_rank=0, enable_speculative_decode=True))
+
+        self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script)
+        # LMCache 使 DeepSeek MTP 降级为 suffix
+        self.assertIn("\"method\" : \"suffix\"", script)
+
+    def test_vllm_ascend_speculative_only_does_not_inject_ears(self):
+        """vllm_ascend：单独开启投机推理（无其他高级特性），EARS 不注入。"""
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(_base_params(node_rank=0, enable_speculative_decode=True))
+
+        self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

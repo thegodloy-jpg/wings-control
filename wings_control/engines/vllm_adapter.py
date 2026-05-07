@@ -1490,10 +1490,11 @@ def _is_mtp_or_suffix_strategy(params: Dict[str, Any], engine: str) -> bool:
     """判断当前投机推理策略是否为 MTP 或 suffix（即非草稿模型方案）。
 
     当启用投机推理且未指定草稿模型路径时，策略一定是 MTP 或 suffix。
+    vllm_ascend 不注入 VLLM_EARS_TOLERANCE，Ascend 侧无需该参数。
     """
     if not params.get("enable_speculative_decode"):
         return False
-    if engine not in ("vllm", "vllm_ascend"):
+    if engine != "vllm":
         return False
     if params.get("speculative_decode_model_path"):
         return False

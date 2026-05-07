@@ -205,6 +205,27 @@ class TestVllmKvSparse(unittest.TestCase):
         )
         self.assertIn("--hf-overrides '{\"index_topk_freq\": 4}'", script)
 
+    def test_vllm_engine_speculative_injects_ears_tolerance(self):
+        """vllm（非 Ascend）引擎：投机推理时注入 VLLM_EARS_TOLERANCE=0.5（与 vllm_ascend 行为对比）。"""
+        params = {
+            "model_name": "deepseek-v3",
+            "model_path": "/models/deepseek-v3",
+            "model_type": "llm",
+            "engine": "vllm",
+            "enable_speculative_decode": True,
+            "engine_config": {"model": "/models/deepseek-v3"},
+        }
+
+        with patch.object(
+            vllm_adapter,
+            "ModelIdentifier",
+            return_value=_FakeModelInfo("DeepseekV3ForCausalLM"),
+        ):
+            script = vllm_adapter.build_start_script(params)
+
+        self.assertIn("export VLLM_EARS_TOLERANCE=0.5", script)
+        self.assertIn("--speculative-config", script)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
