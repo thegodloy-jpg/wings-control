@@ -308,9 +308,10 @@ def _is_deepseek_v3_modelslim_layout(model_path_obj: Path) -> bool:
         config = load_json_config(model_path_obj / "config.json")
 
         architectures = config.get("architectures", [])
-        if not architectures or architectures[0] != "DeepseekV3ForCausalLM":
+        expected_architectures = ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
+        if not architectures or architectures[0] not in expected_architectures:
             logger.warning("is_deepseek_v3_modelslim_layout: architectures check failed"
-                           " - architectures=%s, expected=['DeepseekV3ForCausalLM']", architectures)
+                           " - architectures=%s, expected=%s", architectures, expected_architectures)
             return False
 
         if "quantization_config" in config:

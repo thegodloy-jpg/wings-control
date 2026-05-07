@@ -342,6 +342,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _set_router_config(params)
     _set_operator_acceleration(params, ctx)
     if not _set_deepseek_v31_ascend_quant_params(params, ctx, model_info):
+        _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info)
         _set_soft_fp8(params, ctx, model_info)
     _set_soft_fp4(params, ctx, model_info)
     _set_task(params, ctx)
@@ -399,6 +400,54 @@ def _set_deepseek_v31_ascend_quant_params(params, ctx, model_info) -> bool:
     if 'enforce_eager' not in explicit_keys:
         params.pop('enforce_eager', None)
     logger.info("DeepSeek-V3.1 Ascend official W8A8/ModelSlim quantization configured")
+    return True
+
+
+def _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info) -> bool:
+    """配置 DeepSeek V3-family Ascend W8A8/ModelSlim DP 的可复用安全默认。
+
+    vLLM-Ascend 官方页标题为 DeepSeek-V3/3.1；在线 DP 命令的拓扑、量化、
+    EP、async、prefix-cache 关闭等策略可复用于 DeepSeek V3-family。这里不
+    复用 V3.1 独有的身份判断，只复用 W8A8/ModelSlim + Ascend 的安全默认，
+    并继续保持 CLI/ENV 上层显式传参优先。
+    """
+    model_path = model_info.model_path
+    model_name = model_info.model_name
+
+    if ctx.get('device') != "ascend":
+        return False
+    if not _is_deepseek_v3_family_model(model_name, model_path):
+        return False
+    if not is_deepseek_series_modelslim_quant(model_path):
+        return False
+
+    explicit_keys = _detect_explicit_cli_keys()
+
+    if 'quantization' not in explicit_keys:
+        params['quantization'] = 'ascend'
+    if 'dtype' not in explicit_keys or str(params.get('dtype', '')).lower() == 'auto':
+        params['dtype'] = 'bfloat16'
+    if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
+        params['no_enable_prefix_caching'] = True
+    if 'enable_expert_parallel' not in explicit_keys:
+        params['enable_expert_parallel'] = True
+    if 'async_scheduling' not in explicit_keys:
+        params['async_scheduling'] = True
+    try:
+        device_count_val = int(params.get('device_count', 0))
+    except (ValueError, TypeError):
+        logger.warning("Invalid device_count value, defaulting to 0")
+        device_count_val = 0
+    recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
+    recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
+    if 'data_parallel_size' not in explicit_keys:
+        params['data_parallel_size'] = recommended_dp
+    if 'tensor_parallel_size' not in explicit_keys:
+        params['tensor_parallel_size'] = recommended_tp
+    params['use_kunlun_atb'] = False
+    if 'enforce_eager' not in explicit_keys:
+        params.pop('enforce_eager', None)
+    logger.info("DeepSeek V3-family Ascend W8A8/ModelSlim quantization configured")
     return True
 
 
@@ -606,6 +655,16 @@ def _is_deepseek_v31_model(model_name: str, model_path: str) -> bool:
     for item in candidates:
         normalized = item.lower().replace("_", "-")
         if "deepseek" in normalized and ("v3.1" in normalized or "v31" in normalized):
+            return True
+    return False
+
+
+def _is_deepseek_v3_family_model(model_name: str, model_path: str) -> bool:
+    """Return True for DeepSeek V3-family identifiers, excluding R1/R2 names."""
+    candidates = [str(item) for item in (model_name, model_path) if item]
+    for item in candidates:
+        normalized = item.lower().replace("_", "-")
+        if "deepseek" in normalized and "v3" in normalized:
             return True
     return False
 
@@ -1493,7 +1552,11 @@ def _process_cmd_args(known_args: argparse.Namespace) -> Dict[str, Any]:
 
     config_file 由 _load_user_config 单独处理，不参与引擎参数合并。
     """
-    cmd_known_params = {k: v for k, v in vars(known_args).items() if v is not None and k not in ["config_file"]}
+    cmd_known_params = {
+        k: v
+        for k, v in vars(known_args).items()
+        if v is not None and k not in ["config_file", "engine_config"]
+    }
     return cmd_known_params
 
 
@@ -2170,6 +2233,9 @@ def load_and_merge_configs(
         ValueError: 当 VRAM 不足、权重路径无效或引擎不兼容时抛出
     """
     logger.info("Starting config loading and merging...")
+    raw_engine_config = getattr(known_args, "engine_config", None)
+    raw_engine_config = raw_engine_config if isinstance(raw_engine_config, dict) else None
+    inherited_explicit_keys = set(getattr(known_args, "_explicit_cli_keys", None) or [])
     # 1.
     # VRAM
     cmd_known_params = _process_cmd_args(known_args)
@@ -2211,12 +2277,25 @@ def load_and_merge_configs(
     # 4. CLI/ENV 参数覆盖 config-file（保证 CLI > config-file 优先级）
     engine_config = _apply_cli_overrides(engine_config, cmd_known_params)
 
+    # 4.1 分布式 Master -> Worker 下发的 engine_config 是上层已经合并好的
+    # vLLM 启动字段，应继续覆盖 Worker 本地默认值。否则
+    # Worker 会只用本地环境/默认配置重建 engine_config，导致 master/worker
+    # 在 seed、max_num_seqs、max_model_len、prefix-cache 等字段上不对齐。
+    # 但不能把 engine_config 中所有字段都标记为显式 CLI/ENV，否则默认值也会
+    # 绕过 adapter 后续的安全归一化（例如 DeepSeek DP 关闭 prefix-cache）。
+    if raw_engine_config:
+        engine_config = _merge_configs(engine_config, raw_engine_config)
+
     # 4.5 Ascend 硬约束：prefix_caching 开启时 block_size 必须为 128
     #     放在 CLI 覆盖之后，确保硬件约束优先于用户 CLI 参数
     _fix_ascend_block_size(engine_config, {"device": hardware_env.get("device")})
 
     # 5.
     final_engine_params = _merge_final_config(engine_config, cmd_known_params)
+    if inherited_explicit_keys:
+        explicit_keys = set(final_engine_params.get("_explicit_cli_keys") or [])
+        explicit_keys.update(inherited_explicit_keys)
+        final_engine_params["_explicit_cli_keys"] = sorted(explicit_keys)
 
     logger.info("Final engine_config keys: %s", list(engine_config.keys()))
     logger.info("Config merging completed.")

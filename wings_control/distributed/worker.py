@@ -166,11 +166,10 @@ async def start_engine_api(request: EngineStartRequest):
         from core.wings_entry import build_launcher_plan
 
         # ---- 1. 从 params 重建 LaunchArgs ----
-        # 注意：仅提取 LaunchArgs 已定义的字段。引擎特定参数（engine_config 等）
-        # 不通过 Master→Worker 传递，而是由 build_launcher_plan() 内部的
-        # 配置合并链（硬件探测 → 默认配置 → 模型配置 → 用户配置 → CLI）在
-        # Worker 本地重建。分布式协调参数（nnodes/node_rank/head_node_addr 等）
-        # 已全部在 LaunchArgs 中定义。
+        # 注意：仅提取 LaunchArgs 已定义的字段。engine_config 也属于
+        # LaunchArgs 的可选透传字段，用于保持 Master 下发的上层 vLLM 参数
+        # 在所有节点一致；Worker 仍会在 build_launcher_plan() 中补充本地硬件
+        # 探测与 rank 专属 host/port/headless 调整。
         la_fields = {f.name for f in _dc.fields(LaunchArgs)}
         la_kwargs = {k: v for k, v in request.params.items() if k in la_fields}
         la_kwargs["engine"] = request.engine  # 确保 engine 来自顶层字段

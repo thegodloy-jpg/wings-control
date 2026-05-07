@@ -2,6 +2,7 @@
 """vLLM Ascend dp_deployment 启动脚本单测。"""
 # pyright: reportMissingImports=false
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -81,6 +82,11 @@ def _deepseek_named_params(model_name, node_rank=0):
 
 
 class TestVllmDpDeploymentScript(unittest.TestCase):
+    def setUp(self):
+        env_patch = patch.dict(os.environ, {}, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
     def test_deepseek_dp_deployment_rank0_uses_vllm_serve_not_ray(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(_base_params(node_rank=0))
@@ -92,12 +98,16 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("--data-parallel-rank 0", script)
         self.assertNotIn("--data-parallel-external-lb", script)
         self.assertIn("export HCCL_WHITELIST_DISABLE=1", script)
+        self.assertIn("export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c", script)
+        self.assertNotIn("try: s.connect", script)
+        self.assertNotIn("finally: s.close()", script)
         self.assertIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
         self.assertIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
         self.assertIn("export HCCL_CONNECT_TIMEOUT=1800", script)
         self.assertIn("export HCCL_EXEC_TIMEOUT=7200", script)
         self.assertIn("export OMP_NUM_THREADS=1", script)
-        self.assertIn("export HCCL_BUFFSIZE=512", script)
+        self.assertIn("export HCCL_BUFFSIZE=200", script)
+        self.assertIn('echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"', script)
         self.assertIn("export VLLM_ASCEND_BALANCE_SCHEDULING=1", script)
         self.assertNotIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
         self.assertNotIn("export VLLM_ASCEND_ENABLE_NZ=0", script)
@@ -112,7 +122,13 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("--enable-expert-parallel", script)
         self.assertIn("--async-scheduling", script)
         self.assertIn("--dtype bfloat16", script)
+        self.assertIn("--seed 1024", script)
+        self.assertIn("--max-num-seqs 16", script)
+        self.assertIn("--gpu-memory-utilization 0.92", script)
+        self.assertIn("--compilation-config", script)
+        self.assertIn("FULL_DECODE_ONLY", script)
         self.assertNotIn("--enforce-eager", script)
+        self.assertIn("[wings-cmd] >>> exec vllm serve /usr/local/serving/models/", script)
 
     def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
         params = _base_params(node_rank=0)
@@ -145,13 +161,36 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(_base_params(node_rank=1))
 
+        # exec 命令必须存在
+        self.assertIn("exec vllm serve /usr/local/serving/models/", script)
+        self.assertIn("[wings-cmd] >>> exec vllm serve /usr/local/serving/models/", script)
+        self.assertNotIn("try: s.connect", script)
+        self.assertNotIn("finally: s.close()", script)
+
+        # worker 专属标志
         self.assertIn("--headless", script)
         self.assertIn("--data-parallel-start-rank 2", script)
-        self.assertIn("--data-parallel-size-local 2", script)
         self.assertNotIn("--data-parallel-external-lb", script)
         self.assertNotIn("ray start --address", script)
+        # worker 节点不应携带 HTTP 监听地址/端口
         self.assertNotIn("--host 10.254.124.178", script)
         self.assertNotIn("--port 17000", script)
+
+        # DP 参数对齐 master（rank0）
+        exec_line = next(line for line in script.splitlines() if line.startswith("exec vllm serve"))
+        self.assertIn("--data-parallel-size 4", exec_line)
+        self.assertIn("--data-parallel-size-local 2", exec_line)
+        self.assertIn("--data-parallel-address 10.254.124.178", exec_line)
+        self.assertIn("--data-parallel-rpc-port 27071", exec_line)
+
+        # 模型启动参数对齐 master（关键字段不能丢失）
+        self.assertIn("--enable-expert-parallel", script)
+        self.assertIn("--async-scheduling", script)
+        self.assertIn("--dtype bfloat16", script)
+        self.assertIn("--seed 1024", script)
+        self.assertIn("--max-num-seqs 16", script)
+        self.assertNotIn("--enforce-eager", script)
+        self.assertIn("--compilation-config", script)
 
     def test_deepseek_v31_official_dp_envs_do_not_leak_to_generic_deepseek(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
@@ -162,23 +201,37 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export OMP_NUM_THREADS=100", script)
         self.assertIn("export HCCL_BUFFSIZE=1024", script)
 
-    def test_deepseek_v31_official_dp_envs_do_not_leak_to_deepseek_v3(self):
+    def test_deepseek_v3_reuses_official_online_dp_envs(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(_deepseek_named_params("DeepSeek-V3-w8a8", node_rank=0))
 
-        self.assertNotIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
-        self.assertNotIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
-        self.assertIn("export OMP_NUM_THREADS=100", script)
-        self.assertIn("export HCCL_BUFFSIZE=1024", script)
+        self.assertIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
+        self.assertIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
+        self.assertIn("export HCCL_BUFFSIZE=200", script)
+        self.assertIn("--dtype bfloat16", script)
+        self.assertNotIn("--enforce-eager", script)
 
-    def test_deepseek_v31_official_dp_envs_do_not_leak_to_deepseek_v32(self):
+    def test_deepseek_v32_reuses_official_online_dp_envs(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekV32ModelIdentifier):
             script = build_start_script(_deepseek_named_params("DeepSeek-V3.2-w8a8", node_rank=0))
 
-        self.assertNotIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
-        self.assertNotIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
-        self.assertIn("export OMP_NUM_THREADS=100", script)
-        self.assertIn("export HCCL_BUFFSIZE=1024", script)
+        self.assertIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
+        self.assertIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
+        self.assertIn("export HCCL_BUFFSIZE=200", script)
+        self.assertIn("--dtype bfloat16", script)
+        self.assertNotIn("--enforce-eager", script)
+        self.assertNotIn("export VLLM_USE_V1=1", script)
+        self.assertNotIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
+
+    def test_deepseek_v31_can_enable_mla_eager_fallback(self):
+        with patch.dict(os.environ, {"WINGS_DEEPSEEK_ASCEND_MLA_EAGER_FALLBACK": "1"}, clear=False):
+            with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+                script = build_start_script(_base_params(node_rank=0))
+
+        self.assertIn("--enforce-eager", script)
+        self.assertNotIn("--compilation-config", script)
 
     def test_deepseek_dp_deployment_speculative_switch_appends_mtp(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):

@@ -248,6 +248,8 @@ class LaunchArgs:
     nodes: str = ""
     master_ip: str = ""
     ray_head_ip: str = ""
+    engine_config: dict | None = None
+    _explicit_cli_keys: list[str] | None = None
 
     def to_namespace(self) -> argparse.Namespace:
         """转换为 argparse.Namespace，便于传递给配置合并层 config_loader。"""
@@ -360,6 +362,8 @@ def _map_args_to_launch_kwargs(args, engine: str) -> dict:
         "nodes": str(args.nodes),
         "master_ip": str(args.master_ip),
         "ray_head_ip": str(args.ray_head_ip),
+        "engine_config": getattr(args, "engine_config", None),
+        "_explicit_cli_keys": getattr(args, "_explicit_cli_keys", None),
     }
 
 

@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 # 让测试可独立运行：把 wings_control 目录加入 sys.path
@@ -16,7 +17,9 @@ sys.path.insert(0, str(ROOT / "wings_control"))
 from core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
     _detect_mtp_moe_features,
+    load_and_merge_configs,
     _set_deepseek_v31_ascend_quant_params,
+    _set_deepseek_v3_family_ascend_quant_params,
     _set_sequence_length,
     _set_soft_fp8,
     _set_mindie_common_params,
@@ -38,6 +41,9 @@ class _FakeModelInfo:
 
     def identify_model_type(self):
         return self._model_type
+
+    def identify_model_architecture(self):
+        return self.model_architecture
 
     def is_wings_supported(self):
         return self._supported
@@ -249,6 +255,103 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             _set_soft_fp8(params, {"device": "ascend"}, model_info)
 
         self.assertEqual(params, {"device_count": 8})
+
+    def test_deepseek_v3_family_w8a8_reuses_bfloat16_defaults(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            (model_dir / "config.json").write_text(
+                json.dumps({"architectures": ["DeepseekV32ForCausalLM"]}),
+                encoding="utf-8",
+            )
+            (model_dir / "quant_model_description.json").write_text(
+                json.dumps({"quant_type": "w8a8"}),
+                encoding="utf-8",
+            )
+            model_info = _FakeModelInfo(
+                architecture="DeepseekV32ForCausalLM",
+                model_name="DeepSeek-V3.2-w8a8",
+                model_path=str(model_dir),
+            )
+            params = {"device_count": 8, "dtype": "auto", "enforce_eager": True}
+
+            handled = _set_deepseek_v3_family_ascend_quant_params(params, {"device": "ascend"}, model_info)
+
+        self.assertTrue(handled)
+        self.assertEqual(params["dtype"], "bfloat16")
+        self.assertNotIn("enforce_eager", params)
+        self.assertEqual(params["quantization"], "ascend")
+        self.assertEqual(params["tensor_parallel_size"], 4)
+        self.assertEqual(params["data_parallel_size"], 2)
+
+    def test_distributed_raw_engine_config_is_preserved_as_explicit(self):
+        known_args = SimpleNamespace()
+        known_args.config_file = ""
+        known_args._explicit_cli_keys = ["seed", "max_num_seqs"]
+        known_args.engine_config = {
+            "seed": 42,
+            "max_num_seqs": 256,
+            "max_model_len": 84096,
+            "enable_prefix_caching": True,
+        }
+        for key, value in {
+            "host": "0.0.0.0",
+            "port": 17000,
+            "model_name": "DeepSeek-V3.1-w8a8",
+            "model_path": "/models/deepseek-v31",
+            "engine": "vllm_ascend",
+            "input_length": 4096,
+            "output_length": 1024,
+            "gpu_usage_mode": "full",
+            "device_count": 8,
+            "model_type": "auto",
+            "save_path": "/tmp",
+            "trust_remote_code": True,
+            "dtype": "auto",
+            "kv_cache_dtype": "auto",
+            "quantization": "ascend",
+            "quantization_param_path": "",
+            "gpu_memory_utilization": 0.95,
+            "enable_chunked_prefill": True,
+            "block_size": 128,
+            "max_num_seqs": 32,
+            "seed": 0,
+            "enable_expert_parallel": False,
+            "max_num_batched_tokens": 4096,
+            "enable_prefix_caching": False,
+            "enable_speculative_decode": False,
+            "speculative_decode_model_path": "",
+            "enable_rag_acc": False,
+            "enable_auto_tool_choice": False,
+            "enable_sparse": False,
+            "compilation_config": "",
+            "distributed": True,
+            "nnodes": 2,
+            "node_rank": 1,
+            "head_node_addr": "10.0.0.1",
+            "distributed_executor_backend": "dp_deployment",
+            "node_ips": "10.0.0.1,10.0.0.2",
+            "nodes": "10.0.0.1,10.0.0.2",
+            "master_ip": "10.0.0.1",
+            "ray_head_ip": "10.0.0.1",
+        }.items():
+            setattr(known_args, key, value)
+
+        with patch("core.config_loader._check_vram_requirements", return_value=None):
+            with patch("core.config_loader.ModelIdentifier", lambda *args, **kwargs: _FakeModelInfo(
+                architecture="DeepseekV3ForCausalLM",
+                model_name="DeepSeek-V3.1-w8a8",
+                model_path="/models/deepseek-v31",
+            )):
+                merged = load_and_merge_configs({"device": "ascend", "device_type": "Ascend910B"}, known_args)
+
+        engine_config = merged["engine_config"]
+        self.assertEqual(engine_config["seed"], 42)
+        self.assertEqual(engine_config["max_num_seqs"], 256)
+        self.assertEqual(engine_config["max_model_len"], 84096)
+        self.assertTrue(engine_config["enable_prefix_caching"])
+        self.assertIn("seed", merged["_explicit_cli_keys"])
+        self.assertIn("max_num_seqs", merged["_explicit_cli_keys"])
+        self.assertNotIn("enable_prefix_caching", merged["_explicit_cli_keys"])
 
     def test_generic_deepseek_fp8_still_forces_enforce_eager(self):
         with tempfile.TemporaryDirectory() as tmpdir:
