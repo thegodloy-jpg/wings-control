@@ -52,6 +52,22 @@ class TestInjectEnvEcho(unittest.TestCase):
         self.assertEqual(rendered.count("[mindie-env] HCCL_CONNECT_TIMEOUT="), 1)
         self.assertNotIn("[wings-env] export HCCL_CONNECT_TIMEOUT=", rendered)
 
+    def test_indented_export_inside_if_block_is_echoed(self):
+        """if/elif/else 块内的缩进 export 也应被注入 [wings-env] echo（模拟 mindie HCCL_IF_IP 场景）。"""
+        script = (
+            'if [ -n "${HCCL_IF_IP:-}" ]; then\n'
+            '    export HCCL_IF_IP="${HCCL_IF_IP}"\n'
+            'elif [ -n "${HCCL_DEVICE_IPS:-}" ]; then\n'
+            '    export HCCL_IF_IP=$(hostname -i | awk \'{print $1}\')\n'
+            'fi\n'
+        )
+        rendered = _inject_env_echo(script)
+        # 每个分支里的 export 都应追加 echo
+        self.assertEqual(rendered.count('[wings-env] export HCCL_IF_IP='), 2,
+                         "两个分支的 export 均应被注入一行 echo")
+        # echo 行应保留与 export 相同的缩进（4 空格）
+        self.assertIn('    echo "[wings-env] export HCCL_IF_IP=', rendered)
+
     def test_existing_command_echo_is_not_duplicated(self):
         script = (
             "echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server'\n"
