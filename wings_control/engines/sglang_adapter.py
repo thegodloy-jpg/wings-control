@@ -220,9 +220,12 @@ def build_start_script(params: Dict[str, Any]) -> str:
     这是 SGLang 适配器的主要入口，生成的脚本结构：
 
         [source set_sglang_env.sh]   # 环境设置（可选）
+        export GLOO/TP/NCCL_SOCKET_IFNAME=...  # 分布式模式
         exec python3 -m sglang.launch_server --model-path ... --host ... --port ...
 
     使用 exec 确保引擎进程替换 shell 成为 PID 1，正确接收容器信号。
+    脚本出口处统一调用 _inject_env_echo，与 vllm/mindie 适配器对齐：
+    所有 export 和启动命令均自动注入 [wings-env] / [wings-cmd] echo 行。
 
     Args:
         params: 参数字典，传递给 build_start_command()
@@ -230,6 +233,7 @@ def build_start_script(params: Dict[str, Any]) -> str:
     Returns:
         str: 完整的 bash 脚本体（以换行符结尾）
     """
+    from engines.vllm_adapter import _inject_env_echo  # 延迟导入，避免循环
     env_cmds = _build_base_env_commands(params, root_dir)
     core_cmd = build_start_command(params)
 
@@ -242,17 +246,12 @@ def build_start_script(params: Dict[str, Any]) -> str:
     if is_distributed and nnodes > 1:
         net_if = os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0"))
         lines.append(f"export GLOO_SOCKET_IFNAME={net_if}")
-        lines.append(f'echo "[wings-env] export GLOO_SOCKET_IFNAME=${{GLOO_SOCKET_IFNAME:-}}"')
         lines.append(f"export TP_SOCKET_IFNAME={net_if}")
-        lines.append(f'echo "[wings-env] export TP_SOCKET_IFNAME=${{TP_SOCKET_IFNAME:-}}"')
         lines.append(f"export NCCL_SOCKET_IFNAME={net_if}")
-        lines.append(f'echo "[wings-env] export NCCL_SOCKET_IFNAME=${{NCCL_SOCKET_IFNAME:-}}"')
 
-    preview = core_cmd[:800] + "...<truncated>" if len(core_cmd) > 800 else core_cmd
-    preview_safe = preview.replace("'", "'\"'\"'")
-    lines.append(f"echo '[wings-cmd] >>> exec {preview_safe}'")
     lines.append(f"exec {core_cmd}")
-    return "\n".join(lines) + "\n"
+    script = "\n".join(lines) + "\n"
+    return _inject_env_echo(script)
 
 
 def start_engine(params: Dict[str, Any]):
