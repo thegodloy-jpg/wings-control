@@ -27,6 +27,7 @@ from core.config_loader import (  # noqa: E402
     _select_ascend_engine,
     _select_nvidia_engine,
     _validate_user_engine,
+    _validate_embedding_rerank_params,
 )
 from utils.model_utils import is_deepseek_series_fp8, is_deepseek_series_modelslim_quant  # noqa: E402
 
@@ -500,6 +501,290 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             _set_sequence_length(params, {"input_length": 4096, "output_length": 1024})
 
         self.assertEqual(params["max_model_len"], 5120)
+
+
+class TestModelIdentifierAutoDetect(unittest.TestCase):
+    """ModelIdentifier.identify_model_type() - 空字符串/None 触发自动推断。"""
+
+    def _make_identifier(self, model_name: str, model_type):
+        from utils.model_utils import ModelIdentifier  # noqa: E402
+        with patch("utils.model_utils.load_json_config", return_value={"architectures": []}):
+            return ModelIdentifier(model_name, "/fake/path", model_type)
+
+    def test_empty_string_triggers_auto_detect_rerank(self):
+        """model_type='' 应与 'auto' 行为相同，能识别出 rerank 模型。"""
+        mi = self._make_identifier("bge-reranker-v2-m3", "")
+        self.assertEqual(mi.identify_model_type(), "rerank")
+
+    def test_none_triggers_auto_detect_rerank(self):
+        """model_type=None 应与 'auto' 行为相同，能识别出 rerank 模型。"""
+        mi = self._make_identifier("bge-reranker-v2-m3", None)
+        self.assertEqual(mi.identify_model_type(), "rerank")
+
+    def test_auto_triggers_auto_detect_rerank(self):
+        """model_type='auto' 原有行为保持不变。"""
+        mi = self._make_identifier("bge-reranker-v2-m3", "auto")
+        self.assertEqual(mi.identify_model_type(), "rerank")
+
+    def test_empty_string_unknown_model_defaults_to_llm(self):
+        """model_type='' 且 model_name 不在映射表时，默认返回 'llm'。"""
+        mi = self._make_identifier("some-unknown-llm-model", "")
+        self.assertEqual(mi.identify_model_type(), "llm")
+
+    def test_explicit_embedding_bypasses_autodetect(self):
+        """显式指定 model_type='embedding' 时直接返回，不做名称匹配。"""
+        mi = self._make_identifier("bge-reranker-v2-m3", "embedding")
+        self.assertEqual(mi.identify_model_type(), "embedding")
+
+    def test_empty_string_triggers_auto_detect_embedding(self):
+        """model_type='' 时 bge-large-en 能被识别为 embedding (如在映射表中)。"""
+        # bge-large-en 若不在 embedding 映射表，仍应 fallback 为 llm
+        mi = self._make_identifier("unknown-embedding-v1", "")
+        self.assertIn(mi.identify_model_type(), ("embedding", "llm", "rerank"))
+
+
+class TestValidateEmbeddingRerankFinalGuard(unittest.TestCase):
+    """_validate_embedding_rerank_params 最终守卫 - 在所有合并之后执行。"""
+
+    def setUp(self):
+        from core.config_loader import _validate_embedding_rerank_params  # noqa: E402
+        self._validate = _validate_embedding_rerank_params
+
+    def test_embedding_removes_enable_prefix_caching(self):
+        params = {"enable_prefix_caching": True, "max_model_len": 4096}
+        self._validate(params, {"model_type": "embedding"})
+        self.assertNotIn("enable_prefix_caching", params)
+
+    def test_embedding_removes_enable_chunked_prefill(self):
+        params = {"enable_chunked_prefill": True, "max_model_len": 4096}
+        self._validate(params, {"model_type": "embedding"})
+        self.assertNotIn("enable_chunked_prefill", params)
+
+    def test_rerank_removes_both_incompatible_params(self):
+        params = {"enable_prefix_caching": True, "enable_chunked_prefill": True}
+        self._validate(params, {"model_type": "rerank"})
+        self.assertNotIn("enable_prefix_caching", params)
+        self.assertNotIn("enable_chunked_prefill", params)
+
+    def test_llm_does_not_remove_any_params(self):
+        params = {"enable_prefix_caching": True, "enable_chunked_prefill": True}
+        self._validate(params, {"model_type": "llm"})
+        self.assertIn("enable_prefix_caching", params)
+        self.assertIn("enable_chunked_prefill", params)
+
+    def test_empty_model_type_does_not_remove_params(self):
+        """model_type='' 时不应触发清理（非 embedding/rerank）。"""
+        params = {"enable_prefix_caching": True}
+        self._validate(params, {"model_type": ""})
+        self.assertIn("enable_prefix_caching", params)
+
+    def test_embedding_removes_false_value_without_warning(self):
+        """即使 enable_prefix_caching=False，也应将该 key 从 params 中移除。"""
+        params = {"enable_prefix_caching": False}
+        self._validate(params, {"model_type": "embedding"})
+        self.assertNotIn("enable_prefix_caching", params)
+
+    def test_load_and_merge_strips_prefix_caching_from_user_config(self):
+        """回归：user_config 中的 enable_prefix_caching 不应出现在最终 engine_config 里。
+
+        模拟 user_config 把 enable_prefix_caching 注入 engine_config，
+        验证 load_and_merge_configs 末尾的最终守卫能正确清除它。
+        """
+        # 模拟 _merge_vllm_params 清理后被 user_config 重新注入的场景
+        engine_config = {
+            "max_model_len": 4096,
+            "enable_prefix_caching": True,   # user_config / raw_engine_config 注入的
+            "enable_chunked_prefill": True,
+        }
+        model_type = "embedding"
+
+        _validate_embedding_rerank_params(engine_config, {"model_type": model_type})
+
+        self.assertNotIn("enable_prefix_caching", engine_config)
+        self.assertNotIn("enable_chunked_prefill", engine_config)
+        # 其他参数保留
+        self.assertEqual(engine_config["max_model_len"], 4096)
+
+
+class TestSequenceLengthEmbeddingRerank(unittest.TestCase):
+    """_set_sequence_length：embedding/rerank 只使用 input_length，不加 output_length。"""
+
+    def test_llm_uses_input_plus_output(self):
+        params = {}
+        with patch.object(sys, "argv", ["prog", "--input-length", "4096", "--output-length", "1024"]):
+            _set_sequence_length(params, {"input_length": 4096, "output_length": 1024}, model_type="llm")
+        self.assertEqual(params["max_model_len"], 5120)
+
+    def test_embedding_uses_only_input_length(self):
+        params = {}
+        with patch.object(sys, "argv", ["prog", "--input-length", "4096", "--output-length", "1024"]):
+            _set_sequence_length(params, {"input_length": 4096, "output_length": 1024}, model_type="embedding")
+        self.assertEqual(params["max_model_len"], 4096)
+
+    def test_rerank_uses_only_input_length(self):
+        params = {}
+        with patch.object(sys, "argv", ["prog", "--input-length", "2048", "--output-length", "512"]):
+            _set_sequence_length(params, {"input_length": 2048, "output_length": 512}, model_type="rerank")
+        self.assertEqual(params["max_model_len"], 2048)
+
+    def test_embedding_zero_output_length_result_equals_input_length(self):
+        """output_length=0 时 embedding 结果应为 input_length。"""
+        params = {}
+        with patch.object(sys, "argv", ["prog", "--input-length", "8192"]):
+            _set_sequence_length(params, {"input_length": 8192, "output_length": 0}, model_type="embedding")
+        self.assertEqual(params["max_model_len"], 8192)
+
+    def test_rerank_without_explicit_cli_does_not_set_max_model_len(self):
+        """未显式传 --input-length / --output-length 时不应修改 params。"""
+        params = {"max_model_len": 9999}
+        with patch.object(sys, "argv", ["prog"]):
+            _set_sequence_length(params, {"input_length": 4096, "output_length": 512}, model_type="rerank")
+        self.assertEqual(params["max_model_len"], 9999)
+
+
+class TestEmbeddingRerankE2E(unittest.TestCase):
+    """embedding / rerank 模型在完整 load_and_merge_configs 流程中的端到端验证。
+
+    覆盖两个 bug 修复：
+    1. model_type='' (MODEL_TYPE 环境变量为空) 应能正确自动推断类型
+    2. user_config / --engine-config 注入的 enable_prefix_caching 应在末尾被清除
+    """
+
+    def _make_rerank_model_dir(self, tmpdir: str, architecture="XLMRobertaForSequenceClassification"):
+        model_dir = Path(tmpdir) / "bge-reranker-v2-m3"
+        model_dir.mkdir()
+        (model_dir / "config.json").write_text(
+            json.dumps({"architectures": [architecture], "torch_dtype": "float32"}),
+            encoding="utf-8",
+        )
+        return str(model_dir)
+
+    def test_rerank_auto_strips_prefix_caching_from_engine_config_cli_arg(self):
+        """model_type='auto' + bge-reranker-v2-m3 命名匹配 → enable_prefix_caching 被剔除。"""
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = self._make_rerank_model_dir(tmpdir)
+            argv = [
+                "--engine", "vllm",
+                "--model-name", "bge-reranker-v2-m3",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "1",
+                "--trust-remote-code",
+                "--enable-prefix-caching",   # 用户手动传入，应被清除
+                "--enable-chunked-prefill",  # 用户手动传入，应被清除
+            ]
+
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "nvidia", "count": 1, "details": []},
+                        launch_args.to_namespace(),
+                    )
+
+        engine_cfg = merged.get("engine_config", {})
+        self.assertNotIn("enable_prefix_caching", engine_cfg,
+                         "rerank model must not have enable_prefix_caching in engine_config")
+        self.assertNotIn("enable_chunked_prefill", engine_cfg,
+                         "rerank model must not have enable_chunked_prefill in engine_config")
+
+    def test_rerank_empty_model_type_env_strips_prefix_caching(self):
+        """MODEL_TYPE='' 环境变量（空字符串）触发修复后的自动推断，仍能剔除不兼容参数。"""
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = self._make_rerank_model_dir(tmpdir)
+            argv = [
+                "--engine", "vllm",
+                "--model-name", "bge-reranker-v2-m3",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "1",
+                "--trust-remote-code",
+                "--enable-prefix-caching",
+            ]
+
+            # 模拟用户设置了 MODEL_TYPE=（空字符串）的环境变量
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {"MODEL_TYPE": ""}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "nvidia", "count": 1, "details": []},
+                        launch_args.to_namespace(),
+                    )
+
+        engine_cfg = merged.get("engine_config", {})
+        self.assertNotIn("enable_prefix_caching", engine_cfg,
+                         "MODEL_TYPE='' should auto-detect rerank and strip enable_prefix_caching")
+
+    def test_rerank_engine_config_injection_stripped_by_final_guard(self):
+        """raw_engine_config（namespace.engine_config）注入 enable_prefix_caching，最终守卫应清除。
+
+        这正是第二个 bug 的回归场景：raw_engine_config 在 _validate_embedding_rerank_params
+        调用之后才被合并，修复后的最终守卫确保它依然被清除。
+        """
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = self._make_rerank_model_dir(tmpdir)
+            argv = [
+                "--engine", "vllm",
+                "--model-name", "bge-reranker-v2-m3",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "1",
+                "--trust-remote-code",
+            ]
+
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    ns = launch_args.to_namespace()
+                    # 模拟 raw_engine_config 路径（Worker 下发的已合并 engine_config）
+                    ns.engine_config = {"enable_prefix_caching": True, "max_model_len": 4096}
+                    merged = load_and_merge_configs(
+                        {"device": "nvidia", "count": 1, "details": []},
+                        ns,
+                    )
+
+        engine_cfg = merged.get("engine_config", {})
+        self.assertNotIn("enable_prefix_caching", engine_cfg,
+                         "raw_engine_config injected enable_prefix_caching must be stripped by final guard")
+
+    def test_rerank_max_model_len_uses_only_input_length(self):
+        """e2e：rerank 模型 max_model_len 只等于 input_length，不加 output_length。"""
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = self._make_rerank_model_dir(tmpdir)
+            argv = [
+                "--engine", "vllm",
+                "--model-name", "bge-reranker-v2-m3",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "1",
+                "--trust-remote-code",
+                "--input-length", "4096",
+                "--output-length", "1024",   # 应被忽略
+            ]
+
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "nvidia", "count": 1, "details": []},
+                        launch_args.to_namespace(),
+                    )
+
+        engine_cfg = merged.get("engine_config", {})
+        self.assertEqual(engine_cfg.get("max_model_len"), 4096,
+                         "rerank max_model_len must equal input_length only (4096), not input+output (5120)")
 
 
 if __name__ == "__main__":

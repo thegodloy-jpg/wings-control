@@ -306,7 +306,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
 
     调用链路:
         1. _set_common_params       → 根据参数映射表翻译 CLI 参数
-        2. _set_sequence_length     → 合并 input_length + output_length
+        2. _set_sequence_length     → 合并序列长度（embedding/rerank 只用 input_length）
         3. _set_parallelism_params  → 设置张量并行度
         4. _set_kv_cache_config     → LMCache / PD 分离 KV Transfer 配置
         5. _guard_pd_hybrid_kv_cache → PD 模式移除不兼容的 hybrid KV flag
@@ -334,7 +334,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     #
     _set_common_params(params, engine_cmd_parameter, engine_param_map_config_path)
     _set_function_call(params, engine_cmd_parameter)
-    _set_sequence_length(params, engine_cmd_parameter)
+    _set_sequence_length(params, engine_cmd_parameter, model_type=ctx.get("model_type", "llm"))
     _set_parallelism_params(params, ctx)
     _set_kv_cache_config(params, ctx)
     _guard_pd_hybrid_kv_cache(params)
@@ -761,8 +761,12 @@ def _set_common_params(params, engine_cmd_parameter, config_path):
         # 否则：保留模型默认配置中的值，不被 argparse 默认值覆盖
 
 
-def _set_sequence_length(params, engine_cmd_parameter):
-    """将 input_length + output_length 合并为 max_model_len 并写入 params。"""
+def _set_sequence_length(params, engine_cmd_parameter, model_type: str = "llm"):
+    """将序列长度合并为 max_model_len 并写入 params。
+
+    - LLM：max_model_len = input_length + output_length
+    - embedding / rerank：max_model_len = input_length（无生成阶段）
+    """
     explicit_keys = _detect_explicit_cli_keys()
     if not explicit_keys.intersection({"input_length", "output_length"}):
         return
@@ -774,7 +778,11 @@ def _set_sequence_length(params, engine_cmd_parameter):
     input_len = int(input_len) if input_len is not None else 0
     output_len = int(output_len) if output_len is not None else 0
 
-    max_model_len = input_len + output_len
+    if model_type in ("embedding", "rerank"):
+        max_model_len = input_len
+    else:
+        max_model_len = input_len + output_len
+
     if max_model_len <= 0:
         return
     params['max_model_len'] = max_model_len
@@ -2280,6 +2288,12 @@ def load_and_merge_configs(
     # 4.5 Ascend 硬约束：prefix_caching 开启时 block_size 必须为 128
     #     放在 CLI 覆盖之后，确保硬件约束优先于用户 CLI 参数
     _fix_ascend_block_size(engine_config, {"device": hardware_env.get("device")})
+
+    # 4.6 embedding/rerank 最终守卫：移除不兼容参数
+    #     必须在所有合并（user_config、raw_engine_config、CLI 覆盖）之后执行，
+    #     否则 user_config 或 --engine-config 中的 enable_prefix_caching /
+    #     enable_chunked_prefill 会在 _merge_vllm_params 的清理之后被重新注入。
+    _validate_embedding_rerank_params(engine_config, {"model_type": model_info.identify_model_type()})
 
     # 5.
     final_engine_params = _merge_final_config(engine_config, cmd_known_params)

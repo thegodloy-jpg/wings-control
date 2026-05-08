@@ -188,13 +188,13 @@ class ModelIdentifier:
     def identify_model_type(self) -> Optional[str]:
         """推断模型类型（llm/embedding/rerank）。
 
-        当 model_type == 'auto' 时，根据 model_name 与内置映射表匹配;
+        当 model_type 为 'auto'、空字符串或 None 时，根据 model_name 与内置映射表匹配;
         否则直接返回用户指定值。
 
         Returns:
             str | None: 模型类型，无法推断时返回 None
         """
-        if self.model_type == 'auto':
+        if self.model_type in ('auto', '', None):
             model_name = self.model_name.lower()
             for model_type, models in self.model_dict.items():
                 support_model_name = []

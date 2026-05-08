@@ -424,7 +424,7 @@ def _collect_ears_patch_features(engine: str, merged: dict) -> list[str]:
         return []
 
     strategy = resolve_speculative_strategy(merged, engine)
-    if strategy == "suffix" or strategy.endswith("_mtp"):
+    if strategy == "suffix" or strategy == "mtp" or strategy.endswith("_mtp"):
         logger.info("[EARS] Speculative strategy %s requires ears patch", strategy)
         return ["ears"]
     return []
