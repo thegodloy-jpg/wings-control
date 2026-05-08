@@ -157,6 +157,29 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("1.2.3.4", exec_line)
         self.assertNotIn("9999", exec_line)
 
+    def test_deepseek_dp_deployment_clamps_high_explicit_max_num_seqs_to_official_default(self):
+        params = _base_params(node_rank=0)
+        params["_explicit_cli_keys"] = ["max_num_seqs"]
+        params["engine_config"]["max_num_seqs"] = 256
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertIn("--max-num-seqs 16", script)
+        self.assertNotIn("--max-num-seqs 256", script)
+
+    def test_deepseek_dp_deployment_can_opt_into_high_max_num_seqs(self):
+        params = _base_params(node_rank=0)
+        params["_explicit_cli_keys"] = ["max_num_seqs"]
+        params["engine_config"]["max_num_seqs"] = 256
+
+        with patch.dict(os.environ, {"WINGS_ALLOW_DEEPSEEK_ASCEND_DP_HIGH_CONCURRENCY": "1"}, clear=True):
+            with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+                script = build_start_script(params)
+
+        self.assertIn("--max-num-seqs 256", script)
+        self.assertNotIn("--max-num-seqs 16", script)
+
     def test_deepseek_dp_deployment_rank1_is_headless(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(_base_params(node_rank=1))
@@ -240,7 +263,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         # vllm_ascend 不注入 VLLM_EARS_TOLERANCE（Ascend 侧无需此参数）
         self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script)
         self.assertIn(
-            "--speculative-config '{\"method\": \"deepseek_mtp\", "
+            "--speculative-config '{\"method\": \"mtp\", "
             "\"num_speculative_tokens\": 3}'",
             script,
         )

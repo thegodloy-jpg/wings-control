@@ -91,7 +91,7 @@ class TestVllmKvSparse(unittest.TestCase):
             script = vllm_adapter.build_start_script(params)
 
         self.assertIn(
-            "--speculative-config '{\"method\": \"deepseek_mtp\", "
+            "--speculative-config '{\"method\": \"mtp\", "
             "\"num_speculative_tokens\": 3}'",
             script,
         )
@@ -251,7 +251,7 @@ class TestVllmKvSparse(unittest.TestCase):
         self.assertIn("--kv-transfer-config", script)
         self.assertIn("LMCacheConnectorV1", script)
         self.assertIn(
-            "--speculative-config '{\"method\": \"deepseek_mtp\", "
+            "--speculative-config '{\"method\": \"mtp\", "
             "\"num_speculative_tokens\": 3}'",
             script,
         )

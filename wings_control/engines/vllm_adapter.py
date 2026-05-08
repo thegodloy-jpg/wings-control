@@ -152,6 +152,29 @@ def _need_deepseek_ascend_mla_eager_fallback() -> bool:
     )
 
 
+def _allow_deepseek_ascend_dp_high_concurrency() -> bool:
+    """Whether to allow high max_num_seqs for DeepSeek V3-family Ascend DP.
+
+    The official vLLM-Ascend DeepSeek-V3.1 W8A8 online DP example uses
+    max_num_seqs=16 with MTP and FULL_DECODE_ONLY graph capture. Larger values
+    can make the profile_run/ACL graph startup path much more fragile. Keep the
+    official safe default unless the operator explicitly opts into high
+    concurrency for benchmarking.
+    """
+    return os.getenv("WINGS_ALLOW_DEEPSEEK_ASCEND_DP_HIGH_CONCURRENCY", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _need_triton_patch_and_eager(engine: str) -> bool:
     """兼容旧接口：判断是否需要 Triton 补丁或 enforce-eager。
 
@@ -1080,7 +1103,26 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
                 engine_config["dtype"] = "bfloat16"
             if "seed" not in explicit_keys:
                 engine_config["seed"] = 1024
-            if "max_num_seqs" not in explicit_keys:
+            current_max_num_seqs = _safe_int(engine_config.get("max_num_seqs"))
+            allow_high_concurrency = _allow_deepseek_ascend_dp_high_concurrency()
+            if (
+                "max_num_seqs" not in explicit_keys
+                or (
+                    current_max_num_seqs is not None
+                    and current_max_num_seqs > 16
+                    and not allow_high_concurrency
+                )
+            ):
+                if "max_num_seqs" in explicit_keys and current_max_num_seqs is not None and current_max_num_seqs > 16:
+                    logger.warning(
+                        "[DeepSeek Ascend DP] max_num_seqs=%s is higher than the "
+                        "official vLLM-Ascend DeepSeek-V3.1 W8A8 online DP "
+                        "example value 16. For safer profile_run/ACL graph "
+                        "startup, forcing --max-num-seqs 16. Set "
+                        "WINGS_ALLOW_DEEPSEEK_ASCEND_DP_HIGH_CONCURRENCY=1 "
+                        "to keep the explicit value.",
+                        current_max_num_seqs,
+                    )
                 engine_config["max_num_seqs"] = 16
             if "gpu_memory_utilization" not in explicit_keys:
                 engine_config["gpu_memory_utilization"] = 0.92
@@ -1558,8 +1600,8 @@ def _build_speculative_env_commands(params: Dict[str, Any], engine: str) -> List
 
 def _resolve_mtp_method(model_architecture: str) -> str:
     mtp_methods_by_arch = {
-        "DeepseekV3ForCausalLM": "deepseek_mtp",
-        "DeepseekV32ForCausalLM": "deepseek_mtp",
+        "DeepseekV3ForCausalLM": "mtp",
+        "DeepseekV32ForCausalLM": "mtp",
         "GlmMoeDsaForCausalLM": "deepseek_mtp",
         "Qwen3NextForCausalLM": "qwen3_next_mtp",
         "Glm4MoeForCausalLM": "glm4_moe_mtp",
@@ -1636,7 +1678,7 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         _handle_suffix_case(speculative_config_temp)
         return _format_speculative_result(speculative_config_temp)
 
-    if strategy.endswith("_mtp"):
+    if strategy == "mtp" or strategy.endswith("_mtp"):
         logger.info("[AdvFeature-SpecDecode] Architecture %s → MTP strategy (%s)",
                     model_info.model_architecture, strategy)
         speculative_config_temp.append(f'"method": "{strategy}"')
