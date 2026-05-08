@@ -221,5 +221,58 @@ class TestMindieCommandEcho(unittest.TestCase):
         self.assertEqual(rendered.count("[wings-cmd] >>>"), 1)
 
 
+class TestAssembledScriptEcho(unittest.TestCase):
+    """wings_entry._assemble_startup_command 的集成 echo 验证。
+
+    通过直接调用 _assemble_startup_command 组装一个最小化脚本，验证
+    wings_entry 注入的 PROMETHEUS_MULTIPROC_DIR / PYTHONUNBUFFERED 等 preamble
+    变量也能被 _inject_env_echo 统一处理，从而出现在最终脚本中。
+    """
+
+    def test_wings_entry_preamble_exports_are_echoed_in_assembled_script(self):
+        """wings_entry 拼接的 preamble export 应在最终脚本中包含 [wings-env] echo。"""
+        # 延迟导入避免副作用
+        from core.wings_entry import _assemble_startup_command
+
+        script_body = (
+            "export ENGINE_TEST_VAR=hello\n"
+            "exec python3 -m vllm.entrypoints.openai.api_server --model /models/test\n"
+        )
+        result = _assemble_startup_command(
+            engine="vllm",
+            merged={},
+            hardware={},
+            script_body=script_body,
+            monitor_script="",
+        )
+
+        # 1. wings_entry 注入的 preamble 变量也应被 echo
+        self.assertIn(
+            '[wings-env] export PROMETHEUS_MULTIPROC_DIR=',
+            result,
+            "wings_entry preamble 的 PROMETHEUS_MULTIPROC_DIR 应有 [wings-env] echo",
+        )
+        self.assertIn(
+            '[wings-env] export PYTHONUNBUFFERED=',
+            result,
+            "wings_entry preamble 的 PYTHONUNBUFFERED 应有 [wings-env] echo",
+        )
+        # 2. script_body 里的 export 也应被 echo（二次处理）
+        self.assertIn(
+            '[wings-env] export ENGINE_TEST_VAR=',
+            result,
+            "script_body 里的 ENGINE_TEST_VAR 应有 [wings-env] echo",
+        )
+        # 3. 启动命令也应有 [wings-cmd] echo
+        self.assertIn('[wings-cmd] >>>', result,
+                      "vllm 启动命令应有 [wings-cmd] echo")
+        # 4. echo 不重复
+        self.assertEqual(
+            result.count('[wings-env] export PROMETHEUS_MULTIPROC_DIR='),
+            1,
+            "PROMETHEUS_MULTIPROC_DIR echo 不应重复",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
