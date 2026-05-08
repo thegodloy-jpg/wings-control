@@ -812,6 +812,19 @@ def _build_glm4moe_ascend_env(arch: str) -> List[str]:
     ]
 
 
+def _build_glm_moe_dsa_ascend_env(arch: str) -> List[str]:
+    """构建 GLM-5/5.1 (GlmMoeDsaForCausalLM) Ascend 环境变量命令。"""
+    logger.info("[GLM-5] Set Ascend environment variables for %s", arch)
+    return [
+        "export HCCL_OP_EXPANSION_MODE=AIV",
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=1",
+        "export HCCL_BUFFSIZE=200",
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
+    ]
+
+
 def _build_qwen3_ascend_env(arch: str) -> List[str]:
     """构建 Qwen3 密集模型 (Qwen3ForCausalLM) Ascend 环境变量命令。
 
@@ -924,6 +937,7 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
 
     已覆盖的 Ascend 架构:
     - Glm4MoeForCausalLM (GLM-4.7): TOPK 优化, FlashComm, Fused MC2
+    - GlmMoeDsaForCausalLM (GLM-5/5.1): DSA MTP 基础运行时变量
     - Qwen3_5ForConditionalGeneration (Qwen3.5-27B): TASK_QUEUE_ENABLE
     - Qwen3_5MoeForConditionalGeneration (Qwen3.5-397B): TASK_QUEUE_ENABLE
     - MiniMaxM2ForCausalLM (MiniMax-M2.5): FlashComm
@@ -962,6 +976,7 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     if engine == "vllm_ascend":
         _arch_env_builders = {
             "Glm4MoeForCausalLM": _build_glm4moe_ascend_env,
+            "GlmMoeDsaForCausalLM": _build_glm_moe_dsa_ascend_env,
             "Qwen3ForCausalLM": _build_qwen3_ascend_env,
             "Qwen3_5ForConditionalGeneration": _build_qwen35_ascend_env,
             "Qwen3_5MoeForConditionalGeneration": _build_qwen35moe_ascend_env,
@@ -1632,6 +1647,14 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
     return ""
 
 
+def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
+    """Return True when launcher should synthesize speculative_config itself."""
+    if not params.get("enable_speculative_decode"):
+        return False
+    engine_config = params.get("engine_config") or {}
+    return not bool(engine_config.get("speculative_config"))
+
+
 # ── KV Sparse（IndexCache / FP8 KV CACHE）───────────────────────────────
 
 # 当 enable_sparse=true 时，根据模型架构决定 KV 稀疏策略：
@@ -1964,7 +1987,7 @@ def _build_ray_head_exec_command(
 ) -> str:
     """Build the final vLLM exec command for the Ray head node."""
     eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
-    speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
+    speculative_extra = _build_speculative_cmd(params, ctx.engine) if _should_append_auto_speculative_config(params) else ""
     cmd_for_exec, ray_pp_extra = _build_ray_parallel_overrides(params, ctx)
     cmd_for_exec, backend_extra = _build_ray_backend_override(params, cmd_for_exec)
     return (
@@ -2197,7 +2220,7 @@ def _build_dp_deployment_commands(
 
     parts.extend(_build_dp_env_commands(ctx.is_ascend, params))
     dp_cmd = _strip_dp_cli_flags(_transform_dp_cmd(ctx.cmd))
-    speculative_extra = _build_speculative_cmd(params, ctx.engine) if params.get("enable_speculative_decode") else ""
+    speculative_extra = _build_speculative_cmd(params, ctx.engine) if _should_append_auto_speculative_config(params) else ""
     dp_cmd = f"{dp_cmd}{speculative_extra}{sparse_args}"
 
     if ctx.node_rank == 0:
@@ -2300,7 +2323,7 @@ def _build_vllm_single_script(
 ) -> str:
     """组装单机模式的 bash 脚本体并返回。"""
     env_prefix = "\n".join(common_env_cmds) + "\n" if common_env_cmds else ""
-    speculative_extra = _build_speculative_cmd(params, engine) if params.get("enable_speculative_decode") else ""
+    speculative_extra = _build_speculative_cmd(params, engine) if _should_append_auto_speculative_config(params) else ""
     # A+X 环境下需要 --enforce-eager 绕过 triton 版本冲突（与 Ray 路径一致）
     eager_flag = " --enforce-eager" if _need_enforce_eager(engine) else ""
 

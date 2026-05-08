@@ -296,32 +296,55 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_vllm_ascend_speculative_plus_sparse_does_not_inject_ears(self):
-        """vllm_ascend：投机推理 + IndexCache 多特性并存，EARS 不注入。"""
+        """vllm_ascend：投机推理 + IndexCache 多特性并存 — 三项验收：无 EARS 环境变量、不采集 EARS 补丁、--speculative-config 字段正常生成。"""
+        from core.wings_entry import _collect_ears_patch_features  # noqa: E402
+
         params = _base_params(node_rank=0, enable_speculative_decode=True)
         params["enable_sparse"] = True
 
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(params)
+            patch_features = _collect_ears_patch_features("vllm_ascend", params)
 
+        # 1. 环境变量：不注入
         self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script)
+        # 2. 补丁安装：不采集 EARS 补丁
+        self.assertNotIn("ears", patch_features)
+        # 3. 追加字段：--speculative-config 正常生成
         self.assertIn("--speculative-config", script)
 
     def test_vllm_ascend_speculative_plus_lmcache_does_not_inject_ears(self):
-        """vllm_ascend：投机推理 + LMCache 多特性并存，EARS 不注入，策略降级为 suffix。"""
+        """vllm_ascend：投机推理 + LMCache 多特性并存 — 三项验收：无 EARS 环境变量、不采集 EARS 补丁、suffix 方法字段正常生成。"""
+        from core.wings_entry import _collect_ears_patch_features  # noqa: E402
+
         with patch.dict(os.environ, {"LMCACHE_OFFLOAD": "true"}, clear=False):
             with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
-                script = build_start_script(_base_params(node_rank=0, enable_speculative_decode=True))
+                params = _base_params(node_rank=0, enable_speculative_decode=True)
+                script = build_start_script(params)
+                patch_features = _collect_ears_patch_features("vllm_ascend", params)
 
+        # 1. 环境变量：不注入
         self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script)
-        # LMCache 使 DeepSeek MTP 降级为 suffix
-        self.assertIn("\"method\" : \"suffix\"", script)
+        # 2. 补丁安装：不采集 EARS 补丁
+        self.assertNotIn("ears", patch_features)
+        # 3. 追加字段：LMCache 使 DeepSeek MTP 降级为 suffix
+        self.assertIn('"method" : "suffix"', script)
 
     def test_vllm_ascend_speculative_only_does_not_inject_ears(self):
-        """vllm_ascend：单独开启投机推理（无其他高级特性），EARS 不注入。"""
-        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
-            script = build_start_script(_base_params(node_rank=0, enable_speculative_decode=True))
+        """vllm_ascend：单独开启投机推理（无其他高级特性）— 三项验收：无 EARS 环境变量、不采集 EARS 补丁、--speculative-config 字段正常生成。"""
+        from core.wings_entry import _collect_ears_patch_features  # noqa: E402
 
+        params = _base_params(node_rank=0, enable_speculative_decode=True)
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+            patch_features = _collect_ears_patch_features("vllm_ascend", params)
+
+        # 1. 环境变量：不注入
         self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script)
+        # 2. 补丁安装：不采集 EARS 补丁
+        self.assertNotIn("ears", patch_features)
+        # 3. 追加字段：--speculative-config 正常生成
+        self.assertIn("--speculative-config", script)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

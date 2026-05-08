@@ -22,6 +22,7 @@ from core.config_loader import (  # noqa: E402
     _set_deepseek_v3_family_ascend_quant_params,
     _set_sequence_length,
     _set_soft_fp8,
+    _guard_pd_hybrid_kv_cache,
     _set_mindie_common_params,
     _select_ascend_engine,
     _select_nvidia_engine,
@@ -101,6 +102,85 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 _set_mindie_common_params(params, engine_cmd_parameter)
 
         self.assertEqual(params["npu_memory_fraction"], 0.95)
+
+    def test_pd_removes_explicit_hybrid_kv_flag(self):
+        params = {"no_disable_hybrid_kv_cache_manager": True}
+
+        with patch.dict(os.environ, {"PD_ROLE": "P"}, clear=True):
+            _guard_pd_hybrid_kv_cache(params)
+
+        self.assertNotIn("no_disable_hybrid_kv_cache_manager", params)
+
+    def test_non_pd_keeps_explicit_hybrid_kv_flag(self):
+        params = {"no_disable_hybrid_kv_cache_manager": True}
+
+        with patch.dict(os.environ, {}, clear=True):
+            _guard_pd_hybrid_kv_cache(params)
+
+        self.assertTrue(params["no_disable_hybrid_kv_cache_manager"])
+
+    def test_glm5_vllm_ascend_cli_flags_and_env_render_to_start_script(self):
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+        from engines.vllm_adapter import build_start_script  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["GlmMoeDsaForCausalLM"],
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "glm-5",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "8",
+                "--enable-expert-parallel",
+                "--seed", "1024",
+                "--max-num-seqs", "8",
+                "--max-num-batched-tokens", "4096",
+                "--trust-remote-code",
+                "--gpu-memory-utilization", "0.95",
+                "--quantization", "ascend",
+                "--enable-chunked-prefill",
+                "--enable-prefix-caching",
+                "--async-scheduling",
+                "--additional-config", '{"fuse_muls_add": true}',
+                "--speculative-config", '{"num_speculative_tokens": 3, "method": "deepseek_mtp"}',
+                "--compilation-config", '{"cudagraph_mode": "FULL_DECODE_ONLY"}',
+            ]
+
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "ascend", "count": 8, "details": []},
+                        launch_args.to_namespace(),
+                    )
+                    script = build_start_script(merged)
+
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--async-scheduling", exec_line)
+        self.assertIn("--additional-config '{\"fuse_muls_add\":true}'", exec_line)
+        self.assertIn(
+            "--speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\"}'",
+            exec_line,
+        )
+        self.assertIn("--compilation-config '{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}'", exec_line)
+        self.assertEqual(exec_line.count("--speculative-config"), 1)
+
+        for env_name in (
+            "HCCL_OP_EXPANSION_MODE",
+            "OMP_PROC_BIND",
+            "OMP_NUM_THREADS",
+            "HCCL_BUFFSIZE",
+            "PYTORCH_NPU_ALLOC_CONF",
+            "VLLM_ASCEND_BALANCE_SCHEDULING",
+        ):
+            self.assertIn(env_name, script)
 
     def test_mindie_deepseek_long_context_2x8_triggers_cpsp_defaults(self):
         params = {}

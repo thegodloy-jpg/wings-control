@@ -333,13 +333,59 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "glm47",
-            "reasoning_parser": "glm45"
+            "reasoning_parser": "glm45",
+            "quantization": "ascend",
+            "enable_expert_parallel": true,
+            "seed": 1024,
+            "max_num_seqs": 8,
+            "max_num_batched_tokens": 4096,
+            "gpu_memory_utilization": 0.95,
+            "enable_chunked_prefill": true,
+            "enable_prefix_caching": true,
+            "async_scheduling": true,
+            "additional_config": {
+              "fuse_muls_add": true,
+              "multistream_overlap_shared_expert": true,
+              "ascend_compilation_config": {
+                "enable_npugraph_ex": true
+              }
+            },
+            "compilation_config": {
+              "cudagraph_mode": "FULL_DECODE_ONLY"
+            },
+            "speculative_config": {
+              "num_speculative_tokens": 3,
+              "method": "deepseek_mtp"
+            }
           },
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "glm47",
-            "reasoning_parser": "glm45"
+            "reasoning_parser": "glm45",
+            "quantization": "ascend",
+            "enable_expert_parallel": true,
+            "seed": 1024,
+            "max_num_seqs": 8,
+            "max_num_batched_tokens": 4096,
+            "gpu_memory_utilization": 0.95,
+            "enable_chunked_prefill": true,
+            "enable_prefix_caching": true,
+            "async_scheduling": true,
+            "additional_config": {
+              "fuse_muls_add": true,
+              "multistream_overlap_shared_expert": true,
+              "ascend_compilation_config": {
+                "enable_npugraph_ex": true
+              }
+            },
+            "compilation_config": {
+              "cudagraph_mode": "FULL_DECODE_ONLY"
+            },
+            "speculative_config": {
+              "num_speculative_tokens": 3,
+              "method": "deepseek_mtp"
+            }
           }
         }
       },

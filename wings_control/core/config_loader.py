@@ -35,8 +35,7 @@ from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd
     get_router_instance_group_name_env, get_router_instance_name_env, get_router_nats_path_env, \
     get_operator_acceleration_env, get_local_ip
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
-from utils.model_utils import (ModelIdentifier, HYBRID_KV_CACHE_ARCHS,
-                               is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
+from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
                                is_deepseek_series_modelslim_quant, is_qwen3_series_fp8)
 from utils.device_utils import check_pcie_cards
 
@@ -258,7 +257,8 @@ def _build_engine_cmd_parameter(cmd_known_params: Dict[str, Any]) -> Dict[str, A
         "max_num_batched_tokens", "enable_prefix_caching", "enable_speculative_decode",
         "speculative_decode_model_path",
         "enable_rag_acc", "enable_auto_tool_choice",
-        "enable_sparse", "compilation_config",
+        "enable_sparse", "async_scheduling", "additional_config",
+        "speculative_config", "compilation_config",
     ]
     return {k: cmd_known_params.get(k) for k in keys}
 
@@ -309,7 +309,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
         2. _set_sequence_length     → 合并 input_length + output_length
         3. _set_parallelism_params  → 设置张量并行度
         4. _set_kv_cache_config     → LMCache / PD 分离 KV Transfer 配置
-        5. _set_hybrid_kv_cache     → 混合 KV Cache 架构启用 HMA
+        5. _guard_pd_hybrid_kv_cache → PD 模式移除不兼容的 hybrid KV flag
         6. _ensure_pd_head_dim      → PD 模式补全 config.json 缺失的 head_dim
         7. _set_router_config       → Wings Router NATS 配置
         8. _set_operator_acceleration → 昇腾算子加速
@@ -337,7 +337,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _set_sequence_length(params, engine_cmd_parameter)
     _set_parallelism_params(params, ctx)
     _set_kv_cache_config(params, ctx)
-    _set_hybrid_kv_cache(params, model_info)
+    _guard_pd_hybrid_kv_cache(params)
     _ensure_pd_head_dim(params, model_info)
     _set_router_config(params)
     _set_operator_acceleration(params, ctx)
@@ -935,36 +935,24 @@ def _set_kv_cache_config(params, ctx):
     params['kv_transfer_config'] = json.dumps(config)
 
 
-def _set_hybrid_kv_cache(params, model_info):
-    """对混合注意力架构，启用 vLLM 的 hybrid KV cache manager。
+def _guard_pd_hybrid_kv_cache(params):
+    """PD 分离模式下移除显式传入的 hybrid KV cache manager 开关。
 
-    混合架构（如 GLM-5.1 的 DSA、Qwen3.5 的 GDN + 标准注意力）会在不同层
-    使用不同类型的 KV Cache Spec。vLLM 默认禁用 hybrid KV cache manager，
-    导致无法统一不同类型的 KV Cache Spec 而抛出 ValueError。
-
-    对匹配 HYBRID_KV_CACHE_ARCHS 的架构，注入
-    --no-disable-hybrid-kv-cache-manager 覆盖默认行为。
-
-    注意：当 PD 分离启用时，KV 连接器（MooncakeConnectorV1 等）尚未支持
-    HMA（Hybrid Memory Architecture），因此不注入该参数，仅输出警告。
+    该函数只做 PD 保护，不再根据模型架构自动注入
+    --no-disable-hybrid-kv-cache-manager。若用户或上层配置显式传入该字段，
+    且当前开启 PD 分离，则移除它，避免 MooncakeConnectorV1 / NixlConnector
+    等 KV 连接器与 HMA（Hybrid Memory Architecture）路径不兼容。
     """
-    arch = getattr(model_info, "model_architecture", None) if model_info else None
-    if not arch or arch not in HYBRID_KV_CACHE_ARCHS:
+    if not get_pd_role_env():
         return
-
-    if get_pd_role_env():
-        logger.warning(
-            "[HybridKV] Architecture %s requires hybrid KV cache manager (HMA), "
-            "but PD separation is enabled. Current KV connectors "
-            "(MooncakeConnectorV1 / NixlConnector) do not yet support HMA. "
-            "PD separation with hybrid attention models is not supported in "
-            "current vLLM version. Skipping --no-disable-hybrid-kv-cache-manager.",
-            arch)
+    if "no_disable_hybrid_kv_cache_manager" not in params:
         return
-
-    params['no_disable_hybrid_kv_cache_manager'] = True
-    logger.info("[HybridKV] Architecture %s requires hybrid KV cache manager, "
-                "injecting --no-disable-hybrid-kv-cache-manager", arch)
+    params.pop("no_disable_hybrid_kv_cache_manager", None)
+    logger.warning(
+        "[HybridKV] PD separation is enabled; removed "
+        "--no-disable-hybrid-kv-cache-manager because current KV connectors "
+        "do not support HMA."
+    )
 
 
 def _ensure_pd_head_dim(params, model_info):
@@ -1581,6 +1569,9 @@ _CLI_ENV_MAP: Dict[str, str] = {
     "no_enable_prefix_caching": "NO_ENABLE_PREFIX_CACHING",
     "enable_expert_parallel": "ENABLE_EXPERT_PARALLEL",
     "async_scheduling": "ASYNC_SCHEDULING",
+    "additional_config": "ADDITIONAL_CONFIG",
+    "speculative_config": "SPECULATIVE_CONFIG",
+    "compilation_config": "COMPILATION_CONFIG",
     "enforce_eager": "ENFORCE_EAGER",
     "data_parallel_size": "DATA_PARALLEL_SIZE",
     "tensor_parallel_size": "TENSOR_PARALLEL_SIZE",

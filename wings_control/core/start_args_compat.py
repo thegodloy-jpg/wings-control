@@ -201,6 +201,9 @@ class LaunchArgs:
         enable_rag_acc: 是否启用 RAG 加速
         enable_auto_tool_choice: 是否自动选择工具调用
         enable_sparse:  是否启用 Sparse KV Cache (v2 新增)
+        async_scheduling: 是否启用 vLLM async scheduling
+        additional_config: vLLM additional_config JSON 字符串
+        speculative_config: vLLM speculative_config JSON 字符串
         distributed:    是否启用多节点分布式推理
         nnodes:         分布式节点总数
         node_rank:      当前节点编号（0 为 head 节点）
@@ -248,6 +251,9 @@ class LaunchArgs:
     nodes: str = ""
     master_ip: str = ""
     ray_head_ip: str = ""
+    async_scheduling: bool = False
+    additional_config: str = ""
+    speculative_config: str = ""
     engine_config: dict | None = None
     _explicit_cli_keys: list[str] | None = None
 
@@ -300,6 +306,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_bool(p, "--enable-sparse", "ENABLE_SPARSE", False)
 
     # --- v2 新增: Compilation Config (CUDA Graph 模式) ---
+    _add_bool(p, "--async-scheduling", "ASYNC_SCHEDULING", False)
+    p.add_argument("--additional-config", default=_env("ADDITIONAL_CONFIG", ""))
+    p.add_argument("--speculative-config", default=_env("SPECULATIVE_CONFIG", ""))
     p.add_argument("--compilation-config", default=_env("COMPILATION_CONFIG", ""))
 
     _add_bool(p, "--distributed", "DISTRIBUTED", False)
@@ -352,6 +361,9 @@ def _map_args_to_launch_kwargs(args, engine: str) -> dict:
         "enable_rag_acc": bool(args.enable_rag_acc),
         "enable_auto_tool_choice": bool(args.enable_auto_tool_choice),
         "enable_sparse": bool(args.enable_sparse),
+        "async_scheduling": bool(args.async_scheduling),
+        "additional_config": str(args.additional_config),
+        "speculative_config": str(args.speculative_config),
         "compilation_config": str(args.compilation_config),
         "distributed": bool(args.distributed),
         "nnodes": int(args.nnodes),

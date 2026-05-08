@@ -226,7 +226,7 @@ def load_json_config(file_path: str) -> Dict[str, Any]:
         logger.warning("Config file not found: %s", file_path)
         return {}
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
             config_data = json.load(f)
             logger.info("Successfully loaded config file: %s", file_path)
             return config_data

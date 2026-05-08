@@ -41,16 +41,6 @@ INDEXCACHE_ARCHS: frozenset[str] = frozenset({
     "DeepseekV32ForCausalLM",
 })
 
-# 混合 KV Cache 架构列表
-# 这些架构使用混合注意力机制（如 GDN + 标准注意力、DSA 等），
-# 不同层的 KV Cache Spec 类型不同，需要开启 vLLM 的 hybrid KV cache manager。
-# 若未开启，vLLM 会尝试将所有层的 KV Cache 统一为同一类型，导致 ValueError。
-HYBRID_KV_CACHE_ARCHS: frozenset[str] = frozenset({
-    "GlmMoeDsaForCausalLM",           # GLM-5/5.1: DSA (差异化稀疏注意力)
-    "Qwen3_5MoeForConditionalGeneration",  # Qwen3.5 MoE: GDN + 标准注意力
-    "Qwen3_5ForConditionalGeneration",     # Qwen3.5 Dense: GDN + 标准注意力
-})
-
 #
 _LLM_MODELS = {
     "DeepseekV3ForCausalLM": [

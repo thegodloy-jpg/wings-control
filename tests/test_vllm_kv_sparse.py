@@ -149,6 +149,58 @@ class TestVllmKvSparse(unittest.TestCase):
         self.assertNotIn("--kv-cache-dtype fp8", script)
         self.assertNotIn("--calculate-kv-scales", script)
 
+    def test_glm5_family_speculative_uses_deepseek_mtp(self):
+        for model_name in ("GLM-5", "GLM-5.1"):
+            for engine in ("vllm", "vllm_ascend"):
+                with self.subTest(model_name=model_name, engine=engine):
+                    params = {
+                        "model_name": model_name,
+                        "model_path": f"/models/{model_name.lower()}",
+                        "model_type": "llm",
+                        "engine": engine,
+                        "enable_speculative_decode": True,
+                        "engine_config": {"model": f"/models/{model_name.lower()}"},
+                    }
+
+                    with patch.object(
+                        vllm_adapter,
+                        "ModelIdentifier",
+                        return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
+                    ):
+                        script = vllm_adapter.build_start_script(params)
+
+                    self.assertIn(
+                        "--speculative-config '{\"method\": \"deepseek_mtp\", "
+                        "\"num_speculative_tokens\": 3}'",
+                        script,
+                    )
+                    self.assertNotIn('"method" : "suffix"', script)
+
+    def test_glm5_family_speculative_lmcache_falls_back_to_suffix(self):
+        params = {
+            "model_name": "GLM-5.1",
+            "model_path": "/models/glm5.1",
+            "model_type": "llm",
+            "engine": "vllm",
+            "enable_speculative_decode": True,
+            "engine_config": {"model": "/models/glm5.1"},
+        }
+
+        with patch.dict("os.environ", {"LMCACHE_OFFLOAD": "true"}), patch.object(
+            vllm_adapter,
+            "ModelIdentifier",
+            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
+        ):
+            script = vllm_adapter.build_start_script(params)
+
+        self.assertIn(
+            "--speculative-config '{\"method\" : \"suffix\", "
+            "\"num_speculative_tokens\": 5, "
+            "\"suffix_decoding_max_cached_requests\": 1000}'",
+            script,
+        )
+        self.assertNotIn('"method": "deepseek_mtp"', script)
+
     def test_sparse_control_flag_is_not_rendered_as_native_vllm_arg(self):
         params = {
             "model_name": "deepseek-v32",
@@ -206,7 +258,9 @@ class TestVllmKvSparse(unittest.TestCase):
         self.assertIn("--hf-overrides '{\"index_topk_freq\": 4}'", script)
 
     def test_vllm_engine_speculative_injects_ears_tolerance(self):
-        """vllm（非 Ascend）引擎：投机推理时注入 VLLM_EARS_TOLERANCE=0.5（与 vllm_ascend 行为对比）。"""
+        """vllm（非 Ascend）引擎：投机推理 三项验收 — VLLM_EARS_TOLERANCE 注入、EARS 补丁被采集、--speculative-config 字段生成。"""
+        from core.wings_entry import _collect_ears_patch_features  # noqa: E402
+
         params = {
             "model_name": "deepseek-v3",
             "model_path": "/models/deepseek-v3",
@@ -222,8 +276,13 @@ class TestVllmKvSparse(unittest.TestCase):
             return_value=_FakeModelInfo("DeepseekV3ForCausalLM"),
         ):
             script = vllm_adapter.build_start_script(params)
+            patch_features = _collect_ears_patch_features("vllm", params)
 
+        # 1. 环境变量：注入
         self.assertIn("export VLLM_EARS_TOLERANCE=0.5", script)
+        # 2. 补丁安装：EARS 补丁被采集
+        self.assertIn("ears", patch_features)
+        # 3. 追加字段：--speculative-config 字段生成
         self.assertIn("--speculative-config", script)
 
 
