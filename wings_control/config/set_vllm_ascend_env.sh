@@ -45,6 +45,20 @@ if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
     echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
 fi
 
+# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
+# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
+case "${WINGS_ASCEND_PERF_TUNING:-true}" in
+    false|False|FALSE|0|no|No|NO)
+        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
+        ;;
+    *)
+        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
+        sysctl -w vm.swappiness=0 || true
+        sysctl -w kernel.numa_balancing=0 || true
+        sysctl -w kernel.sched_migration_cost_ns=50000 || true
+        ;;
+esac
+
 # 昇腾通用环境变量
 export HCCL_BUFFSIZE=1024
 export OMP_PROC_BIND=false

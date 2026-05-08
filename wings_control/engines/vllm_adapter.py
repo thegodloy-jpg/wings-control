@@ -900,6 +900,23 @@ def _build_llama_ascend_env(arch: str) -> List[str]:
     ]
 
 
+def _build_kimik25_ascend_env(arch: str) -> List[str]:
+    """构建 Kimi-K2.5 (KimiK25ForConditionalGeneration) Ascend 环境变量命令。"""
+    logger.info("[Kimi-K2.5] Set Ascend environment variables for %s", arch)
+    return [
+        "export HCCL_OP_EXPANSION_MODE=AIV",
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=1",
+        "export TASK_QUEUE_ENABLE=1",
+        "export HCCL_BUFFSIZE=1024",
+        "export VLLM_ASCEND_ENABLE_MLAPO=1",
+        "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
+        "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
+        "export VLLM_ENGINE_READY_TIMEOUT_S=3600",
+    ]
+
+
 def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     """构建模型架构特定的环境变量命令（支持 NVIDIA 和 Ascend）。
 
@@ -912,6 +929,7 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     - MiniMaxM2ForCausalLM (MiniMax-M2.5): FlashComm
     - DeepseekV32ForCausalLM (DeepSeek V3.2): MLAPO, FlashComm, VLLM_USE_V1
     - LlamaForCausalLM (LLaMA3.1-70B): 基础 NPU 内存/线程优化
+    - KimiK25ForConditionalGeneration (Kimi-K2.5): MLAPO, FlashComm, Eagle3 超时加固
 
     Args:
         params: 参数字典
@@ -950,6 +968,7 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
             "MiniMaxM2ForCausalLM": _build_minimaxm2_ascend_env,
             "DeepseekV32ForCausalLM": _build_deepseekv32_ascend_env,
             "LlamaForCausalLM": _build_llama_ascend_env,
+            "KimiK25ForConditionalGeneration": _build_kimik25_ascend_env,
         }
     else:
         _arch_env_builders = {}
@@ -1526,6 +1545,7 @@ def _resolve_mtp_method(model_architecture: str) -> str:
     mtp_methods_by_arch = {
         "DeepseekV3ForCausalLM": "deepseek_mtp",
         "DeepseekV32ForCausalLM": "deepseek_mtp",
+        "GlmMoeDsaForCausalLM": "deepseek_mtp",
         "Qwen3NextForCausalLM": "qwen3_next_mtp",
         "Glm4MoeForCausalLM": "glm4_moe_mtp",
         "Qwen3_5ForConditionalGeneration": "qwen3_5_mtp",
@@ -1566,7 +1586,7 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
     根据模型架构自动选择最优的推测解码策略：
     1. 如有草稿模型 → eagle3 / draft_model
     2. Qwen3NextForCausalLM + vllm_ascend → suffix
-    3. DeepSeek/Qwen3Next/Glm4Moe → MTP
+    3. DeepSeek/GLM-5/Qwen3Next/Glm4Moe → MTP
     4. 其他 → suffix
 
     Args:
@@ -1605,7 +1625,7 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         logger.info("[AdvFeature-SpecDecode] Architecture %s → MTP strategy (%s)",
                     model_info.model_architecture, strategy)
         speculative_config_temp.append(f'"method": "{strategy}"')
-        # MTP 强制 num_speculative_tokens=3（官方 GLM-4.7 / DeepSeek-V3 推荐值）
+        # MTP 强制 num_speculative_tokens=3（官方 GLM-4.7 / GLM-5 / DeepSeek 推荐值）
         speculative_config_temp.append('"num_speculative_tokens": 3')
         return _format_speculative_result(speculative_config_temp)
 
