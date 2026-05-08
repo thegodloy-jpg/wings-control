@@ -1921,6 +1921,7 @@ def build_start_script(params: Dict[str, Any]) -> str:
     Returns:
         str: 完整的 bash 脚本内容（不含 #!/bin/bash）
     """
+    from engines.vllm_adapter import _inject_env_echo  # 延迟导入，避免循环
     ctx = _build_start_script_context(params)
     overrides_json = _build_start_script_overrides_json(ctx)
     env_block = _build_start_script_env_block(ctx.params)
@@ -1928,7 +1929,10 @@ def build_start_script(params: Dict[str, Any]) -> str:
     merge_script = _build_config_merge_script(
         overrides_json, shlex.quote(MINDIE_CONFIG_PATH), shlex.quote(MINDIE_WORK_DIR)
     )
-    return f"""{env_block}{merge_script}"""
+    script = f"""{env_block}{merge_script}"""
+    # 与 vllm_adapter 保持一致：在适配器出口统一注入命令 echo
+    # _inject_env_echo 已有 [mindie-env] 去重逻辑，不会对已打印的 env var 重复注入
+    return _inject_env_echo(script)
 
 
 def start_engine(params: Dict[str, Any]):

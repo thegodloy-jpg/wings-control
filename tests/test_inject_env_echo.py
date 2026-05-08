@@ -221,6 +221,74 @@ class TestMindieCommandEcho(unittest.TestCase):
         self.assertEqual(rendered.count("[wings-cmd] >>>"), 1)
 
 
+class TestMindieDistributedEcho(unittest.TestCase):
+    """mindie 分布式启动脚本的 echo 集成度测试。
+
+    通过 mock _resolve_rank_table 绕开文件系统依赖，
+    验证分布式关键环境变量（MASTER_ADDR / RANK / WORLD_SIZE 等）和
+    守护进程命令（./bin/mindieservice_daemon）均被正确 echo 注入。
+    """
+
+    def _minimal_distributed_params(self, node_rank: int = 0) -> dict:
+        return {
+            "engine": "mindie",
+            "distributed": True,
+            "nnodes": 2,
+            "node_rank": node_rank,
+            "head_node_addr": "10.0.0.1",
+            "device_count": 4,
+            "node_ips": "10.0.0.1,10.0.0.2",
+            "engine_config": {
+                "modelWeightPath": "/models/qwen3",
+                "port": 17000,
+                "worldSize": 2,
+                "tp": 2,
+            },
+        }
+
+    def test_distributed_env_vars_are_echoed_in_env_block(self):
+        """MASTER_ADDR / RANK / WORLD_SIZE 等分布式 export 应有 [mindie-env] echo。"""
+        import importlib
+        mindie = importlib.import_module("engines.mindie_adapter")
+
+        params = self._minimal_distributed_params(node_rank=0)
+        fake_rank_table_cmds = ["# rank table skipped (test)"]
+        fake_ranktable_path = "/shared/hccl_ranktable.json"
+        with patch.object(mindie, "_resolve_external_rank_table_path",
+                          return_value=fake_ranktable_path), \
+             patch.object(mindie, "_resolve_rank_table",
+                          return_value=(fake_rank_table_cmds, fake_ranktable_path)):
+            cmds = mindie._build_distributed_env_commands(params)
+            echoed = mindie._append_export_echoes(cmds)
+
+        rendered = "\n".join(echoed)
+        for var in ("MASTER_ADDR", "RANK", "WORLD_SIZE",
+                    "HCCL_WHITELIST_DISABLE", "RANK_TABLE_FILE"):
+            self.assertIn(f"[mindie-env] {var}=", rendered,
+                          f"分布式变量 {var} 应有 [mindie-env] echo")
+
+    def test_distributed_build_start_script_echoes_daemon_cmd(self):
+        """完整 build_start_script（mock rank table）生成的脚本应包含 ./bin/mindieservice_daemon [wings-cmd] echo。"""
+        import importlib
+        mindie = importlib.import_module("engines.mindie_adapter")
+
+        params = self._minimal_distributed_params(node_rank=0)
+        fake_rank_table_cmds = []
+        fake_ranktable_path = "/shared/hccl_ranktable.json"
+        with patch.object(mindie, "_resolve_external_rank_table_path",
+                          return_value=fake_ranktable_path), \
+             patch.object(mindie, "_resolve_rank_table",
+                          return_value=(fake_rank_table_cmds, fake_ranktable_path)):
+            script = mindie.build_start_script(params)
+
+        self.assertIn("[wings-cmd] >>> ./bin/mindieservice_daemon", script,
+                      "mindie 分布式脚本的守护进程启动命令应有 [wings-cmd] echo")
+        self.assertIn("[mindie-env] MASTER_ADDR=", script,
+                      "MASTER_ADDR 应有 [mindie-env] echo")
+        self.assertIn("[mindie-env] RANK=", script,
+                      "RANK 应有 [mindie-env] echo")
+
+
 class TestAssembledScriptEcho(unittest.TestCase):
     """wings_entry._assemble_startup_command 的集成 echo 验证。
 
