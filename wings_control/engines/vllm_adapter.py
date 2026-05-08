@@ -28,7 +28,8 @@ from typing import Dict, Any, List, Optional
 
 import yaml
 
-from utils.model_utils import ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8, INDEXCACHE_ARCHS
+from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8,
+                               INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51)
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env
@@ -494,7 +495,28 @@ def _append_lmcache_env_export(env_commands: List[str], name: str, value: Option
         env_commands.append(f"export {name}={shlex.quote(value)}")
 
 
-def _build_cache_env_commands(engine: str) -> List[str]:
+def _is_glm51_nvidia_vllm_params(params: Optional[Dict[str, Any]], engine: str,
+                                 model_info: Optional[ModelIdentifier] = None) -> bool:
+    """Return True when current params describe GLM-5.1 on NVIDIA vLLM."""
+    if engine != "vllm" or not params:
+        return False
+    try:
+        info = model_info or ModelIdentifier(
+            params.get("model_name"),
+            params.get("model_path"),
+            params.get("model_type"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[GLM-5.1 NV] Skip variant detection, ModelIdentifier failed: %s", exc)
+        return False
+    return is_glm_moe_dsa_glm51(
+        info,
+        model_name=params.get("model_name"),
+        model_path=params.get("model_path"),
+    )
+
+
+def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = None) -> List[str]:
     """构建 KVCache Offload 特性的环境变量设置命令。
 
     KVCache Offload 允许将 KV 缓存卸载到主机内存或远端存储。
@@ -517,6 +539,13 @@ def _build_cache_env_commands(engine: str) -> List[str]:
     """
     env_commands = []
     if not get_lmcache_env():
+        return env_commands
+
+    if _is_glm51_nvidia_vllm_params(params, engine):
+        logger.warning(
+            "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
+            "skipping LMCache engine-side env exports despite LMCACHE_OFFLOAD=true."
+        )
         return env_commands
 
     # 跨实例Hash一致
@@ -1038,7 +1067,7 @@ def _build_env_commands(params: Dict[str, Any], current_ip: str, network_interfa
     env_commands = []
 
     env_commands.extend(_build_base_env_commands(params, engine, root))
-    env_commands.extend(_build_cache_env_commands(engine))
+    env_commands.extend(_build_cache_env_commands(engine, params))
     env_commands.extend(_build_qat_env_commands(engine))
     env_commands.extend(_build_pd_role_env_commands(engine, current_ip, network_interface))
     env_commands.extend(_build_distributed_env_commands(params, current_ip, network_interface, engine))
@@ -1059,6 +1088,14 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         Dict[str, Any]: 清理后的 engine_config 浅拷贝
     """
     engine_config = dict(params.get("engine_config", {}))
+    if _is_glm51_nvidia_vllm_params(params, params.get("engine", "vllm")):
+        removed = engine_config.pop("kv_transfer_config", None)
+        if removed is not None:
+            logger.warning(
+                "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
+                "removed upstream kv_transfer_config=%s",
+                removed,
+            )
     engine_config.pop("use_kunlun_atb", None)
     engine_config.pop("enable_sparse", None)  # consumed by _build_kv_sparse_cmd; not a vllm CLI arg
     explicit_keys = set(params.get("_explicit_cli_keys") or [])
@@ -1632,7 +1669,14 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
 
     mtp_method = _resolve_mtp_method(model_info.model_architecture)
     if mtp_method:
-        return "suffix" if get_lmcache_env() else mtp_method
+        lmcache_effective = get_lmcache_env()
+        if lmcache_effective and _is_glm51_nvidia_vllm_params(params, engine, model_info):
+            logger.warning(
+                "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
+                "ignoring LMCACHE_OFFLOAD for speculative strategy selection."
+            )
+            lmcache_effective = False
+        return "suffix" if lmcache_effective else mtp_method
 
     return "suffix"
 

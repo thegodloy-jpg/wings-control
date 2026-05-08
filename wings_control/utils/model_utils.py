@@ -28,7 +28,7 @@ Sidecar 架构契约:
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from utils.file_utils import load_json_config
 
@@ -40,6 +40,63 @@ INDEXCACHE_ARCHS: frozenset[str] = frozenset({
     "GlmMoeDsaForCausalLM",
     "DeepseekV32ForCausalLM",
 })
+
+_GLM51_NAME_MARKERS = (
+    "glm-5.1",
+    "glm5.1",
+    "glm_5.1",
+    "glm 5.1",
+    "glm-51",
+    "glm51",
+)
+
+_MODEL_NAME_CONFIG_KEYS = (
+    "_name_or_path",
+    "name_or_path",
+    "model_name",
+    "model_id",
+    "hub_model_id",
+)
+
+
+def _contains_glm51_marker(value: Any) -> bool:
+    """Return True when a free-form metadata value clearly names GLM-5.1."""
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    if not text:
+        return False
+    return any(marker in text for marker in _GLM51_NAME_MARKERS)
+
+
+def is_glm51_model(model_name: Any = None, model_path: Any = None,
+                   config: Optional[dict] = None) -> bool:
+    """Best-effort GLM-5.1 variant detection from stable metadata.
+
+    ``GLM-5`` and ``GLM-5.1`` both use ``GlmMoeDsaForCausalLM`` in
+    ``config.json``.  Architecture alone cannot distinguish them, so this
+    helper checks explicit model-name sources first: user ``model_name``, model
+    path, and common HuggingFace name fields in ``config.json``.
+    """
+    if _contains_glm51_marker(model_name) or _contains_glm51_marker(model_path):
+        return True
+    if isinstance(config, dict):
+        for key in _MODEL_NAME_CONFIG_KEYS:
+            if _contains_glm51_marker(config.get(key)):
+                return True
+    return False
+
+
+def is_glm_moe_dsa_glm51(model_info: Any, model_name: Any = None,
+                         model_path: Any = None) -> bool:
+    """Return True for the GLM-5.1 variant of ``GlmMoeDsaForCausalLM``."""
+    if getattr(model_info, "model_architecture", None) != "GlmMoeDsaForCausalLM":
+        return False
+    return is_glm51_model(
+        model_name if model_name is not None else getattr(model_info, "model_name", None),
+        model_path if model_path is not None else getattr(model_info, "model_path", None),
+        getattr(model_info, "config", None),
+    )
 
 #
 _LLM_MODELS = {

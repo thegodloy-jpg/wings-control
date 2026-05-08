@@ -70,6 +70,75 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             engine = _validate_user_engine("mindie", "Ascend910B", "full", model_info)
         self.assertEqual(engine, "mindie")
 
+    def test_glm51_nvidia_forces_disable_kv_offload_even_with_upstream_config(self):
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["GlmMoeDsaForCausalLM"],
+                    "_name_or_path": "THUDM/GLM-5.1",
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm",
+                "--model-name", "GLM-5.1",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "1",
+                "--trust-remote-code",
+            ]
+
+            launch_args = parse_launch_args(argv).to_namespace()
+            launch_args.engine_config = {
+                "kv_transfer_config": {"kv_connector": "LMCacheConnectorV1", "kv_role": "kv_both"}
+            }
+
+            with patch.dict(os.environ, {"LMCACHE_OFFLOAD": "true"}, clear=False), \
+                    self.assertLogs("core.config_loader", level="WARNING") as cm:
+                merged = load_and_merge_configs(
+                    {"device": "nvidia", "count": 1, "details": []},
+                    launch_args,
+                )
+
+        self.assertNotIn("kv_transfer_config", merged["engine_config"])
+        self.assertIn("Forced disabled for GLM-5.1 on NVIDIA/vLLM", "\n".join(cm.output))
+
+    def test_glm5_nvidia_still_allows_lmcache_kv_offload(self):
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["GlmMoeDsaForCausalLM"],
+                    "_name_or_path": "THUDM/GLM-5",
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm",
+                "--model-name", "GLM-5",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "1",
+                "--trust-remote-code",
+            ]
+
+            launch_args = parse_launch_args(argv).to_namespace()
+            with patch.dict(os.environ, {"LMCACHE_OFFLOAD": "true"}, clear=False):
+                merged = load_and_merge_configs(
+                    {"device": "nvidia", "count": 1, "details": []},
+                    launch_args,
+                )
+
+        self.assertIn("kv_transfer_config", merged["engine_config"])
+        self.assertIn("LMCacheConnectorV1", merged["engine_config"]["kv_transfer_config"])
+
     def test_mindie_moe_requires_enable_ep_moe(self):
         params = {"enable_ep_moe": False}
 

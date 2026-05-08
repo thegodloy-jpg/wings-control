@@ -176,7 +176,32 @@ class TestVllmKvSparse(unittest.TestCase):
                     )
                     self.assertNotIn('"method" : "suffix"', script)
 
-    def test_glm5_family_speculative_lmcache_falls_back_to_suffix(self):
+    def test_glm5_speculative_lmcache_falls_back_to_suffix(self):
+        params = {
+            "model_name": "GLM-5",
+            "model_path": "/models/glm5",
+            "model_type": "llm",
+            "engine": "vllm",
+            "enable_speculative_decode": True,
+            "engine_config": {"model": "/models/glm5"},
+        }
+
+        with patch.dict("os.environ", {"LMCACHE_OFFLOAD": "true"}), patch.object(
+            vllm_adapter,
+            "ModelIdentifier",
+            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
+        ):
+            script = vllm_adapter.build_start_script(params)
+
+        self.assertIn(
+            "--speculative-config '{\"method\" : \"suffix\", "
+            "\"num_speculative_tokens\": 5, "
+            "\"suffix_decoding_max_cached_requests\": 1000}'",
+            script,
+        )
+        self.assertNotIn('"method": "deepseek_mtp"', script)
+
+    def test_glm51_nvidia_speculative_ignores_lmcache_ban_and_uses_deepseek_mtp(self):
         params = {
             "model_name": "GLM-5.1",
             "model_path": "/models/glm5.1",
@@ -194,12 +219,11 @@ class TestVllmKvSparse(unittest.TestCase):
             script = vllm_adapter.build_start_script(params)
 
         self.assertIn(
-            "--speculative-config '{\"method\" : \"suffix\", "
-            "\"num_speculative_tokens\": 5, "
-            "\"suffix_decoding_max_cached_requests\": 1000}'",
+            "--speculative-config '{\"method\": \"deepseek_mtp\", "
+            "\"num_speculative_tokens\": 3}'",
             script,
         )
-        self.assertNotIn('"method": "deepseek_mtp"', script)
+        self.assertNotIn('"method" : "suffix"', script)
 
     def test_sparse_control_flag_is_not_rendered_as_native_vllm_arg(self):
         params = {

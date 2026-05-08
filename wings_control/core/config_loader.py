@@ -36,7 +36,8 @@ from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd
     get_operator_acceleration_env, get_local_ip
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
 from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
-                               is_deepseek_series_modelslim_quant, is_qwen3_series_fp8)
+                               is_deepseek_series_modelslim_quant, is_qwen3_series_fp8,
+                               is_glm_moe_dsa_glm51)
 from utils.device_utils import check_pcie_cards
 
 logger = logging.getLogger(__name__)
@@ -336,7 +337,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _set_function_call(params, engine_cmd_parameter)
     _set_sequence_length(params, engine_cmd_parameter, model_type=ctx.get("model_type", "llm"))
     _set_parallelism_params(params, ctx)
-    _set_kv_cache_config(params, ctx)
+    _set_kv_cache_config(params, ctx, model_info)
     _guard_pd_hybrid_kv_cache(params)
     _ensure_pd_head_dim(params, model_info)
     _set_router_config(params)
@@ -894,7 +895,21 @@ def _get_pd_config(ctx, pd_role):
     return config
 
 
-def _set_kv_cache_config(params, ctx):
+def _is_glm51_nvidia_vllm(ctx, model_info) -> bool:
+    """Return True for NVIDIA + vLLM/vLLM distributed GLM-5.1 deployments."""
+    engine = ctx.get("engine", "")
+    return (
+        ctx.get("device") == "nvidia"
+        and engine in {"vllm", "vllm_distributed"}
+        and is_glm_moe_dsa_glm51(
+            model_info,
+            model_name=ctx.get("model_name"),
+            model_path=ctx.get("model_path"),
+        )
+    )
+
+
+def _set_kv_cache_config(params, ctx, model_info=None):
     """根据 LMCache Offload 和 PD 分离角色，生成 vllm kv_transfer_config 配置。
 
     优先级逻辑：
@@ -906,6 +921,13 @@ def _set_kv_cache_config(params, ctx):
     lmcache_offload = get_lmcache_env()
     pd_role = get_pd_role_env()
     device = ctx.get('device', '')
+
+    if lmcache_offload and model_info is not None and _is_glm51_nvidia_vllm(ctx, model_info):
+        logger.warning(
+            "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
+            "ignoring LMCACHE_OFFLOAD=true and not injecting LMCache kv_transfer_config."
+        )
+        lmcache_offload = False
 
     # Ascend NPU 需要额外的 engine_id 和 kv_buffer_device 字段
     is_ascend = (device == "ascend")
@@ -941,6 +963,31 @@ def _set_kv_cache_config(params, ctx):
         return  #
 
     params['kv_transfer_config'] = json.dumps(config)
+
+
+def _enforce_glm51_nvidia_no_kv_offload(engine_config: Dict[str, Any],
+                                        ctx: Dict[str, Any],
+                                        model_info) -> None:
+    """Final guard: GLM-5.1 on NVIDIA/vLLM must not use KV offload.
+
+    This runs after user config, CLI overrides, and raw ``engine_config`` are
+    merged, so even upper-layer injected ``kv_transfer_config`` is removed.
+    """
+    if not _is_glm51_nvidia_vllm(ctx, model_info):
+        return
+
+    removed = engine_config.pop("kv_transfer_config", None)
+    if removed is not None:
+        logger.warning(
+            "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
+            "removed user/upstream kv_transfer_config=%s",
+            removed,
+        )
+    elif get_lmcache_env():
+        logger.warning(
+            "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
+            "LMCACHE_OFFLOAD=true was requested but will be ignored."
+        )
 
 
 def _guard_pd_hybrid_kv_cache(params):
@@ -2294,6 +2341,15 @@ def load_and_merge_configs(
     #     否则 user_config 或 --engine-config 中的 enable_prefix_caching /
     #     enable_chunked_prefill 会在 _merge_vllm_params 的清理之后被重新注入。
     _validate_embedding_rerank_params(engine_config, {"model_type": model_info.identify_model_type()})
+
+    # 4.7 GLM-5.1 + NVIDIA/vLLM 硬约束：禁止 KVCache Offload。
+    #     必须放在所有合并之后，确保 user_config、CLI 或 Master 下发的
+    #     raw engine_config 中即使带 kv_transfer_config 也会被强制移除。
+    _enforce_glm51_nvidia_no_kv_offload(
+        engine_config,
+        {**cmd_known_params, "device": hardware_env.get("device")},
+        model_info,
+    )
 
     # 5.
     final_engine_params = _merge_final_config(engine_config, cmd_known_params)

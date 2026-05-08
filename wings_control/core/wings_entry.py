@@ -33,7 +33,7 @@ from engines.vllm_adapter import (
     _inject_env_echo,
 )
 from utils.env_utils import get_local_ip, get_master_ip, validate_ip
-from utils.model_utils import ModelIdentifier, INDEXCACHE_ARCHS
+from utils.model_utils import ModelIdentifier, INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +338,25 @@ def _build_speculative_runtime_deps_snippet(enabled: bool | None = None) -> str:
     )
 
 
-def _build_lmcache_install_snippet(engine: str) -> str:
+def _is_glm51_nvidia_vllm_merged(engine: str, merged: dict | None) -> bool:
+    """Return True when merged params describe GLM-5.1 on NVIDIA vLLM."""
+    if engine != "vllm" or not merged:
+        return False
+    try:
+        model_info = ModelIdentifier(
+            merged.get("model_name"), merged.get("model_path"), merged.get("model_type"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[GLM-5.1 NV] Skip variant detection, ModelIdentifier failed: %s", exc)
+        return False
+    return is_glm_moe_dsa_glm51(
+        model_info,
+        model_name=merged.get("model_name"),
+        model_path=merged.get("model_path"),
+    )
+
+
+def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> str:
     """为 LMCache KV 卸载生成 --lmcache-target 的容错 shell 片段。
 
     当 LMCACHE_OFFLOAD=true 时，通过 install.py --lmcache-target 安装
@@ -350,6 +368,13 @@ def _build_lmcache_install_snippet(engine: str) -> str:
         str: shell 脚本片段；LMCache 未启用时返回空字符串。
     """
     if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() != "true":
+        return ""
+
+    if _is_glm51_nvidia_vllm_merged(engine, merged):
+        logger.warning(
+            "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
+            "skipping LMCache patch install despite LMCACHE_OFFLOAD=true."
+        )
         return ""
 
     target = _ENGINE_LMCACHE_TARGET_MAP.get(engine)
@@ -524,7 +549,7 @@ def _build_accel_preamble(engine: str, merged: dict) -> str:
         preamble_parts.append(spec_snippet)
 
     # ── LMCache KV 卸载：独立使用 --lmcache-target ──
-    lmcache_snippet = _build_lmcache_install_snippet(engine)
+    lmcache_snippet = _build_lmcache_install_snippet(engine, merged)
     if lmcache_snippet:
         logger.info("Accel: injecting LMCache patch install (--lmcache-target)")
         preamble_parts.append(lmcache_snippet)

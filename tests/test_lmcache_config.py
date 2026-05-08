@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """LMCache YAML and engine-side env export tests."""
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -52,6 +54,62 @@ class TestLMCacheConfig(unittest.TestCase):
         self.assertIn("export LMCACHE_LOCAL_DISK=/cache/lmcache", commands)
         self.assertIn("export LMCACHE_MAX_LOCAL_DISK_SIZE=128", commands)
         self.assertIn("export LMCACHE_CONFIG_FILE=/shared-volume/lmcache_config.yaml", commands)
+
+    def test_glm51_nvidia_skips_lmcache_env_exports(self):
+        env = {
+            "LMCACHE_OFFLOAD": "true",
+            "LMCACHE_LOCAL_CPU": "true",
+            "LMCACHE_MAX_LOCAL_CPU_SIZE": "64",
+        }
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["GlmMoeDsaForCausalLM"],
+                    "_name_or_path": "THUDM/GLM-5.1",
+                }),
+                encoding="utf-8",
+            )
+            params = {
+                "engine": "vllm",
+                "model_name": "GLM-5.1",
+                "model_path": model_dir,
+                "model_type": "llm",
+            }
+
+            with patch.dict("os.environ", env, clear=True), \
+                    self.assertLogs("engines.vllm_adapter", level="WARNING") as cm:
+                commands = vllm_adapter._build_cache_env_commands("vllm", params)
+
+        self.assertEqual(commands, [])
+        self.assertIn("Forced disabled for GLM-5.1 on NVIDIA/vLLM", "\n".join(cm.output))
+
+    def test_glm51_nvidia_removes_upstream_kv_transfer_config_from_script(self):
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["GlmMoeDsaForCausalLM"],
+                    "_name_or_path": "THUDM/GLM-5.1",
+                }),
+                encoding="utf-8",
+            )
+            params = {
+                "engine": "vllm",
+                "model_name": "GLM-5.1",
+                "model_path": model_dir,
+                "model_type": "llm",
+                "engine_config": {
+                    "model": model_dir,
+                    "kv_transfer_config": {"kv_connector": "LMCacheConnectorV1", "kv_role": "kv_both"},
+                },
+            }
+
+            with self.assertLogs("engines.vllm_adapter", level="WARNING") as cm:
+                script = vllm_adapter.build_start_script(params)
+
+        self.assertNotIn("--kv-transfer-config", script)
+        self.assertNotIn("LMCacheConnectorV1", script)
+        self.assertIn("Forced disabled for GLM-5.1 on NVIDIA/vLLM", "\n".join(cm.output))
 
     def test_cpu_size_implies_engine_side_local_cpu_enable(self):
         env = {
