@@ -1003,6 +1003,7 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     engine_config = dict(params.get("engine_config", {}))
     engine_config.pop("use_kunlun_atb", None)
+    engine_config.pop("enable_sparse", None)  # consumed by _build_kv_sparse_cmd; not a vllm CLI arg
     explicit_keys = set(params.get("_explicit_cli_keys") or [])
 
     if _is_deepseek_ascend_dp_deployment(params):
