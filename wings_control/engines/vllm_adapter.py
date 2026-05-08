@@ -2357,9 +2357,11 @@ def _inject_env_echo(script: str) -> str:
     lines = script.splitlines(keepends=True)
     result = []
     # 命令前缀白名单：匹配到则在前面 echo 一行（截断超长以免日志爆炸）
+    # exec \./... 涵盖 MindIE 等用 exec ./bin/daemon 形式启动的可执行文件；
+    # \./[A-Za-z0-9_./-]+ 去除 .sh 限制，同时覆盖 ./bin/mindieservice_daemon & 等无扩展名程序。
     cmd_prefix_re = _re.compile(
-        r'^(exec\s+(?:python3?|vllm\s+serve)|vllm\s+serve|python3?\s+-m\s+vllm|python3?\s+-m\s+sglang|'
-        r'ray\s+(start|stop|status)|source\s+/|nohup\s+|\./[A-Za-z0-9_./-]+\.sh)'
+        r'^(exec\s+(?:python3?|vllm\s+serve|\./\S+)|vllm\s+serve|python3?\s+-m\s+vllm|python3?\s+-m\s+sglang|'
+        r'ray\s+(start|stop|status)|source\s+/|nohup\s+|\./[A-Za-z0-9_./-]+)'
     )
     for idx, line in enumerate(lines):
         stripped = line.lstrip()

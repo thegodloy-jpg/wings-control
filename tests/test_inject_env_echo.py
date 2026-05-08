@@ -170,5 +170,40 @@ class TestSglangEcho(unittest.TestCase):
         self.assertIn("[wings-cmd] >>>", script)
 
 
+class TestMindieCommandEcho(unittest.TestCase):
+    """_inject_env_echo 对 MindIE 守护进程命令的 echo 注入行为。"""
+
+    def test_mindie_daemon_background_gets_cmd_echo(self):
+        """后台运行的 ./bin/mindieservice_daemon & 应被注入 [wings-cmd] echo。"""
+        script = (
+            "cd /usr/local/Ascend/mindie/latest/mindie-service\n"
+            "./bin/mindieservice_daemon &\n"
+            "MINDIE_PID=$!\n"
+        )
+        rendered = _inject_env_echo(script)
+        self.assertIn("[wings-cmd] >>> ./bin/mindieservice_daemon", rendered)
+
+    def test_mindie_exec_daemon_gets_cmd_echo(self):
+        """exec ./bin/mindieservice_daemon（单行 exec 形式）应被注入 [wings-cmd] echo。"""
+        script = "exec ./bin/mindieservice_daemon\n"
+        rendered = _inject_env_echo(script)
+        self.assertIn("[wings-cmd] >>> exec ./bin/mindieservice_daemon", rendered)
+
+    def test_shell_script_dot_slash_sh_still_echoed(self):
+        """原有的 ./set_env.sh 形式（带 .sh）同样应被注入。"""
+        script = "./set_env.sh\n"
+        rendered = _inject_env_echo(script)
+        self.assertIn("[wings-cmd] >>> ./set_env.sh", rendered)
+
+    def test_no_duplicate_when_echo_already_present(self):
+        """已有 [wings-cmd] echo 的行不应被重复注入。"""
+        script = (
+            "echo '[wings-cmd] >>> ./bin/mindieservice_daemon'\n"
+            "./bin/mindieservice_daemon &\n"
+        )
+        rendered = _inject_env_echo(script)
+        self.assertEqual(rendered.count("[wings-cmd] >>>"), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
