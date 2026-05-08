@@ -104,5 +104,77 @@ class TestCollectEarsPatchFeatures(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TestEarsFullAcceptanceCriteria(unittest.TestCase):
+    """EARS 使能关闭（vllm_ascend）/ 开启（vllm）的完整三项验收测试。
+
+    每个用例同时检查：
+      1. 环境变量 ``VLLM_EARS_TOLERANCE=0.5`` 是否正确存在/缺失；
+      2. 补丁安装命令层：``_collect_ears_patch_features`` 返回是否包含 ``ears``；
+      3. 追加字段：``--speculative-config`` 是否正确追加到启动命令中。
+    """
+
+    def setUp(self):
+        # 延迟导入
+        from core.wings_entry import _collect_ears_patch_features
+        from engines.vllm_adapter import build_start_script
+        self._collect = _collect_ears_patch_features
+        self._build = build_start_script
+
+    def _make_params(self, engine: str) -> dict:
+        return {
+            "engine": engine,
+            "model_name": "DeepSeek-V3",
+            "model_path": "/models/ds",
+            "model_type": "",
+            "enable_speculative_decode": True,
+            "speculative_decode_model_path": "",
+            "engine_config": {"model": "/models/ds"},
+        }
+
+    def test_vllm_ascend_speculative_all_three_criteria_disabled(self):
+        """vllm_ascend + 投机推理：三项均应体现「关闭」语义。"""
+        class _FakeDS:
+            def __init__(self, *a, **kw):
+                self.model_architecture = "DeepseekV3ForCausalLM"
+                self.model_quantize = ""
+
+        params = self._make_params("vllm_ascend")
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDS):
+            script = self._build(params)
+        patch_features = self._collect("vllm_ascend", params)
+
+        # 1. 环境变量：不注入
+        self.assertNotIn("export VLLM_EARS_TOLERANCE=0.5", script,
+                         "vllm_ascend 不应注入 VLLM_EARS_TOLERANCE")
+        # 2. 补丁安装命令：EARS 补丁不被采集
+        self.assertNotIn("ears", patch_features,
+                         "vllm_ascend 不应采集 EARS 补丁")
+        # 3. 追加字段：--speculative-config 正常生成（功能依然可用）
+        self.assertIn("--speculative-config", script,
+                      "vllm_ascend 投机推理的 --speculative-config 字段应正常追加")
+
+    def test_vllm_speculative_all_three_criteria_enabled(self):
+        """vllm（非 Ascend）+ 投机推理：三项均应体现「开启」语义。"""
+        class _FakeDS:
+            def __init__(self, *a, **kw):
+                self.model_architecture = "DeepseekV3ForCausalLM"
+                self.model_quantize = ""
+
+        params = self._make_params("vllm")
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDS):
+            script = self._build(params)
+        patch_features = self._collect("vllm", params)
+
+        # 1. 环境变量：注入
+        self.assertIn("export VLLM_EARS_TOLERANCE=0.5", script,
+                      "vllm 应注入 VLLM_EARS_TOLERANCE=0.5")
+        # 2. 补丁安装命令：EARS 补丁被采集
+        self.assertIn("ears", patch_features,
+                      "vllm 应采集 EARS 补丁")
+        # 3. 追加字段：--speculative-config 正常生成
+        self.assertIn("--speculative-config", script,
+                      "vllm 投机推理的 --speculative-config 字段应正常追加")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
