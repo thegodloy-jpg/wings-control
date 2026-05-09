@@ -304,6 +304,10 @@
             },
             "compilation_config": {
               "cudagraph_mode": "FULL_DECODE_ONLY"
+            },
+            "speculative_config": {
+              "num_speculative_tokens": 3,
+              "method": "deepseek_mtp"
             }
           },
           "vllm_ascend_distributed": {
@@ -329,6 +333,10 @@
             },
             "compilation_config": {
               "cudagraph_mode": "FULL_DECODE_ONLY"
+            },
+            "speculative_config": {
+              "num_speculative_tokens": 3,
+              "method": "deepseek_mtp"
             }
           }
         }
