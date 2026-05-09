@@ -342,8 +342,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _ensure_pd_head_dim(params, model_info)
     _set_router_config(params)
     _set_operator_acceleration(params, ctx)
-    if not _set_deepseek_v31_ascend_quant_params(params, ctx, model_info):
-        _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info)
+    if not _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info):
         _set_soft_fp8(params, ctx, model_info)
     _set_soft_fp4(params, ctx, model_info)
     _set_task(params, ctx)
@@ -357,60 +356,12 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     return params
 
 
-def _set_deepseek_v31_ascend_quant_params(params, ctx, model_info) -> bool:
-    """配置 DeepSeek-V3.1 官方 Ascend W8A8/ModelSlim 量化路径。
-
-    DeepSeek-V3.1-w8a8-mtp-QuaRot 属于官方 Ascend 量化权重，不是通用
-    Soft FP8 fallback。这里单独设置官方 vLLM-Ascend 所需参数，避免误走
-    _set_soft_fp8() 并带出 --enforce-eager 等软 FP8 副作用。
-    """
-    model_path = model_info.model_path
-    model_name = model_info.model_name
-
-    if ctx.get('device') != "ascend":
-        return False
-    if not _is_deepseek_v31_model(model_name, model_path):
-        return False
-    if not is_deepseek_series_modelslim_quant(model_path):
-        return False
-
-    explicit_keys = _detect_explicit_cli_keys()
-
-    if 'quantization' not in explicit_keys:
-        params['quantization'] = 'ascend'
-    if 'dtype' not in explicit_keys or str(params.get('dtype', '')).lower() == 'auto':
-        params['dtype'] = 'bfloat16'
-    if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
-        params['no_enable_prefix_caching'] = True
-    if 'enable_expert_parallel' not in explicit_keys:
-        params['enable_expert_parallel'] = True
-    if 'async_scheduling' not in explicit_keys:
-        params['async_scheduling'] = True
-    try:
-        device_count_val = int(params.get('device_count', 0))
-    except (ValueError, TypeError):
-        logger.warning("Invalid device_count value, defaulting to 0")
-        device_count_val = 0
-    recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
-    recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
-    if 'data_parallel_size' not in explicit_keys:
-        params['data_parallel_size'] = recommended_dp
-    if 'tensor_parallel_size' not in explicit_keys:
-        params['tensor_parallel_size'] = recommended_tp
-    params['use_kunlun_atb'] = False
-    if 'enforce_eager' not in explicit_keys:
-        params.pop('enforce_eager', None)
-    logger.info("DeepSeek-V3.1 Ascend official W8A8/ModelSlim quantization configured")
-    return True
-
-
 def _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info) -> bool:
-    """配置 DeepSeek V3-family Ascend W8A8/ModelSlim DP 的可复用安全默认。
+    """识别 DeepSeek V3-family Ascend W8A8/ModelSlim 官方量化路径。
 
-    vLLM-Ascend 官方页标题为 DeepSeek-V3/3.1；在线 DP 命令的拓扑、量化、
-    EP、async、prefix-cache 关闭等策略可复用于 DeepSeek V3-family。这里不
-    复用 V3.1 独有的身份判断，只复用 W8A8/ModelSlim + Ascend 的安全默认，
-    并继续保持 CLI/ENV 上层显式传参优先。
+    DeepSeek V3/V3.1/V3.2 W8A8/ModelSlim 属于官方 Ascend 量化路径，
+    不是通用 Soft FP8 fallback。这里仅标记量化方式并阻断 Soft FP8
+    误判，不再按官方示例逐项注入 vLLM 启动字段。
     """
     model_path = model_info.model_path
     model_name = model_info.model_name
@@ -426,29 +377,7 @@ def _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info) -> bool
 
     if 'quantization' not in explicit_keys:
         params['quantization'] = 'ascend'
-    if 'dtype' not in explicit_keys or str(params.get('dtype', '')).lower() == 'auto':
-        params['dtype'] = 'bfloat16'
-    if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
-        params['no_enable_prefix_caching'] = True
-    if 'enable_expert_parallel' not in explicit_keys:
-        params['enable_expert_parallel'] = True
-    if 'async_scheduling' not in explicit_keys:
-        params['async_scheduling'] = True
-    try:
-        device_count_val = int(params.get('device_count', 0))
-    except (ValueError, TypeError):
-        logger.warning("Invalid device_count value, defaulting to 0")
-        device_count_val = 0
-    recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
-    recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
-    if 'data_parallel_size' not in explicit_keys:
-        params['data_parallel_size'] = recommended_dp
-    if 'tensor_parallel_size' not in explicit_keys:
-        params['tensor_parallel_size'] = recommended_tp
-    params['use_kunlun_atb'] = False
-    if 'enforce_eager' not in explicit_keys:
-        params.pop('enforce_eager', None)
-    logger.info("DeepSeek V3-family Ascend W8A8/ModelSlim quantization configured")
+    logger.info("DeepSeek V3-family Ascend W8A8/ModelSlim quantization path detected")
     return True
 
 
@@ -586,8 +515,10 @@ def _set_soft_fp8(params, ctx, model_info):
     model_path = model_info.model_path
     explicit_keys = _detect_explicit_cli_keys()
 
-    if _is_deepseek_v31_model(model_name, model_path):
-        logger.info("DeepSeek-V3.1 is handled by official Ascend quantized path, skip Soft FP8")
+    if (ctx.get('device') == "ascend"
+            and _is_deepseek_v3_family_model(model_name, model_path)
+            and is_deepseek_series_modelslim_quant(model_path)):
+        logger.info("DeepSeek V3-family official Ascend quantized path, skip Soft FP8")
         return
 
     # 检查模型是否为 FP8 模型
@@ -621,8 +552,7 @@ def _set_soft_fp8(params, ctx, model_info):
     elif is_deepseek_series_fp8(model_path):
         if 'quantization' not in explicit_keys:
             params['quantization'] = 'ascend'
-        is_deepseek_v31 = _is_deepseek_v31_model(model_name, model_path)
-        if not is_deepseek_v31 and 'enforce_eager' not in explicit_keys:
+        if 'enforce_eager' not in explicit_keys:
             params["enforce_eager"] = True
         if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
             params['no_enable_prefix_caching'] = True
@@ -644,20 +574,7 @@ def _set_soft_fp8(params, ctx, model_info):
         if 'tensor_parallel_size' not in explicit_keys:
             params['tensor_parallel_size'] = recommended_tp
         params['use_kunlun_atb'] = False
-        if is_deepseek_v31:
-            logger.info("DeepSeek-V3.1 Ascend FP8/W8A8 configured without enforce_eager")
-        else:
-            logger.info("Soft FP8 configured for Deekseek Series models")
-
-
-def _is_deepseek_v31_model(model_name: str, model_path: str) -> bool:
-    """Return True when model name or path identifies a DeepSeek-V3.1 variant."""
-    candidates = [str(item) for item in (model_name, model_path) if item]
-    for item in candidates:
-        normalized = item.lower().replace("_", "-")
-        if "deepseek" in normalized and ("v3.1" in normalized or "v31" in normalized):
-            return True
-    return False
+        logger.info("Soft FP8 configured for Deekseek Series models")
 
 
 def _is_deepseek_v3_family_model(model_name: str, model_path: str) -> bool:

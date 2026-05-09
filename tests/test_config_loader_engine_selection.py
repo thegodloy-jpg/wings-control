@@ -18,7 +18,6 @@ from core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
     _detect_mtp_moe_features,
     load_and_merge_configs,
-    _set_deepseek_v31_ascend_quant_params,
     _set_deepseek_v3_family_ascend_quant_params,
     _set_sequence_length,
     _set_soft_fp8,
@@ -327,7 +326,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertNotIn("sp", params)
         self.assertNotIn("cp", params)
 
-    def test_deepseek_v31_w8a8_uses_official_quant_path_not_soft_fp8(self):
+    def test_deepseek_v3_family_w8a8_uses_official_quant_path_not_soft_fp8(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             model_dir = Path(tmpdir)
             (model_dir / "config.json").write_text(
@@ -342,75 +341,16 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             )
             params = {"device_count": 8}
 
-            handled = _set_deepseek_v31_ascend_quant_params(params, {"device": "ascend"}, model_info)
+            handled = _set_deepseek_v3_family_ascend_quant_params(params, {"device": "ascend"}, model_info)
 
         self.assertTrue(handled)
         self.assertEqual(params["quantization"], "ascend")
-        self.assertEqual(params["dtype"], "bfloat16")
-        self.assertNotIn("enforce_eager", params)
-        self.assertEqual(params["tensor_parallel_size"], 4)
-        self.assertEqual(params["data_parallel_size"], 2)
 
-    def test_deepseek_v31_w8a8_preserves_explicit_upper_params(self):
+    def test_deepseek_v3_family_modelslim_does_not_enter_soft_fp8_branch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             model_dir = Path(tmpdir)
             (model_dir / "config.json").write_text(
                 json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
-                encoding="utf-8",
-            )
-            (model_dir / "quant_model_description.json").write_text("{}", encoding="utf-8")
-            model_info = _FakeModelInfo(
-                architecture="DeepseekV3ForCausalLM",
-                model_name="DeepSeek-V3.1-w8a8",
-                model_path=str(model_dir),
-            )
-            params = {
-                "device_count": 8,
-                "enforce_eager": True,
-                "tensor_parallel_size": 8,
-                "dtype": "float16",
-            }
-
-            with patch.object(sys, "argv", [
-                "prog", "--enforce-eager", "--tensor-parallel-size", "8", "--dtype", "float16"
-            ]):
-                handled = _set_deepseek_v31_ascend_quant_params(params, {"device": "ascend"}, model_info)
-
-        self.assertTrue(handled)
-        self.assertIs(params["enforce_eager"], True)
-        self.assertEqual(params["tensor_parallel_size"], 8)
-        self.assertEqual(params["data_parallel_size"], 2)
-        self.assertEqual(params["dtype"], "float16")
-
-    def test_deepseek_v31_does_not_enter_soft_fp8_branch(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model_dir = Path(tmpdir)
-            (model_dir / "config.json").write_text(
-                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
-                encoding="utf-8",
-            )
-            (model_dir / "quant_model_description.json").write_text(
-                json.dumps({"quant_type": "w8a8"}),
-                encoding="utf-8",
-            )
-            model_info = _FakeModelInfo(
-                architecture="DeepseekV3ForCausalLM",
-                model_name="DeepSeek-V3.1-w8a8",
-                model_path=str(model_dir),
-            )
-            params = {"device_count": 8}
-
-            self.assertTrue(is_deepseek_series_modelslim_quant(str(model_dir)))
-            self.assertFalse(is_deepseek_series_fp8(str(model_dir)))
-            _set_soft_fp8(params, {"device": "ascend"}, model_info)
-
-        self.assertEqual(params, {"device_count": 8})
-
-    def test_deepseek_v3_family_w8a8_reuses_bfloat16_defaults(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model_dir = Path(tmpdir)
-            (model_dir / "config.json").write_text(
-                json.dumps({"architectures": ["DeepseekV32ForCausalLM"]}),
                 encoding="utf-8",
             )
             (model_dir / "quant_model_description.json").write_text(
@@ -422,16 +362,13 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 model_name="DeepSeek-V3.2-w8a8",
                 model_path=str(model_dir),
             )
-            params = {"device_count": 8, "dtype": "auto", "enforce_eager": True}
+            params = {"device_count": 8}
 
-            handled = _set_deepseek_v3_family_ascend_quant_params(params, {"device": "ascend"}, model_info)
+            self.assertTrue(is_deepseek_series_modelslim_quant(str(model_dir)))
+            self.assertFalse(is_deepseek_series_fp8(str(model_dir)))
+            _set_soft_fp8(params, {"device": "ascend"}, model_info)
 
-        self.assertTrue(handled)
-        self.assertEqual(params["dtype"], "bfloat16")
-        self.assertNotIn("enforce_eager", params)
-        self.assertEqual(params["quantization"], "ascend")
-        self.assertEqual(params["tensor_parallel_size"], 4)
-        self.assertEqual(params["data_parallel_size"], 2)
+        self.assertEqual(params, {"device_count": 8})
 
     def test_distributed_raw_engine_config_is_preserved_as_explicit(self):
         known_args = SimpleNamespace()
