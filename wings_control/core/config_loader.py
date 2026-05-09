@@ -258,8 +258,7 @@ def _build_engine_cmd_parameter(cmd_known_params: Dict[str, Any]) -> Dict[str, A
         "max_num_batched_tokens", "enable_prefix_caching", "enable_speculative_decode",
         "speculative_decode_model_path",
         "enable_rag_acc", "enable_auto_tool_choice",
-        "enable_sparse", "async_scheduling", "additional_config",
-        "speculative_config", "compilation_config",
+        "enable_sparse",
     ]
     return {k: cmd_known_params.get(k) for k in keys}
 
@@ -1540,10 +1539,6 @@ _CLI_ENV_MAP: Dict[str, str] = {
     "enable_prefix_caching": "ENABLE_PREFIX_CACHING",
     "no_enable_prefix_caching": "NO_ENABLE_PREFIX_CACHING",
     "enable_expert_parallel": "ENABLE_EXPERT_PARALLEL",
-    "async_scheduling": "ASYNC_SCHEDULING",
-    "additional_config": "ADDITIONAL_CONFIG",
-    "speculative_config": "SPECULATIVE_CONFIG",
-    "compilation_config": "COMPILATION_CONFIG",
     "enforce_eager": "ENFORCE_EAGER",
     "data_parallel_size": "DATA_PARALLEL_SIZE",
     "tensor_parallel_size": "TENSOR_PARALLEL_SIZE",

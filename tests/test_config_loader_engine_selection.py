@@ -188,11 +188,21 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertTrue(params["no_disable_hybrid_kv_cache_manager"])
 
-    def test_glm5_vllm_ascend_cli_flags_and_env_render_to_start_script(self):
+    def test_glm5_vllm_ascend_engine_config_render_to_start_script(self):
         from core.start_args_compat import parse_launch_args  # noqa: E402
         from engines.vllm_adapter import build_start_script  # noqa: E402
 
         with tempfile.TemporaryDirectory() as model_dir:
+            config_file = Path(model_dir, "engine_config.json")
+            config_file.write_text(
+                json.dumps({
+                    "async_scheduling": True,
+                    "additional_config": {"fuse_muls_add": True},
+                    "speculative_config": {"num_speculative_tokens": 3, "method": "deepseek_mtp"},
+                    "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+                }),
+                encoding="utf-8",
+            )
             Path(model_dir, "config.json").write_text(
                 json.dumps({
                     "architectures": ["GlmMoeDsaForCausalLM"],
@@ -204,6 +214,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--engine", "vllm_ascend",
                 "--model-name", "glm-5",
                 "--model-path", model_dir,
+                "--config-file", str(config_file),
                 "--host", "0.0.0.0",
                 "--port", "18000",
                 "--device-count", "8",
@@ -216,10 +227,6 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--quantization", "ascend",
                 "--enable-chunked-prefill",
                 "--enable-prefix-caching",
-                "--async-scheduling",
-                "--additional-config", '{"fuse_muls_add": true}',
-                "--speculative-config", '{"num_speculative_tokens": 3, "method": "deepseek_mtp"}',
-                "--compilation-config", '{"cudagraph_mode": "FULL_DECODE_ONLY"}',
             ]
 
             with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
@@ -410,7 +417,6 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             "enable_rag_acc": False,
             "enable_auto_tool_choice": False,
             "enable_sparse": False,
-            "compilation_config": "",
             "distributed": True,
             "nnodes": 2,
             "node_rank": 1,

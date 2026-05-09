@@ -47,7 +47,6 @@ def _launch_args(**overrides):
         "enable_rag_acc": False,
         "enable_auto_tool_choice": False,
         "enable_sparse": False,
-        "compilation_config": "",
         "distributed": True,
         "nnodes": 2,
         "node_rank": 0,
