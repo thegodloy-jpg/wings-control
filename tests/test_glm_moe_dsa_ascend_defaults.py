@@ -42,7 +42,7 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
         self.assertEqual(cfg["additional_config"]["multistream_overlap_shared_expert"], True)
         self.assertEqual(cfg["additional_config"]["ascend_compilation_config"]["enable_npugraph_ex"], True)
         self.assertEqual(cfg["compilation_config"], {"cudagraph_mode": "FULL_DECODE_ONLY"})
-        self.assertEqual(cfg["speculative_config"], {"num_speculative_tokens": 3, "method": "deepseek_mtp"})
+        self.assertNotIn("speculative_config", cfg)
         self.assertEqual(cfg["tool_call_parser"], "glm47")
         self.assertEqual(cfg["reasoning_parser"], "glm45")
 
@@ -78,8 +78,7 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
         self.assertIn('"fuse_muls_add":true', script)
         self.assertIn("--compilation-config", script)
         self.assertIn('"cudagraph_mode":"FULL_DECODE_ONLY"', script)
-        self.assertIn("--speculative-config", script)
-        self.assertIn('"method":"deepseek_mtp"', script)
+        self.assertNotIn("--speculative-config", script)
         self.assertIn("--tool-call-parser glm47", script)
         self.assertIn("--reasoning-parser glm45", script)
 

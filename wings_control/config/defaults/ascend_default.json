@@ -304,10 +304,6 @@
             },
             "compilation_config": {
               "cudagraph_mode": "FULL_DECODE_ONLY"
-            },
-            "speculative_config": {
-              "num_speculative_tokens": 3,
-              "method": "deepseek_mtp"
             }
           },
           "vllm_ascend_distributed": {
@@ -333,10 +329,6 @@
             },
             "compilation_config": {
               "cudagraph_mode": "FULL_DECODE_ONLY"
-            },
-            "speculative_config": {
-              "num_speculative_tokens": 3,
-              "method": "deepseek_mtp"
             }
           }
         }
@@ -467,11 +459,6 @@
               "cudagraph_capture_sizes": [4, 8, 16, 32, 64, 128, 256],
               "cudagraph_mode": "FULL_DECODE_ONLY"
             },
-            "speculative_config": {
-              "method": "eagle3",
-              "model": "/models",
-              "num_speculative_tokens": 3
-            },
             "mm_encoder_tp_mode": "data"
           },
           "vllm_ascend_distributed": {
@@ -491,11 +478,6 @@
             "compilation_config": {
               "cudagraph_capture_sizes": [4, 8, 16, 32, 64, 128, 256],
               "cudagraph_mode": "FULL_DECODE_ONLY"
-            },
-            "speculative_config": {
-              "method": "eagle3",
-              "model": "/models",
-              "num_speculative_tokens": 3
             },
             "mm_encoder_tp_mode": "data"
           }

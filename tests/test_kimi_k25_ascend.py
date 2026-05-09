@@ -35,8 +35,7 @@ class TestKimiK25AscendDefaults(unittest.TestCase):
         self.assertTrue(cfg["enable_expert_parallel"])
         self.assertTrue(cfg["async_scheduling"])
         self.assertNotIn("no_enable_prefix_caching", cfg)
-        self.assertEqual(cfg["speculative_config"]["method"], "eagle3")
-        self.assertEqual(cfg["speculative_config"]["num_speculative_tokens"], 3)
+        self.assertNotIn("speculative_config", cfg)
         self.assertEqual(cfg["compilation_config"]["cudagraph_mode"], "FULL_DECODE_ONLY")
 
     def test_model_identifier_marks_kimi_k25_supported(self):
