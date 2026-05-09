@@ -70,8 +70,9 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
             script = vllm_adapter.build_start_script(params)
 
         self.assertIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
-        self.assertIn("export OMP_NUM_THREADS=1", script)
-        self.assertIn("export HCCL_BUFFSIZE=200", script)
+        self.assertIn("export OMP_NUM_THREADS=10", script)
+        self.assertNotIn("export VLLM_USE_V1=1", script)
+        self.assertIn("export HCCL_BUFFSIZE=250", script)
         self.assertIn("export VLLM_ASCEND_BALANCE_SCHEDULING=1", script)
         self.assertIn("--enable-prefix-caching", script)
         self.assertIn("--additional-config", script)
@@ -81,6 +82,62 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
         self.assertNotIn("--speculative-config", script)
         self.assertIn("--tool-call-parser glm47", script)
         self.assertIn("--reasoning-parser glm45", script)
+
+    def test_glm5_w4a8_alias_uses_glm5_arch_env(self):
+        cfg = dict(self._glm_cfg())
+        cfg.update({
+            "model": "/usr/local/serving/models/",
+            "host": "0.0.0.0",
+            "port": 18000,
+            "served_model_name": "glm-5-w4a8",
+            "tensor_parallel_size": 8,
+            "data_parallel_size": 1,
+        })
+        params = {
+            "engine": "vllm_ascend",
+            "distributed": False,
+            "model_name": "GLM-5-w4a8",
+            "model_path": "/usr/local/serving/models/",
+            "model_type": "auto",
+            "enable_speculative_decode": False,
+            "engine_config": cfg,
+        }
+
+        with patch.object(vllm_adapter, "ModelIdentifier", _FakeGlmMoeDsaModel):
+            script = vllm_adapter.build_start_script(params)
+
+        self.assertIn("export OMP_NUM_THREADS=10", script)
+        self.assertNotIn("export VLLM_USE_V1=1", script)
+        self.assertIn("export HCCL_BUFFSIZE=250", script)
+        self.assertNotIn("export HCCL_BUFFSIZE=200", script)
+
+    def test_glm51_alias_uses_same_glm_moe_dsa_arch_env(self):
+        cfg = dict(self._glm_cfg())
+        cfg.update({
+            "model": "/usr/local/serving/models/",
+            "host": "0.0.0.0",
+            "port": 18000,
+            "served_model_name": "glm-5.1",
+            "tensor_parallel_size": 8,
+            "data_parallel_size": 1,
+        })
+        params = {
+            "engine": "vllm_ascend",
+            "distributed": False,
+            "model_name": "GLM-5.1",
+            "model_path": "/usr/local/serving/models/",
+            "model_type": "auto",
+            "enable_speculative_decode": False,
+            "engine_config": cfg,
+        }
+
+        with patch.object(vllm_adapter, "ModelIdentifier", _FakeGlmMoeDsaModel):
+            script = vllm_adapter.build_start_script(params)
+
+        self.assertIn("export OMP_NUM_THREADS=10", script)
+        self.assertNotIn("export VLLM_USE_V1=1", script)
+        self.assertIn("export HCCL_BUFFSIZE=250", script)
+        self.assertNotIn("export HCCL_BUFFSIZE=200", script)
 
 
 if __name__ == "__main__":

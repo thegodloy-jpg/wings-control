@@ -116,6 +116,10 @@ _LLM_MODELS = {
         "DeepSeek-V4-w8a8",
         "DeepSeek-Coder-V2-Instruct-w8a8"
         ],
+    "KimiK25ForConditionalGeneration": [
+        "Kimi-K2.5",
+        "Kimi-K2.5-w4a8",
+        ],
     "DeepseekV32ForCausalLM": [
         "DeepSeek-V3.2",
         "DeepSeek-V3.2-Exp",
@@ -127,6 +131,7 @@ _LLM_MODELS = {
     "GlmMoeDsaForCausalLM": [
         "GLM-5",
         "GLM-5-FP8",
+        "GLM-5-w4a8",
         "GLM-5.1",
         "GLM-5.1-FP8"
         ],

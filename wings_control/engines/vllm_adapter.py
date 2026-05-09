@@ -982,6 +982,54 @@ def _build_llama_ascend_env(arch: str) -> List[str]:
     ]
 
 
+def _build_kimik25_ascend_env(arch: str) -> List[str]:
+    """构建 Kimi-K2.5 (KimiK25ForConditionalGeneration) Ascend 环境变量命令。
+
+    注入 Kimi-K2.5 在 Ascend 上所需的环境变量：
+    - HCCL_OP_EXPANSION_MODE=AIV: 启用 AIV 通信优化
+    - VLLM_ASCEND_ENABLE_MLAPO=1: 启用 MLAPO 优化
+    - VLLM_ASCEND_ENABLE_FLASHCOMM1=1: 启用 FlashComm 通信优化
+    - VLLM_ASCEND_BALANCE_SCHEDULING=1: 启用负载均衡调度
+    - TASK_QUEUE_ENABLE=1: 启用任务队列
+    - HCCL_BUFFSIZE=1024: HCCL 缓冲区大小
+    - jemalloc 预加载: 使用 jemalloc 内存分配器优化性能
+    - CPU 性能模式: 设置 CPU 为性能模式
+    - 系统内核参数优化: 禁用 swap、NUMA 平衡，优化调度迁移成本
+    """
+    logger.info("[Kimi-K2.5] Set Ascend environment variables for %s", arch)
+    return [
+        "export HCCL_OP_EXPANSION_MODE=AIV",
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=1",
+        "export TASK_QUEUE_ENABLE=1",
+        "export HCCL_BUFFSIZE=1024",
+        "export VLLM_ASCEND_ENABLE_MLAPO=1",
+        "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
+        "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
+        "export VLLM_ENGINE_READY_TIMEOUT_S=3600",
+    ]
+
+
+def _build_glm5_ascend_env(arch: str) -> List[str]:
+    """构建 GLM-5 (GlmMoeDsaForCausalLM) Ascend 环境变量命令。
+
+    注入 GLM-5 在 Ascend 上所需的环境变量：
+    - HCCL_OP_EXPANSION_MODE=AIV: 启用 AIV 通信优化
+    - VLLM_ASCEND_BALANCE_SCHEDULING=1: 启用负载均衡调度
+    - HCCL_BUFFSIZE=250: HCCL 缓冲区大小
+    """
+    logger.info("[GLM-5] Set Ascend environment variables for %s", arch)
+    return [
+        "export HCCL_OP_EXPANSION_MODE=AIV",
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=10",
+        "export HCCL_BUFFSIZE=250",
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
+    ]
+
+
 def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     """构建模型架构特定的环境变量命令（支持 NVIDIA 和 Ascend）。
 
@@ -1020,13 +1068,14 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     if engine == "vllm_ascend":
         _arch_env_builders = {
             "Glm4MoeForCausalLM": _build_glm4moe_ascend_env,
-            "GlmMoeDsaForCausalLM": _build_glm_moe_dsa_ascend_env,
+            "GlmMoeDsaForCausalLM": _build_glm5_ascend_env,
             "Qwen3ForCausalLM": _build_qwen3_ascend_env,
             "Qwen3_5ForConditionalGeneration": _build_qwen35_ascend_env,
             "Qwen3_5MoeForConditionalGeneration": _build_qwen35moe_ascend_env,
             "MiniMaxM2ForCausalLM": _build_minimaxm2_ascend_env,
             "DeepseekV32ForCausalLM": _build_deepseekv32_ascend_env,
             "LlamaForCausalLM": _build_llama_ascend_env,
+            "KimiK25ForConditionalGeneration": _build_kimik25_ascend_env,
         }
     else:
         _arch_env_builders = {}

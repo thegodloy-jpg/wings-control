@@ -1929,9 +1929,11 @@ def _select_ascend_engine(device_name: str, model_info) -> str:
         return "vllm_ascend"
     elif model_architecture in ["DeepseekV32ForCausalLM", "Qwen3NextForCausalLM",
                                   "Glm4MoeForCausalLM",
+                                  "GlmMoeDsaForCausalLM",
                                   "Qwen3_5ForConditionalGeneration",
                                   "Qwen3_5MoeForConditionalGeneration",
-                                  "MiniMaxM2ForCausalLM"]:
+                                  "MiniMaxM2ForCausalLM",
+                                  "KimiK25ForConditionalGeneration"]:
         logger.info("Model architecture %s requires vllm_ascend, automatically selected", model_architecture)
         return "vllm_ascend"
     elif is_wings_supported:
