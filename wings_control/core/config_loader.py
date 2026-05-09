@@ -120,13 +120,30 @@ def _resolve_distributed_node_count(node_ips: str | None, nnodes: int | None) ->
     return 1
 
 
+_VLLM_ADVANCED_FEATURE_ENGINES = {"vllm", "vllm_ascend"}
+
+
+def _is_vllm_advanced_feature_engine(params: Dict[str, Any]) -> bool:
+    """Return whether selected engine supports vLLM advanced feature switches."""
+    return str(params.get("engine", "")).lower() in _VLLM_ADVANCED_FEATURE_ENGINES
+
+
 def _set_spec_decoding_config(params):
     """配置推测解码（Speculative Decoding）相关环境变量。
 
     根据 params 中 enable_speculative_decode 的值设置 SD_ENABLE 环境变量，
     供引擎启动脚本和后续流程判断是否启用推测解码。
     """
-    if params.get("enable_speculative_decode"):
+    enabled = bool(params.get("enable_speculative_decode"))
+    if enabled and not _is_vllm_advanced_feature_engine(params):
+        logger.warning(
+            "Spec Decoding is only wired for vllm/vllm_ascend; disabled for engine=%s",
+            params.get("engine"),
+        )
+        params["enable_speculative_decode"] = False
+        enabled = False
+
+    if enabled:
         os.environ['SD_ENABLE'] = 'true'
         logger.info("Spec Decoding for vllm is enabled")
     else:
@@ -139,7 +156,16 @@ def _set_sparse_config(params):
     根据 params 中 enable_sparse 的值设置 SPARSE_ENABLE 环境变量，
     供引擎启动脚本和后续流程判断是否启用稀疏 KV。
     """
-    if params.get("enable_sparse"):
+    enabled = bool(params.get("enable_sparse"))
+    if enabled and not _is_vllm_advanced_feature_engine(params):
+        logger.warning(
+            "Sparse KV is only wired for vllm/vllm_ascend; disabled for engine=%s",
+            params.get("engine"),
+        )
+        params["enable_sparse"] = False
+        enabled = False
+
+    if enabled:
         os.environ['SPARSE_ENABLE'] = 'true'
         logger.info("Sparse for vllm is enabled")
     else:

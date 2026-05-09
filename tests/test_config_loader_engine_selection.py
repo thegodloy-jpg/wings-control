@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "wings_control"))
 
 from core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
+    _apply_engine_runtime_flags,
     _detect_explicit_cli_keys,
     _detect_mtp_moe_features,
     load_and_merge_configs,
@@ -75,6 +76,34 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 keys = _detect_explicit_cli_keys()
         self.assertIn("enforce_eager", keys)
         self.assertIn("tensor_parallel_size", keys)
+
+    def test_vllm_advanced_flags_are_disabled_for_mindie(self):
+        params = {
+            "engine": "mindie",
+            "enable_speculative_decode": True,
+            "enable_sparse": True,
+            "enable_rag_acc": False,
+        }
+        with patch.dict(os.environ, {}, clear=True):
+            _apply_engine_runtime_flags(params)
+            self.assertEqual(os.environ["SD_ENABLE"], "false")
+            self.assertEqual(os.environ["SPARSE_ENABLE"], "false")
+        self.assertFalse(params["enable_speculative_decode"])
+        self.assertFalse(params["enable_sparse"])
+
+    def test_vllm_advanced_flags_remain_enabled_for_vllm_ascend(self):
+        params = {
+            "engine": "vllm_ascend",
+            "enable_speculative_decode": True,
+            "enable_sparse": True,
+            "enable_rag_acc": False,
+        }
+        with patch.dict(os.environ, {}, clear=True):
+            _apply_engine_runtime_flags(params)
+            self.assertEqual(os.environ["SD_ENABLE"], "true")
+            self.assertEqual(os.environ["SPARSE_ENABLE"], "true")
+        self.assertTrue(params["enable_speculative_decode"])
+        self.assertTrue(params["enable_sparse"])
 
     def test_lmcache_no_longer_forces_nvidia_to_vllm(self):
         model_info = _FakeModelInfo(supported=True)
