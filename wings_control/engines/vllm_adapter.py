@@ -138,37 +138,6 @@ def _need_enforce_eager(engine: str) -> bool:
     return os.getenv("ASCEND_ENFORCE_EAGER", "").lower() in ("true", "1", "yes")
 
 
-def _need_deepseek_ascend_mla_eager_fallback() -> bool:
-    """是否对 DeepSeek V3-family Ascend DP 启用 MLA 图编译兜底。
-
-    vLLM-Ascend MLA 在 profile_run 阶段进入 torch.compile/Dynamo 图后，
-    某些环境会在 mla_forward/output.fill_ 报 PTA acl api failed。该错误与
-    Soft FP8 误判无关，是图编译路径的运行时兼容性问题；默认兜底为 eager，
-    如确认本机 vLLM-Ascend 版本图编译稳定，可设置为 0/false 关闭。
-    """
-    return os.getenv("WINGS_DEEPSEEK_ASCEND_MLA_EAGER_FALLBACK", "0").lower() not in (
-        "0",
-        "false",
-        "no",
-    )
-
-
-def _allow_deepseek_ascend_dp_high_concurrency() -> bool:
-    """Whether to allow high max_num_seqs for DeepSeek V3-family Ascend DP.
-
-    The official vLLM-Ascend DeepSeek-V3.1 W8A8 online DP example uses
-    max_num_seqs=16 with MTP and FULL_DECODE_ONLY graph capture. Larger values
-    can make the profile_run/ACL graph startup path much more fragile. Keep the
-    official safe default unless the operator explicitly opts into high
-    concurrency for benchmarking.
-    """
-    return os.getenv("WINGS_ALLOW_DEEPSEEK_ASCEND_DP_HIGH_CONCURRENCY", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-
-
 def _safe_int(value: Any) -> Optional[int]:
     try:
         return int(value)
@@ -719,9 +688,8 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
                     "export NCCL_NET_GDR_LEVEL=SYS",
                 ])
             elif engine == "vllm_ascend":
-                is_deepseek_v3_family = _is_deepseek_v3_family_ascend_dp_deployment(params)
-                omp_threads = os.getenv('OMP_NUM_THREADS', '1' if is_deepseek_v3_family else '10')
-                hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '200' if is_deepseek_v3_family else '1024')
+                omp_threads = os.getenv('OMP_NUM_THREADS', '10')
+                hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '1024')
                 env_commands.extend([
                     f"export HCCL_IF_IP={shlex.quote(current_ip)}",
                     f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
@@ -733,19 +701,12 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
                     'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
                     "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
                 ])
-                if is_deepseek_v3_family:
-                    env_commands.extend([
-                        "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
-                        "export HCCL_INTRA_PCIE_ENABLE=1",
-                        "export HCCL_INTRA_ROCE_ENABLE=0",
-                    ])
-                else:
-                    env_commands.extend([
-                        "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-                        "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-                        "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-                        "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
-                    ])
+                env_commands.extend([
+                    "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
+                    "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
+                    "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
+                    "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
+                ])
     return env_commands
 
 
@@ -766,13 +727,6 @@ def _build_deepseek_fp8_env_commands(params: Dict[str, Any], engine: str) -> Lis
     """
     env_commands = []
     model_path = params.get("model_path")
-
-    if _is_deepseek_v3_family_ascend_dp_deployment(params):
-        logger.info(
-            "[DeepSeek V3-family Ascend DP] Skip generic DeepSeek FP8 env vars; "
-            "online dp_deployment follows official DeepSeek-V3/3.1 command envs."
-        )
-        return env_commands
 
     if engine == "vllm_ascend" and model_path and is_deepseek_series_fp8(model_path):
         env_commands.extend([
@@ -1018,13 +972,6 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     )
     arch = model_info.model_architecture
 
-    if _is_deepseek_v3_family_ascend_dp_deployment(params):
-        logger.info(
-            "[DeepSeek V3-family Ascend DP] Skip architecture-specific env vars; "
-            "online dp_deployment reuses official DeepSeek-V3/3.1 envs."
-        )
-        return []
-
     if engine == "vllm_ascend":
         _arch_env_builders = {
             "Glm4MoeForCausalLM": _build_glm4moe_ascend_env,
@@ -1129,59 +1076,6 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         if "async_scheduling" not in explicit_keys:
             engine_config["async_scheduling"] = True
 
-        if _is_deepseek_v3_family_ascend_dp_deployment(params):
-            # DeepSeek V3-family W8A8 dynamic quant on Ascend can fail in
-            # npu_quant_matmul when dtype=auto resolves to float16:
-            # output_dtype=float16 requires per-token scale to be float32, but
-            # vllm-ascend may produce float16 fake tensors during Dynamo checks.
-            # Default to bfloat16 for this official online DP path while keeping
-            # explicit --dtype / DTYPE overrides intact.
-            if "dtype" not in explicit_keys or str(engine_config.get("dtype", "")).lower() == "auto":
-                engine_config["dtype"] = "bfloat16"
-            if "seed" not in explicit_keys:
-                engine_config["seed"] = 1024
-            current_max_num_seqs = _safe_int(engine_config.get("max_num_seqs"))
-            allow_high_concurrency = _allow_deepseek_ascend_dp_high_concurrency()
-            if (
-                "max_num_seqs" not in explicit_keys
-                or (
-                    current_max_num_seqs is not None
-                    and current_max_num_seqs > 16
-                    and not allow_high_concurrency
-                )
-            ):
-                if "max_num_seqs" in explicit_keys and current_max_num_seqs is not None and current_max_num_seqs > 16:
-                    logger.warning(
-                        "[DeepSeek Ascend DP] max_num_seqs=%s is higher than the "
-                        "official vLLM-Ascend DeepSeek-V3.1 W8A8 online DP "
-                        "example value 16. For safer profile_run/ACL graph "
-                        "startup, forcing --max-num-seqs 16. Set "
-                        "WINGS_ALLOW_DEEPSEEK_ASCEND_DP_HIGH_CONCURRENCY=1 "
-                        "to keep the explicit value.",
-                        current_max_num_seqs,
-                    )
-                engine_config["max_num_seqs"] = 16
-            if "gpu_memory_utilization" not in explicit_keys:
-                engine_config["gpu_memory_utilization"] = 0.92
-            if "max_model_len" not in explicit_keys and engine_config.get("max_model_len") in (None, 4096):
-                engine_config["max_model_len"] = 16384
-            if "compilation_config" not in explicit_keys and not engine_config.get("compilation_config"):
-                engine_config["compilation_config"] = {
-                    "cudagraph_capture_sizes": [4, 16, 32, 48, 64],
-                    "cudagraph_mode": "FULL_DECODE_ONLY",
-                }
-            # This is not the old Soft-FP8 misclassification path. If the MLA
-            # profile run fails inside torch.compile/Dynamo, fall back to eager
-            # only for this DeepSeek V3-family Ascend DP scenario. Explicit
-            # --enforce-eager/--no-enforce-eager style overrides still win.
-            if "enforce_eager" not in explicit_keys:
-                if _need_deepseek_ascend_mla_eager_fallback():
-                    engine_config["enforce_eager"] = True
-                    if "compilation_config" not in explicit_keys:
-                        engine_config.pop("compilation_config", None)
-                else:
-                    engine_config.pop("enforce_eager", None)
-
     # "task" 在旧版 vLLM (v0.7) 中为 --task 参数，新版改为 --runner
     removed_task = engine_config.pop("task", None)
     if removed_task and removed_task != "generate":
@@ -1226,28 +1120,6 @@ def _is_deepseek_v31_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
     for item in candidates:
         normalized = item.lower().replace("_", "-")
         if "deepseek" in normalized and ("v3.1" in normalized or "v31" in normalized):
-            return True
-    return False
-
-
-def _is_deepseek_v3_family_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
-    """判断当前启动是否为 DeepSeek V3-family Ascend dp_deployment 路径。"""
-    if not _is_deepseek_ascend_dp_deployment(params):
-        return False
-    candidates: List[str] = []
-    for key in ("model_name", "model_path"):
-        value = params.get(key)
-        if value:
-            candidates.append(str(value))
-    served_name = params.get("engine_config", {}).get("served_model_name")
-    if isinstance(served_name, list):
-        candidates.extend(str(item) for item in served_name)
-    elif served_name:
-        candidates.append(str(served_name))
-
-    for item in candidates:
-        normalized = item.lower().replace("_", "-")
-        if "deepseek" in normalized and "v3" in normalized:
             return True
     return False
 
@@ -2200,9 +2072,8 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
     if is_ascend:
         hccl_connect_timeout = os.getenv('HCCL_CONNECT_TIMEOUT', '1800')
         hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
-        is_deepseek_v3_family = _is_deepseek_v3_family_ascend_dp_deployment(params)
-        omp_threads = os.getenv('OMP_NUM_THREADS', '1' if is_deepseek_v3_family else '100')
-        hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '200' if is_deepseek_v3_family else '1024')
+        omp_threads = os.getenv('OMP_NUM_THREADS', '100')
+        hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '1024')
         env_commands = [
             # 与 Ray 路径保持一致：先建立 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），
             # HCCL_IF_IP 直接复用，避免多网卡场景下与 vLLM 通信走错网卡。
@@ -2220,19 +2091,12 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
             'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
             "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         ]
-        if is_deepseek_v3_family:
-            env_commands.extend([
-                "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
-                "export HCCL_INTRA_PCIE_ENABLE=1",
-                "export HCCL_INTRA_ROCE_ENABLE=0",
-            ])
-        else:
-            env_commands.extend([
-                "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-                "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-                "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-                "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
-            ])
+        env_commands.extend([
+            "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
+            "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
+            "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
+            "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
+        ])
         if _is_deepseek_ascend_dp_deployment(params):
             engine_ready_timeout = os.getenv("VLLM_ENGINE_READY_TIMEOUT_S", "7200")
             env_commands.append(f"export VLLM_ENGINE_READY_TIMEOUT_S={engine_ready_timeout}")
