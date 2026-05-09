@@ -145,6 +145,42 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
+_DEEPSEEK_ASCEND_DP_ARCHES = {"DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"}
+
+
+def _default_deepseek_ascend_dp_tensor_parallel_size(
+    model_architecture: str,
+    device_count: Optional[int],
+) -> Optional[int]:
+    """Return the recommended default TP size for DeepSeek Ascend DP."""
+    if not device_count or device_count <= 0:
+        return None
+    if model_architecture == "DeepseekV32ForCausalLM" and device_count in (8, 16):
+        return device_count
+    if model_architecture == "DeepseekV3ForCausalLM":
+        return 4 if device_count >= 4 else device_count
+    return None
+
+
+def _get_deepseek_ascend_dp_model_architecture(params: Dict[str, Any]) -> Optional[str]:
+    """Return DeepSeek Ascend dp_deployment architecture, otherwise None."""
+    if params.get("engine") != "vllm_ascend":
+        return None
+    if params.get("distributed_executor_backend") != "dp_deployment":
+        return None
+    model_path = params.get("model_path")
+    if not model_path:
+        return None
+    model_info = ModelIdentifier(
+        params.get("model_name"),
+        model_path,
+        params.get("model_type"),
+    )
+    if model_info.model_architecture in _DEEPSEEK_ASCEND_DP_ARCHES:
+        return model_info.model_architecture
+    return None
+
+
 def _need_triton_patch_and_eager(engine: str) -> bool:
     """兼容旧接口：判断是否需要 Triton 补丁或 enforce-eager。
 
@@ -1048,6 +1084,12 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     explicit_keys = set(params.get("_explicit_cli_keys") or [])
 
     if _is_deepseek_ascend_dp_deployment(params):
+        model_architecture = _get_deepseek_ascend_dp_model_architecture(params)
+        device_count = _safe_int(params.get("device_count"))
+        default_tp = _default_deepseek_ascend_dp_tensor_parallel_size(model_architecture or "", device_count)
+        if default_tp and "tensor_parallel_size" not in explicit_keys:
+            engine_config["tensor_parallel_size"] = default_tp
+
         prefix_cache_explicit = bool(
             explicit_keys.intersection({"enable_prefix_caching", "no_enable_prefix_caching"})
         )
@@ -1085,43 +1127,10 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     return engine_config
 
 
+
 def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
-    """判断当前启动是否为 DeepSeek Ascend dp_deployment 路径。"""
-    if params.get("engine") != "vllm_ascend":
-        return False
-    if params.get("distributed_executor_backend") != "dp_deployment":
-        return False
-    model_path = params.get("model_path")
-    if not model_path:
-        return False
-    model_info = ModelIdentifier(
-        params.get("model_name"),
-        model_path,
-        params.get("model_type"),
-    )
-    return model_info.model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
-
-
-def _is_deepseek_v31_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
-    """判断当前启动是否为 DeepSeek-V3.1 Ascend dp_deployment 路径。"""
-    if not _is_deepseek_ascend_dp_deployment(params):
-        return False
-    candidates: List[str] = []
-    for key in ("model_name", "model_path"):
-        value = params.get(key)
-        if value:
-            candidates.append(str(value))
-    served_name = params.get("engine_config", {}).get("served_model_name")
-    if isinstance(served_name, list):
-        candidates.extend(str(item) for item in served_name)
-    elif served_name:
-        candidates.append(str(served_name))
-
-    for item in candidates:
-        normalized = item.lower().replace("_", "-")
-        if "deepseek" in normalized and ("v3.1" in normalized or "v31" in normalized):
-            return True
-    return False
+    """Determine whether current launch uses DeepSeek Ascend dp_deployment."""
+    return _get_deepseek_ascend_dp_model_architecture(params) is not None
 
 
 def _strip_cli_flag(cmd: str, flag: str) -> str:
@@ -2149,6 +2158,43 @@ def _strip_dp_cli_flags(cmd: str) -> str:
     return cmd
 
 
+def _resolve_dp_deployment_topology(
+    params: Dict[str, Any],
+    ctx: DistScriptCtx,
+    model_info: ModelIdentifier,
+) -> tuple[str, str, str]:
+    """Resolve dp_deployment topology; DeepSeek Ascend DP derives DP from TP."""
+    if not (
+        model_info.model_architecture in _DEEPSEEK_ASCEND_DP_ARCHES
+        and ctx.engine == "vllm_ascend"
+    ):
+        return str(ctx.nnodes), "1", str(ctx.node_rank)
+
+    device_count = _safe_int(params.get("device_count"))
+    engine_config = params.get("engine_config") or {}
+    tp_size = _safe_int(engine_config.get("tensor_parallel_size"))
+    if not tp_size:
+        tp_size = _default_deepseek_ascend_dp_tensor_parallel_size(
+            model_info.model_architecture,
+            device_count,
+        )
+
+    if not device_count or device_count <= 0:
+        raise ValueError("DeepSeek Ascend DP requires a positive device_count to compute DP topology")
+    if not tp_size or tp_size <= 0:
+        raise ValueError("DeepSeek Ascend DP requires a positive tensor_parallel_size")
+    if device_count % tp_size != 0:
+        raise ValueError(
+            "DeepSeek Ascend DP requires device_count to be divisible by tensor_parallel_size: "
+            f"device_count={device_count}, tensor_parallel_size={tp_size}"
+        )
+
+    dp_size_local = device_count // tp_size
+    dp_size = dp_size_local * int(ctx.nnodes)
+    dp_start_rank = int(ctx.node_rank) * dp_size_local
+    return str(dp_size), str(dp_size_local), str(dp_start_rank)
+
+
 def _build_dp_deployment_commands(
     params: Dict[str, Any],
     ctx: DistScriptCtx,
@@ -2160,13 +2206,7 @@ def _build_dp_deployment_commands(
 
     model_info = ModelIdentifier(
         params.get("model_name"), params.get("model_path"), params.get("model_type"))
-    if (model_info.model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
-            and ctx.engine == "vllm_ascend"):
-        dp_size, dp_size_local = "4", "2"
-        dp_start_rank = "2" if ctx.node_rank != 0 else "0"
-    else:
-        dp_size, dp_size_local = str(ctx.nnodes), "1"
-        dp_start_rank = str(ctx.node_rank)
+    dp_size, dp_size_local, dp_start_rank = _resolve_dp_deployment_topology(params, ctx, model_info)
 
     parts.extend(_build_dp_env_commands(ctx.is_ascend, params))
     dp_cmd = _strip_dp_cli_flags(_transform_dp_cmd(ctx.cmd))
