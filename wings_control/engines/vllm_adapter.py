@@ -691,14 +691,14 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
     Returns:
         List[str]: 环境变量设置命令列表
     """
-    if not params.get("distributed", False):
-        return []
-    backend = params.get("distributed_executor_backend")
-    if backend == "ray":
-        return _build_ray_network_env_commands(current_ip, network_interface, engine)
-    if backend == "dp_deployment":
-        return _build_dp_network_env_commands(params, current_ip, network_interface, engine)
-    return []
+    env_commands: List[str] = []
+    if params.get("distributed", False):
+        backend = params.get("distributed_executor_backend")
+        if backend == "ray":
+            env_commands = _build_ray_network_env_commands(current_ip, network_interface, engine)
+        elif backend == "dp_deployment":
+            env_commands = _build_dp_network_env_commands(params, current_ip, network_interface, engine)
+    return env_commands
 
 
 def _build_ray_network_env_commands(current_ip: str, network_interface: str, engine: str) -> List[str]:
