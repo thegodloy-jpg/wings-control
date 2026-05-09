@@ -1318,25 +1318,43 @@ def _parse_dict_like_config(value: Any) -> Optional[Dict[str, Any]]:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _merge_glm47_dict_default(existing: Any, default_val: Dict[str, Any]) -> tuple[Optional[Any], str]:
-    """Merge a GLM-4.7 W8A8 dict default and return (new_value, action)."""
+@dataclass
+class Glm47DefaultMergeResult:
+    """Result of merging a GLM-4.7 W8A8 dict default."""
+
+    value: Optional[Any]
+    action: str
+
+
+@dataclass
+class Glm47InjectionStats:
+    """Accumulated GLM-4.7 W8A8 injection statistics."""
+
+    injected: List[str]
+    deep_merged: List[str]
+    skipped: List[str]
+
+
+def _merge_glm47_dict_default(existing: Any, default_val: Dict[str, Any]) -> Glm47DefaultMergeResult:
+    """Merge a GLM-4.7 W8A8 dict default."""
     if _is_empty_engine_config_value(existing):
-        return dict(default_val), "injected"
+        return Glm47DefaultMergeResult(dict(default_val), "injected")
     parsed_existing = _parse_dict_like_config(existing)
     if parsed_existing is not None:
         merged = _deep_merge_user_priority(parsed_existing, default_val)
-        return (merged, "deep_merged") if merged != existing else (None, "unchanged")
-    return None, "skipped_non_dict"
+        action = "deep_merged" if merged != existing else "unchanged"
+        return Glm47DefaultMergeResult(merged if merged != existing else None, action)
+    return Glm47DefaultMergeResult(None, "skipped_non_dict")
 
 
 def _apply_glm47_w8a8_default(engine_config: Dict[str, Any], key: str, default_val: Any) -> str:
     """Apply one GLM-4.7 W8A8 default while preserving explicit user values."""
     existing = engine_config.get(key)
     if key in _GLM47_W8A8_DEEP_MERGE_KEYS and isinstance(default_val, dict):
-        new_value, action = _merge_glm47_dict_default(existing, default_val)
-        if new_value is not None:
-            engine_config[key] = new_value
-        return action
+        result = _merge_glm47_dict_default(existing, default_val)
+        if result.value is not None:
+            engine_config[key] = result.value
+        return result.action
     if not _is_empty_engine_config_value(existing):
         return "skipped"
     engine_config[key] = default_val
@@ -1372,40 +1390,36 @@ def _record_glm47_default_action(
     engine_config: Dict[str, Any],
     key: str,
     action: str,
-    injected: List[str],
-    deep_merged: List[str],
-    skipped: List[str],
+    stats: Glm47InjectionStats,
 ) -> None:
     """Record and log the result of applying one GLM-4.7 W8A8 default."""
     if action == "injected":
-        injected.append(key)
+        stats.injected.append(key)
     elif action == "deep_merged":
-        deep_merged.append(key)
+        stats.deep_merged.append(key)
     elif action == "skipped_non_dict":
         logger.warning(
             "[GLM-4.7-W8A8] %s already present as non-dict (%s); "
             "keeping user value and skipping default injection for this key.",
             key, type(engine_config.get(key)).__name__,
         )
-        skipped.append(key)
+        stats.skipped.append(key)
     elif action == "skipped":
-        skipped.append(key)
+        stats.skipped.append(key)
 
 
 def _log_glm47_w8a8_summary(
     info: ModelIdentifier,
     engine_config: Dict[str, Any],
-    injected: List[str],
-    deep_merged: List[str],
-    skipped: List[str],
+    stats: Glm47InjectionStats,
 ) -> None:
     """Log GLM-4.7 W8A8 engine_config injection summary."""
-    if not injected and not deep_merged:
+    if not stats.injected and not stats.deep_merged:
         return
     logger.info(
         "[GLM-4.7-W8A8] Engine config tuning for arch=%s quantize=%s | "
         "injected=%s | deep_merged=%s | user_kept=%s",
-        info.model_architecture, info.model_quantize, injected, deep_merged, skipped,
+        info.model_architecture, info.model_quantize, stats.injected, stats.deep_merged, stats.skipped,
     )
     try:
         summary = {k: engine_config.get(k) for k in _GLM47_W8A8_ENGINE_DEFAULTS.keys()}
@@ -1436,20 +1450,18 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
     suppress_speculative = bool(params.get("enable_speculative_decode"))
 
     engine_config = params.setdefault("engine_config", {})
-    injected: List[str] = []
-    deep_merged: List[str] = []
-    skipped: List[str] = []
+    stats = Glm47InjectionStats(injected=[], deep_merged=[], skipped=[])
     for key, default_val in _GLM47_W8A8_ENGINE_DEFAULTS.items():
         if key == "speculative_config" and suppress_speculative:
-            skipped.append(key + "(handled by _build_speculative_cmd)")
+            stats.skipped.append(key + "(handled by _build_speculative_cmd)")
             # 同时，从 engine_config 中移除任何已存在的 speculative_config，
             # 避免 _build_vllm_cmd_parts 也输出一份。MTP 路径在尾部追加。
             engine_config.pop("speculative_config", None)
             continue
         action = _apply_glm47_w8a8_default(engine_config, key, default_val)
-        _record_glm47_default_action(engine_config, key, action, injected, deep_merged, skipped)
+        _record_glm47_default_action(engine_config, key, action, stats)
 
-    _log_glm47_w8a8_summary(info, engine_config, injected, deep_merged, skipped)
+    _log_glm47_w8a8_summary(info, engine_config, stats)
 
 
 def _build_vllm_cmd_parts(params: Dict[str, Any]) -> str:
