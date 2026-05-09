@@ -691,59 +691,79 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
     Returns:
         List[str]: 环境变量设置命令列表
     """
-    env_commands = []
-    if params.get("distributed", False):
-        backend = params.get("distributed_executor_backend")
-        if backend == "ray":
-            if engine == "vllm":
-                env_commands.extend([
-                    f"export VLLM_HOST_IP={shlex.quote(current_ip)}",
-                    f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    f"export NCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                ])
-            elif engine == "vllm_ascend":
-                env_commands.extend([
-                    f"export HCCL_IF_IP={shlex.quote(current_ip)}",
-                    f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
-                    "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
-                    # Ascend NPU 首次推理 JIT 编译算子耗时可能远超 Ray 编译DAG默认 300s 超时
-                    "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
-                ])
-        elif backend == "dp_deployment":
-            if engine == "vllm":
-                env_commands.extend([
-                    f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    f"export NCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    f"export VLLM_NIXL_SIDE_CHANNEL_PORT={params.get('nixl_port', '')}",
-                    "export NCCL_IB_DISABLE=0",
-                    "export NCCL_CUMEM_ENABLE=0",
-                    "export NCCL_NET_GDR_LEVEL=SYS",
-                ])
-            elif engine == "vllm_ascend":
-                omp_threads = os.getenv('OMP_NUM_THREADS', '10')
-                hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '1024')
-                env_commands.extend([
-                    f"export HCCL_IF_IP={shlex.quote(current_ip)}",
-                    f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    f"export HCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                    "export OMP_PROC_BIND=false",
-                    f"export OMP_NUM_THREADS={omp_threads}",
-                    f"export HCCL_BUFFSIZE={hccl_buffsize}",
-                    'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
-                    "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
-                ])
-                env_commands.extend([
-                    "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-                    "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-                    "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-                    "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
-                ])
-    return env_commands
+    if not params.get("distributed", False):
+        return []
+    backend = params.get("distributed_executor_backend")
+    if backend == "ray":
+        return _build_ray_network_env_commands(current_ip, network_interface, engine)
+    if backend == "dp_deployment":
+        return _build_dp_network_env_commands(params, current_ip, network_interface, engine)
+    return []
+
+
+def _build_ray_network_env_commands(current_ip: str, network_interface: str, engine: str) -> List[str]:
+    """Build Ray distributed network environment commands."""
+    if engine == "vllm":
+        return [
+            f"export VLLM_HOST_IP={shlex.quote(current_ip)}",
+            f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
+            f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
+            f"export NCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
+        ]
+    if engine == "vllm_ascend":
+        return [
+            f"export HCCL_IF_IP={shlex.quote(current_ip)}",
+            f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
+            f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
+            "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
+            "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
+            # Ascend NPU 首次推理 JIT 编译算子耗时可能远超 Ray 编译DAG默认 300s 超时
+            "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
+        ]
+    return []
+
+
+def _build_dp_network_env_commands(
+    params: Dict[str, Any],
+    current_ip: str,
+    network_interface: str,
+    engine: str,
+) -> List[str]:
+    """Build dp_deployment network environment commands."""
+    if engine == "vllm":
+        return [
+            f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
+            f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
+            f"export NCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
+            f"export VLLM_NIXL_SIDE_CHANNEL_PORT={params.get('nixl_port', '')}",
+            "export NCCL_IB_DISABLE=0",
+            "export NCCL_CUMEM_ENABLE=0",
+            "export NCCL_NET_GDR_LEVEL=SYS",
+        ]
+    if engine == "vllm_ascend":
+        return _build_ascend_dp_network_env_commands(current_ip, network_interface)
+    return []
+
+
+def _build_ascend_dp_network_env_commands(current_ip: str, network_interface: str) -> List[str]:
+    """Build vLLM-Ascend dp_deployment network environment commands."""
+    omp_threads = os.getenv('OMP_NUM_THREADS', '10')
+    hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '1024')
+    return [
+        f"export HCCL_IF_IP={shlex.quote(current_ip)}",
+        f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
+        f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
+        f"export HCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
+        "export OMP_PROC_BIND=false",
+        f"export OMP_NUM_THREADS={omp_threads}",
+        f"export HCCL_BUFFSIZE={hccl_buffsize}",
+        'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
+        "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
+        "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
+        "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
+    ]
 
 
 def _build_deepseek_fp8_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
@@ -1181,7 +1201,7 @@ def _format_cli_arg(arg_name: str, value) -> List[str]:
             try:
                 parsed = json.loads(stripped)
                 normalized = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
-            except (json.JSONDecodeError, ValueError):
+            except ValueError:
                 try:
                     parsed = ast.literal_eval(stripped)
                     normalized = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
@@ -1273,22 +1293,65 @@ def _deep_merge_user_priority(user: Any, default: Any) -> Any:
     return merged
 
 
-def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
-    """检测 GLM-4.7-W8A8 模型，**就地**向 engine_config 追加调优默认字段。
+def _is_empty_engine_config_value(value: Any) -> bool:
+    """Return True when an engine_config value should be treated as unset."""
+    return (
+        value is None
+        or (isinstance(value, str) and not value.strip())
+        or (isinstance(value, (dict, list)) and len(value) == 0)
+    )
 
-    设计要点：
-      * 仅当 (架构 == Glm4MoeForCausalLM) 且 (quantize 命中 W8A8) 时触发
-      * 标量字段：用户优先；dict 字段：深合并，用户的 sub-key 优先
-      * BF16 / 同架构非量化变体（如 GLM-4.5）不会被影响
-      * 仅对 vllm / vllm_ascend 引擎生效
-    """
+
+def _parse_dict_like_config(value: Any) -> Optional[Dict[str, Any]]:
+    """Parse dict-like string config values without changing invalid user input."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        try:
+            parsed = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _merge_glm47_dict_default(existing: Any, default_val: Dict[str, Any]) -> tuple[Optional[Any], str]:
+    """Merge a GLM-4.7 W8A8 dict default and return (new_value, action)."""
+    if _is_empty_engine_config_value(existing):
+        return dict(default_val), "injected"
+    parsed_existing = _parse_dict_like_config(existing)
+    if parsed_existing is not None:
+        merged = _deep_merge_user_priority(parsed_existing, default_val)
+        return (merged, "deep_merged") if merged != existing else (None, "unchanged")
+    return None, "skipped_non_dict"
+
+
+def _apply_glm47_w8a8_default(engine_config: Dict[str, Any], key: str, default_val: Any) -> str:
+    """Apply one GLM-4.7 W8A8 default while preserving explicit user values."""
+    existing = engine_config.get(key)
+    if key in _GLM47_W8A8_DEEP_MERGE_KEYS and isinstance(default_val, dict):
+        new_value, action = _merge_glm47_dict_default(existing, default_val)
+        if new_value is not None:
+            engine_config[key] = new_value
+        return action
+    if not _is_empty_engine_config_value(existing):
+        return "skipped"
+    engine_config[key] = default_val
+    return "injected"
+
+
+def _get_glm47_w8a8_model_info(params: Dict[str, Any]) -> Optional[ModelIdentifier]:
+    """Return model info when params describe a GLM-4.7 W8A8 vLLM model."""
     engine = params.get("engine", "vllm")
     if engine not in ("vllm", "vllm_ascend"):
-        return
+        return None
 
     model_path = params.get("model_path")
     if not model_path:
-        return
+        return None
 
     try:
         info = ModelIdentifier(
@@ -1298,11 +1361,73 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
         )
     except Exception as e:  # noqa: BLE001
         logger.debug("[GLM-4.7-W8A8] Skip injection, ModelIdentifier failed: %s", e)
-        return
+        return None
 
     if info.model_architecture != "Glm4MoeForCausalLM":
+        return None
+    return info if _is_w8a8_quantize(info.model_quantize) else None
+
+
+def _record_glm47_default_action(
+    engine_config: Dict[str, Any],
+    key: str,
+    action: str,
+    injected: List[str],
+    deep_merged: List[str],
+    skipped: List[str],
+) -> None:
+    """Record and log the result of applying one GLM-4.7 W8A8 default."""
+    if action == "injected":
+        injected.append(key)
+    elif action == "deep_merged":
+        deep_merged.append(key)
+    elif action == "skipped_non_dict":
+        logger.warning(
+            "[GLM-4.7-W8A8] %s already present as non-dict (%s); "
+            "keeping user value and skipping default injection for this key.",
+            key, type(engine_config.get(key)).__name__,
+        )
+        skipped.append(key)
+    elif action == "skipped":
+        skipped.append(key)
+
+
+def _log_glm47_w8a8_summary(
+    info: ModelIdentifier,
+    engine_config: Dict[str, Any],
+    injected: List[str],
+    deep_merged: List[str],
+    skipped: List[str],
+) -> None:
+    """Log GLM-4.7 W8A8 engine_config injection summary."""
+    if not injected and not deep_merged:
         return
-    if not _is_w8a8_quantize(info.model_quantize):
+    logger.info(
+        "[GLM-4.7-W8A8] Engine config tuning for arch=%s quantize=%s | "
+        "injected=%s | deep_merged=%s | user_kept=%s",
+        info.model_architecture, info.model_quantize, injected, deep_merged, skipped,
+    )
+    try:
+        summary = {k: engine_config.get(k) for k in _GLM47_W8A8_ENGINE_DEFAULTS.keys()}
+        logger.info(
+            "[GLM-4.7-W8A8] Final engine_config for tuned keys:\n%s",
+            json.dumps(summary, ensure_ascii=False, indent=2, default=str),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[GLM-4.7-W8A8] Skip summary dump: %s", e)
+
+
+def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
+    """检测 GLM-4.7-W8A8 模型，**就地**向 engine_config 追加调优默认字段。
+
+    设计要点：
+      * 仅当 (架构 == Glm4MoeForCausalLM) 且 (quantize 命中 W8A8) 时触发
+      * 标量字段：用户优先；dict 字段：深合并，用户的 sub-key 优先
+      * BF16 / 同架构非量化变体（如 GLM-4.5）不会被影响
+      * 仅对 vllm / vllm_ascend 引擎生效
+    """
+    info = _get_glm47_w8a8_model_info(params)
+    if info is None:
         return
 
     # 若上层已通过 enable_speculative_decode 走 _build_speculative_cmd 路径，
@@ -1321,65 +1446,10 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
             # 避免 _build_vllm_cmd_parts 也输出一份。MTP 路径在尾部追加。
             engine_config.pop("speculative_config", None)
             continue
-        existing = engine_config.get(key)
-        # 把"空"等价于"未设置"：None / 空字符串 / 空 dict / 空 list 都视为未提供
-        is_empty = (
-            existing is None
-            or (isinstance(existing, str) and not existing.strip())
-            or (isinstance(existing, (dict, list)) and len(existing) == 0)
-        )
-        if key in _GLM47_W8A8_DEEP_MERGE_KEYS and isinstance(default_val, dict):
-            if is_empty:
-                engine_config[key] = dict(default_val) if isinstance(default_val, dict) else default_val
-                injected.append(key)
-            elif isinstance(existing, dict):
-                merged = _deep_merge_user_priority(existing, default_val)
-                if merged != existing:
-                    engine_config[key] = merged
-                    deep_merged.append(key)
-            else:
-                # 用户给了非 dict 非空值（如 JSON 字符串）：先尝试解析后深合并；
-                # 若无法解析，保留用户原值，避免模型特化注入覆盖上层显式传参。
-                parsed_existing = None
-                if isinstance(existing, str):
-                    try:
-                        parsed_existing = json.loads(existing)
-                    except (json.JSONDecodeError, ValueError):
-                        try:
-                            parsed_existing = ast.literal_eval(existing)
-                        except (ValueError, SyntaxError):
-                            parsed_existing = None
-                if isinstance(parsed_existing, dict):
-                    engine_config[key] = _deep_merge_user_priority(parsed_existing, default_val)
-                    deep_merged.append(key)
-                else:
-                    logger.warning(
-                        "[GLM-4.7-W8A8] %s already present as non-dict (%s); "
-                        "keeping user value and skipping default injection for this key.",
-                        key, type(existing).__name__,
-                    )
-                    skipped.append(key)
-        else:
-            if not is_empty:
-                skipped.append(key)
-                continue  # 标量字段：用户优先
-            engine_config[key] = default_val
-            injected.append(key)
+        action = _apply_glm47_w8a8_default(engine_config, key, default_val)
+        _record_glm47_default_action(engine_config, key, action, injected, deep_merged, skipped)
 
-    if injected or deep_merged:
-        logger.info(
-            "[GLM-4.7-W8A8] Engine config tuning for arch=%s quantize=%s | injected=%s | deep_merged=%s | user_kept=%s",
-            info.model_architecture, info.model_quantize, injected, deep_merged, skipped,
-        )
-        # 摘要：打印 W8A8 影响的最终字段值，便于排查
-        try:
-            summary = {k: engine_config.get(k) for k in _GLM47_W8A8_ENGINE_DEFAULTS.keys()}
-            logger.info(
-                "[GLM-4.7-W8A8] Final engine_config for tuned keys:\n%s",
-                json.dumps(summary, ensure_ascii=False, indent=2, default=str),
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.debug("[GLM-4.7-W8A8] Skip summary dump: %s", e)
+    _log_glm47_w8a8_summary(info, engine_config, injected, deep_merged, skipped)
 
 
 def _build_vllm_cmd_parts(params: Dict[str, Any]) -> str:
@@ -1942,7 +2012,11 @@ def _build_ray_head_exec_command(
 ) -> str:
     """Build the final vLLM exec command for the Ray head node."""
     eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
-    speculative_extra = _build_speculative_cmd(params, ctx.engine) if _should_append_auto_speculative_config(params) else ""
+    speculative_extra = (
+        _build_speculative_cmd(params, ctx.engine)
+        if _should_append_auto_speculative_config(params)
+        else ""
+    )
     cmd_for_exec, ray_pp_extra = _build_ray_parallel_overrides(params, ctx)
     cmd_for_exec, backend_extra = _build_ray_backend_override(params, cmd_for_exec)
     return (
@@ -2198,7 +2272,11 @@ def _build_dp_deployment_commands(
 
     parts.extend(_build_dp_env_commands(ctx.is_ascend, params))
     dp_cmd = _strip_dp_cli_flags(_transform_dp_cmd(ctx.cmd))
-    speculative_extra = _build_speculative_cmd(params, ctx.engine) if _should_append_auto_speculative_config(params) else ""
+    speculative_extra = (
+        _build_speculative_cmd(params, ctx.engine)
+        if _should_append_auto_speculative_config(params)
+        else ""
+    )
     dp_cmd = f"{dp_cmd}{speculative_extra}{sparse_args}"
 
     if ctx.node_rank == 0:
@@ -2301,7 +2379,11 @@ def _build_vllm_single_script(
 ) -> str:
     """组装单机模式的 bash 脚本体并返回。"""
     env_prefix = "\n".join(common_env_cmds) + "\n" if common_env_cmds else ""
-    speculative_extra = _build_speculative_cmd(params, engine) if _should_append_auto_speculative_config(params) else ""
+    speculative_extra = (
+        _build_speculative_cmd(params, engine)
+        if _should_append_auto_speculative_config(params)
+        else ""
+    )
     # A+X 环境下需要 --enforce-eager 绕过 triton 版本冲突（与 Ray 路径一致）
     eager_flag = " --enforce-eager" if _need_enforce_eager(engine) else ""
 

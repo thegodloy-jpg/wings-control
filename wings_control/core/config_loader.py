@@ -526,6 +526,74 @@ def _set_operator_acceleration(params, ctx):
         return
 
 
+def _should_skip_soft_fp8_for_official_deepseek_v3(ctx, model_name: str, model_path: str) -> bool:
+    """Return True for official DeepSeek V3-family Ascend quantized models."""
+    return (
+        ctx.get('device') == "ascend"
+        and _is_deepseek_v3_family_model(model_name, model_path)
+        and is_deepseek_series_modelslim_quant(model_path)
+    )
+
+
+def _is_soft_fp8_model(model_name: str, model_path: str) -> bool:
+    """Detect whether the model should use Soft FP8 settings."""
+    return is_qwen3_series_fp8(model_path, model_name) or is_deepseek_series_fp8(model_path)
+
+
+def _log_soft_fp8_switch_state(model_name: str) -> None:
+    """Log Soft FP8/FP4 switch state for an auto-detected FP8 model."""
+    if get_soft_fp4_env():
+        logger.warning("Model %s is detected as FP8 model, but Soft FP4 switch is enabled. "
+                       "Automatically correcting to use Soft FP8 configuration.", model_name)
+    if not get_soft_fp8_env():
+        logger.info("Model %s is detected as FP8 model, automatically enabling Soft FP8 configuration", model_name)
+
+
+def _apply_qwen3_soft_fp8(params, model_architecture: str, explicit_keys: set) -> None:
+    """Apply Qwen3 Soft FP8 parameters while preserving explicit user values."""
+    if 'quantization' not in explicit_keys:
+        params['quantization'] = 'ascend'
+    if model_architecture == "Qwen3MoeForCausalLM" and 'enable_expert_parallel' not in explicit_keys:
+        params['enable_expert_parallel'] = False
+        logger.info("Soft FP8 configured for Qwen3 MOE Series models")
+    else:
+        logger.info("Soft FP8 configured for Qwen3 Series models")
+
+
+def _resolve_deepseek_soft_fp8_parallel(params) -> Tuple[int, int]:
+    """Resolve recommended DeepSeek FP8 TP/DP values from device_count."""
+    try:
+        device_count_val = int(params.get('device_count', 0))
+    except (ValueError, TypeError):
+        logger.warning("Invalid device_count value, defaulting to 0")
+        device_count_val = 0
+    recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
+    recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
+    return recommended_tp, recommended_dp
+
+
+def _apply_deepseek_soft_fp8(params, explicit_keys: set) -> None:
+    """Apply DeepSeek Soft FP8 parameters while preserving explicit user values."""
+    if 'quantization' not in explicit_keys:
+        params['quantization'] = 'ascend'
+    if 'enforce_eager' not in explicit_keys:
+        params["enforce_eager"] = True
+    if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
+        params['no_enable_prefix_caching'] = True
+    if 'enable_expert_parallel' not in explicit_keys:
+        params['enable_expert_parallel'] = True
+    if 'async_scheduling' not in explicit_keys:
+        params['async_scheduling'] = True
+
+    recommended_tp, recommended_dp = _resolve_deepseek_soft_fp8_parallel(params)
+    if 'data_parallel_size' not in explicit_keys:
+        params['data_parallel_size'] = recommended_dp
+    if 'tensor_parallel_size' not in explicit_keys:
+        params['tensor_parallel_size'] = recommended_tp
+    params['use_kunlun_atb'] = False
+    logger.info("Soft FP8 configured for Deekseek Series models")
+
+
 def _set_soft_fp8(params, ctx, model_info):
     """FP8 特性的参数配置（支持 DeepSeek / Qwen3 系列 FP8 模型）。
 
@@ -540,66 +608,23 @@ def _set_soft_fp8(params, ctx, model_info):
     model_path = model_info.model_path
     explicit_keys = _detect_explicit_cli_keys()
 
-    if (ctx.get('device') == "ascend"
-            and _is_deepseek_v3_family_model(model_name, model_path)
-            and is_deepseek_series_modelslim_quant(model_path)):
+    if _should_skip_soft_fp8_for_official_deepseek_v3(ctx, model_name, model_path):
         logger.info("DeepSeek V3-family official Ascend quantized path, skip Soft FP8")
         return
 
-    # 检查模型是否为 FP8 模型
-    is_fp8_model = is_qwen3_series_fp8(model_path, model_name) or is_deepseek_series_fp8(model_path)
-
     # 如果模型不是 FP8，则跳过此函数，让 FP4 函数处理
-    if not is_fp8_model:
+    if not _is_soft_fp8_model(model_name, model_path):
         return
 
-    # 检查是否启用了 FP4 开关，如果是则给出警告但继续使用 FP8 配置
-    if get_soft_fp4_env():
-        logger.warning("Model %s is detected as FP8 model, but Soft FP4 switch is enabled. "
-                       "Automatically correcting to use Soft FP8 configuration.", model_name)
-
-    # 检查是否启用了 FP8 开关，如果没有启用则给出提示但继续配置
-    if not get_soft_fp8_env():
-        logger.info("Model %s is detected as FP8 model, automatically enabling Soft FP8 configuration", model_name)
+    _log_soft_fp8_switch_state(model_name)
 
     if ctx['device'] != "ascend":
         logger.warning("Soft FP8 is only supported on Ascend devices")
         return
-    elif is_qwen3_series_fp8(model_path, model_name):
-        if 'quantization' not in explicit_keys:
-            params['quantization'] = 'ascend'
-        # 对于 Qwen3MoeForCausalLM 模型，禁用专家并行
-        if model_architecture == "Qwen3MoeForCausalLM" and 'enable_expert_parallel' not in explicit_keys:
-            params['enable_expert_parallel'] = False
-            logger.info("Soft FP8 configured for Qwen3 MOE Series models")
-        else:
-            logger.info("Soft FP8 configured for Qwen3 Series models")
+    if is_qwen3_series_fp8(model_path, model_name):
+        _apply_qwen3_soft_fp8(params, model_architecture, explicit_keys)
     elif is_deepseek_series_fp8(model_path):
-        if 'quantization' not in explicit_keys:
-            params['quantization'] = 'ascend'
-        if 'enforce_eager' not in explicit_keys:
-            params["enforce_eager"] = True
-        if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
-            params['no_enable_prefix_caching'] = True
-        if 'enable_expert_parallel' not in explicit_keys:
-            params['enable_expert_parallel'] = True
-        if 'async_scheduling' not in explicit_keys:
-            params['async_scheduling'] = True
-        # 根据硬件配置设置张量并行大小，DeepSeek FP8 模型推荐使用 TP=4/DP=4
-        # 但必须确保 device_count 足够，否则回退为全部设备
-        try:
-            device_count_val = int(params.get('device_count', 0))
-        except (ValueError, TypeError):
-            logger.warning("Invalid device_count value, defaulting to 0")
-            device_count_val = 0
-        recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
-        recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
-        if 'data_parallel_size' not in explicit_keys:
-            params['data_parallel_size'] = recommended_dp
-        if 'tensor_parallel_size' not in explicit_keys:
-            params['tensor_parallel_size'] = recommended_tp
-        params['use_kunlun_atb'] = False
-        logger.info("Soft FP8 configured for Deekseek Series models")
+        _apply_deepseek_soft_fp8(params, explicit_keys)
 
 
 def _is_deepseek_v3_family_model(model_name: str, model_path: str) -> bool:
