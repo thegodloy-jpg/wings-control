@@ -39,10 +39,6 @@
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
             "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4,
             "mindie_model_type": "deepseekv2",
             "mindie_tool_call_parser": "deepseekv3"
           },
@@ -50,10 +46,6 @@
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
             "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4,
             "mindie_model_type": "deepseekv2",
             "mindie_tool_call_parser": "deepseekv3"
           }
@@ -75,10 +67,6 @@
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
             "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4,
             "mindie_model_type": "deepseekv2",
             "mindie_tool_call_parser": "deepseekv3"
           },
@@ -89,10 +77,6 @@
             "maxPrefillTokens": 8192,
             "maxBatchSize": 130,
             "maxIterTimes": 8192,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4,
             "mindie_model_type": "deepseekv2",
             "mindie_tool_call_parser": "deepseekv3"
           }
@@ -114,10 +98,6 @@
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
             "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4,
             "mindie_model_type": "deepseekv2",
             "mindie_tool_call_parser": "deepseek_v31"
           },
@@ -125,10 +105,6 @@
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
             "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4,
             "mindie_model_type": "deepseekv2",
             "mindie_tool_call_parser": "deepseek_v31"
           }
@@ -180,10 +156,6 @@
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
             "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4,
             "mindie_model_type": "qwen3",
             "mindie_tool_call_parser": "qwen3"
           },
@@ -194,10 +166,6 @@
             "maxPrefillTokens": 8192,
             "maxBatchSize": 130,
             "maxIterTimes": 8192,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4,
             "mindie_model_type": "qwen3",
             "mindie_tool_call_parser": "qwen3"
           }
@@ -276,20 +244,12 @@
           "mindie": {
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
-            "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4
+            "maxIterTimes": 2048
           },
           "mindie_distributed": {
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
-            "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4
+            "maxIterTimes": 2048
           }
         }
       },
@@ -310,20 +270,12 @@
           "mindie": {
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
-            "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4
+            "maxIterTimes": 2048
           },
           "mindie_distributed": {
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
-            "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4
+            "maxIterTimes": 2048
           }
         }
       },
@@ -352,10 +304,6 @@
             },
             "compilation_config": {
               "cudagraph_mode": "FULL_DECODE_ONLY"
-            },
-            "speculative_config": {
-              "num_speculative_tokens": 3,
-              "method": "deepseek_mtp"
             }
           },
           "vllm_ascend_distributed": {
@@ -381,10 +329,6 @@
             },
             "compilation_config": {
               "cudagraph_mode": "FULL_DECODE_ONLY"
-            },
-            "speculative_config": {
-              "num_speculative_tokens": 3,
-              "method": "deepseek_mtp"
             }
           }
         }
@@ -395,6 +339,10 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
+            "no_enable_prefix_caching": true,
+            "async_scheduling": true,
+            "compilation_config": "{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}",
+            "additional_config": "{\"enable_cpu_binding\":true}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -402,6 +350,10 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
+            "no_enable_prefix_caching": true,
+            "async_scheduling": true,
+            "compilation_config": "{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}",
+            "additional_config": "{\"enable_cpu_binding\":true}",
             "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
@@ -436,20 +388,12 @@
           "mindie": {
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
-            "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4
+            "maxIterTimes": 2048
           },
           "mindie_distributed": {
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
-            "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4
+            "maxIterTimes": 2048
           }
         }
       },
@@ -457,33 +401,29 @@
         "default": {
           "vllm_ascend": {
             "trust_remote_code": true,
-            "max_model_len": 4096,
+            "gpu_memory_utilization": 0.92,
+            "max_model_len": 34816,
+            "max_num_seqs": 64,
             "tool_call_parser": "minimax_m2",
             "reasoning_parser": "minimax_m2_reasoning"
           },
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
-            "max_model_len": 4096,
+            "gpu_memory_utilization": 0.92,
+            "max_model_len": 34816,
+            "max_num_seqs": 64,
             "tool_call_parser": "minimax_m2",
             "reasoning_parser": "minimax_m2_reasoning"
           },
           "mindie": {
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
-            "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4
+            "maxIterTimes": 2048
           },
           "mindie_distributed": {
             "maxSeqLen": 4096,
             "maxInputTokenLen": 2048,
-            "maxIterTimes": 2048,
-            "tp": 4,
-            "dp": 4,
-            "moe_ep": 4,
-            "moe_tp": 4
+            "maxIterTimes": 2048
           }
         }
       },
