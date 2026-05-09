@@ -24,10 +24,10 @@ MiniMaxM2ForCausalLM
 默认情况下不会注入以下 vLLM 高级字段：
 
 - `--async-scheduling`
-- `--additional-config`
 - `--speculative-config`
-- `--compilation-config`
 - `--enable-expert-parallel`
+
+当前 `ascend_default.json` 对 MiniMax-M2 的默认值偏向长上下文、较高并发和图解码优化：`max_model_len=34816`、`gpu_memory_utilization=0.92`、`max_num_seqs=64`、`compilation_config={"cudagraph_mode":"FULL_DECODE_ONLY"}`、`additional_config={"enable_cpu_binding":true}`。这些值会显著提高 KV cache 和显存压力，建议在真实 910B 环境完成稳定性、OOM 边界和吞吐验证后再作为生产默认值使用。
 
 ---
 
@@ -46,7 +46,7 @@ MiniMaxM2ForCausalLM
 ```json
 {
   "trust_remote_code": true,
-  "max_model_len": 4096,
+  "max_model_len": 34816,
   "host": "0.0.0.0",
   "port": 18000,
   "served_model_name": "MiniMax-M2.5",
@@ -55,11 +55,19 @@ MiniMaxM2ForCausalLM
   "kv_cache_dtype": "auto",
   "quantization": "",
   "quantization_param_path": "",
-  "gpu_memory_utilization": 0.9,
+  "gpu_memory_utilization": 0.92,
   "enable_chunked_prefill": false,
   "max_num_batched_tokens": 4096,
   "block_size": 16,
-  "max_num_seqs": 32,
+  "max_num_seqs": 64,
+    "compilation_config": {
+        "cudagraph_mode": "FULL_DECODE_ONLY"
+    },
+    "additional_config": {
+        "enable_cpu_binding": true
+    },
+    "tool_call_parser": "minimax_m2",
+    "reasoning_parser": "minimax_m2_reasoning",
   "seed": 0,
   "enable_expert_parallel": false,
   "enable_prefix_caching": false,
@@ -72,7 +80,7 @@ MiniMaxM2ForCausalLM
 ```json
 {
   "trust_remote_code": true,
-  "max_model_len": 4096,
+  "max_model_len": 34816,
   "host": "0.0.0.0",
   "port": 18000,
   "served_model_name": "MiniMax-M2.7",
@@ -81,11 +89,19 @@ MiniMaxM2ForCausalLM
   "kv_cache_dtype": "auto",
   "quantization": "",
   "quantization_param_path": "",
-  "gpu_memory_utilization": 0.9,
+  "gpu_memory_utilization": 0.92,
   "enable_chunked_prefill": false,
   "max_num_batched_tokens": 4096,
   "block_size": 16,
-  "max_num_seqs": 32,
+  "max_num_seqs": 64,
+    "compilation_config": {
+        "cudagraph_mode": "FULL_DECODE_ONLY"
+    },
+    "additional_config": {
+        "enable_cpu_binding": true
+    },
+    "tool_call_parser": "minimax_m2",
+    "reasoning_parser": "minimax_m2_reasoning",
   "seed": 0,
   "enable_expert_parallel": false,
   "enable_prefix_caching": false,
@@ -165,14 +181,17 @@ export HCCL_OP_EXPANSION_MODE=AIV
 ### 3.6 MiniMaxM2ForCausalLM 专属变量
 
 ```bash
-export HCCL_OP_EXPANSION_MODE=AIV
+export OMP_NUM_THREADS=1
+export TASK_QUEUE_ENABLE=1
 export VLLM_USE_GRAPH=1
 export VLLM_USE_V1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
 export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
 export VLLM_TORCH_COMPILE=0
 ```
 
-注意：`HCCL_OP_EXPANSION_MODE=AIV` 会在通用 Ascend 环境和 MiniMax 专属环境中各出现一次，最终值一致，不影响启动。
+注意：`HCCL_OP_EXPANSION_MODE=AIV`、`HCCL_BUFFSIZE=1024`、`PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`、jemalloc 预加载和系统性能调优均由通用 Ascend 环境脚本注入，MiniMax 专属段不再重复注入；`OMP_NUM_THREADS=1` 会覆盖通用默认值 `${OMP_NUM_THREADS:-10}`。
 
 ---
 
@@ -181,13 +200,13 @@ export VLLM_TORCH_COMPILE=0
 ### 4.1 MiniMax-M2.5
 
 ```bash
-exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 0.0.0.0 --port 18000 --served-model-name MiniMax-M2.5 --model /models/MiniMax-M2.5 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8
+exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 34816 --host 0.0.0.0 --port 18000 --served-model-name MiniMax-M2.5 --model /models/MiniMax-M2.5 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.92 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 64 --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true}' --tool-call-parser minimax_m2 --reasoning-parser minimax_m2_reasoning --seed 0 --tensor-parallel-size 8
 ```
 
 ### 4.2 MiniMax-M2.7
 
 ```bash
-exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 0.0.0.0 --port 18000 --served-model-name MiniMax-M2.7 --model /models/MiniMax-M2.7 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8
+exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 34816 --host 0.0.0.0 --port 18000 --served-model-name MiniMax-M2.7 --model /models/MiniMax-M2.7 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.92 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 64 --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true}' --tool-call-parser minimax_m2 --reasoning-parser minimax_m2_reasoning --seed 0 --tensor-parallel-size 8
 ```
 
 ---
@@ -208,7 +227,7 @@ exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-mod
 
 ### 5.2 max_model_len
 
-默认配置中 `max_model_len=4096`。  
+默认配置中 `max_model_len=34816`。  
 只有用户显式传入 `--input-length` / `--output-length` 或设置 `INPUT_LENGTH` / `OUTPUT_LENGTH` 时，才会重新计算：
 
 ```text
@@ -253,12 +272,16 @@ export OMP_PROC_BIND=false
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-10}
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 export HCCL_OP_EXPANSION_MODE=AIV
+export OMP_NUM_THREADS=1
+export TASK_QUEUE_ENABLE=1
 export VLLM_USE_GRAPH=1
 export VLLM_USE_V1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
 export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
 export VLLM_TORCH_COMPILE=0
 
-exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 0.0.0.0 --port 18000 --served-model-name MiniMax-M2.5 --model /models/MiniMax-M2.5 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8
+exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 34816 --host 0.0.0.0 --port 18000 --served-model-name MiniMax-M2.5 --model /models/MiniMax-M2.5 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.92 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 64 --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true}' --tool-call-parser minimax_m2 --reasoning-parser minimax_m2_reasoning --seed 0 --tensor-parallel-size 8
 ```
 
 ### 6.2 MiniMax-M2.7
@@ -269,10 +292,14 @@ export OMP_PROC_BIND=false
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-10}
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 export HCCL_OP_EXPANSION_MODE=AIV
+export OMP_NUM_THREADS=1
+export TASK_QUEUE_ENABLE=1
 export VLLM_USE_GRAPH=1
 export VLLM_USE_V1=1
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
 export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
 export VLLM_TORCH_COMPILE=0
 
-exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 0.0.0.0 --port 18000 --served-model-name MiniMax-M2.7 --model /models/MiniMax-M2.7 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8
+exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 34816 --host 0.0.0.0 --port 18000 --served-model-name MiniMax-M2.7 --model /models/MiniMax-M2.7 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.92 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 64 --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true}' --tool-call-parser minimax_m2 --reasoning-parser minimax_m2_reasoning --seed 0 --tensor-parallel-size 8
 ```

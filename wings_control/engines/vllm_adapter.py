@@ -910,20 +910,27 @@ def _build_minimaxm2_ascend_env(arch: str) -> List[str]:
     """构建 MiniMax-M2.5 (MiniMaxM2ForCausalLM) Ascend 环境变量命令。
 
     注入 MiniMax-M2.5 在 Ascend 910B 上所需的环境变量：
+    - OMP_NUM_THREADS:                限制 OpenMP 线程数
+    - TASK_QUEUE_ENABLE:              启用 Ascend task queue
     - VLLM_USE_GRAPH:                  启用 NPU Graph 加速
     - VLLM_USE_V1:                     启用 vLLM V1 多进程架构
     - VLLM_ASCEND_ENABLE_FLASHCOMM1:   启用 FlashComm 通信优化（EP 密集通信场景）
+    - VLLM_ASCEND_ENABLE_FUSED_MC2:    启用 Fused MC2 通信优化
+    - VLLM_ASCEND_BALANCE_SCHEDULING:  启用 Ascend 均衡调度
     - VLLM_TORCH_COMPILE:              关闭 torch.compile（Ascend 910B 兼容性）
 
-    注意: HCCL_OP_EXPANSION_MODE=AIV 已由 set_vllm_ascend_env.sh 全局设置，
-    此处不重复注入。
+    注意: HCCL_OP_EXPANSION_MODE、HCCL_BUFFSIZE、PYTORCH_NPU_ALLOC_CONF、jemalloc
+    和系统性能调优已由 set_vllm_ascend_env.sh 全局设置，此处不重复注入。
     """
     logger.info("[MiniMax-M2.5] Set Ascend environment variables for %s", arch)
     return [
-        "export HCCL_OP_EXPANSION_MODE=AIV",
+        "export OMP_NUM_THREADS=1",
+        "export TASK_QUEUE_ENABLE=1",
         "export VLLM_USE_GRAPH=1",
         "export VLLM_USE_V1=1",
+        "export VLLM_ASCEND_ENABLE_FUSED_MC2=1",
         "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
+        "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
         "export VLLM_TORCH_COMPILE=0",
     ]
 

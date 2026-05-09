@@ -412,6 +412,12 @@
             "gpu_memory_utilization": 0.92,
             "max_model_len": 34816,
             "max_num_seqs": 64,
+            "compilation_config": {
+              "cudagraph_mode": "FULL_DECODE_ONLY"
+            },
+            "additional_config": {
+              "enable_cpu_binding": true
+            },
             "tool_call_parser": "minimax_m2",
             "reasoning_parser": "minimax_m2_reasoning"
           },
@@ -420,6 +426,12 @@
             "gpu_memory_utilization": 0.92,
             "max_model_len": 34816,
             "max_num_seqs": 64,
+            "compilation_config": {
+              "cudagraph_mode": "FULL_DECODE_ONLY"
+            },
+            "additional_config": {
+              "enable_cpu_binding": true
+            },
             "tool_call_parser": "minimax_m2",
             "reasoning_parser": "minimax_m2_reasoning"
           },
