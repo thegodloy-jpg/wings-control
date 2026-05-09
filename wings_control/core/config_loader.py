@@ -1519,9 +1519,12 @@ def _process_cmd_args(known_args: argparse.Namespace) -> Dict[str, Any]:
     return cmd_known_params
 
 
-# CLI/ENV 参数与其对应环境变量的映射表。
+# 通用 launcher CLI/ENV 参数与其对应环境变量的映射表。
 # 用于 _detect_explicit_cli_keys() 判断哪些参数是用户显式指定的。
-_CLI_ENV_MAP: Dict[str, str] = {
+#
+# 约束：这里仅放 parser 层通用参数；vLLM 原生参数放到
+# _VLLM_CLI_ENV_MAP，避免 MindIE/SGLang 被 vLLM 专属环境变量污染。
+_COMMON_CLI_ENV_MAP: Dict[str, str] = {
     "gpu_memory_utilization": "GPU_MEMORY_UTILIZATION",
     "max_num_seqs": "MAX_NUM_SEQS",
     "block_size": "BLOCK_SIZE",
@@ -1537,20 +1540,36 @@ _CLI_ENV_MAP: Dict[str, str] = {
     "trust_remote_code": "TRUST_REMOTE_CODE",
     "enable_chunked_prefill": "ENABLE_CHUNKED_PREFILL",
     "enable_prefix_caching": "ENABLE_PREFIX_CACHING",
-    "no_enable_prefix_caching": "NO_ENABLE_PREFIX_CACHING",
     "enable_expert_parallel": "ENABLE_EXPERT_PARALLEL",
+}
+
+
+# vLLM / vLLM-Ascend 原生覆盖参数。
+# 这些参数不是 MindIE/SGLang 的通用启动契约，只在最终 engine 为
+# vllm/vllm_ascend 时参与显式覆盖判断。
+_VLLM_CLI_ENV_MAP: Dict[str, str] = {
+    "no_enable_prefix_caching": "NO_ENABLE_PREFIX_CACHING",
     "enforce_eager": "ENFORCE_EAGER",
     "data_parallel_size": "DATA_PARALLEL_SIZE",
     "tensor_parallel_size": "TENSOR_PARALLEL_SIZE",
 }
 
 
-def _detect_explicit_cli_keys() -> set:
+def _resolve_explicit_env_map(engine: str | None = None) -> Dict[str, str]:
+    """根据当前引擎返回允许参与显式覆盖判断的 ENV 映射。"""
+    resolved_engine = (engine or os.environ.get("WINGS_ENGINE") or os.environ.get("ENGINE") or "").lower()
+    env_map = dict(_COMMON_CLI_ENV_MAP)
+    if resolved_engine in {"vllm", "vllm_ascend"}:
+        env_map.update(_VLLM_CLI_ENV_MAP)
+    return env_map
+
+
+def _detect_explicit_cli_keys(engine: str | None = None) -> set:
     """检测用户通过 CLI 参数或环境变量显式设定的参数键集合。
 
     识别规则：
     1. 检查 sys.argv 中的 --xxx 参数名 → 转为 snake_case 加入集合
-    2. 检查 _CLI_ENV_MAP 中对应的环境变量是否被设置
+    2. 检查当前引擎允许的 ENV 映射中对应的环境变量是否被设置
 
     Returns:
         set: 用户显式设定的参数键名集合 (snake_case)
@@ -1563,7 +1582,7 @@ def _detect_explicit_cli_keys() -> set:
             key = arg.lstrip("-").split("=")[0].replace("-", "_")
             explicit.add(key)
 
-    for param_key, env_var in _CLI_ENV_MAP.items():
+    for param_key, env_var in _resolve_explicit_env_map(engine).items():
         if os.environ.get(env_var) is not None:
             explicit.add(param_key)
 
@@ -1599,7 +1618,8 @@ def _apply_cli_overrides(engine_config: Dict[str, Any],
     Returns:
         Dict[str, Any]: 应用 CLI 覆盖后的 engine_config（原地修改并返回）
     """
-    explicit_keys = _detect_explicit_cli_keys()
+    env_map = _resolve_explicit_env_map(cmd_known_params.get("engine"))
+    explicit_keys = _detect_explicit_cli_keys(cmd_known_params.get("engine"))
 
     for key in list(engine_config.keys()):
         if key not in explicit_keys:
@@ -1608,8 +1628,8 @@ def _apply_cli_overrides(engine_config: Dict[str, Any],
         # 优先从 argparse 解析结果取值，若无则从环境变量回退读取
         if key in cmd_known_params:
             cli_val = cmd_known_params[key]
-        elif key in _CLI_ENV_MAP:
-            env_val = os.environ.get(_CLI_ENV_MAP[key])
+        elif key in env_map:
+            env_val = os.environ.get(env_map[key])
             if env_val is None:
                 continue
             # 按 engine_config 中已有值的类型做类型转换

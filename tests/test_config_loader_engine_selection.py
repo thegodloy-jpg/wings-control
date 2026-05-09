@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "wings_control"))
 
 from core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
+    _detect_explicit_cli_keys,
     _detect_mtp_moe_features,
     load_and_merge_configs,
     _set_deepseek_v3_family_ascend_quant_params,
@@ -51,6 +52,30 @@ class _FakeModelInfo:
 
 
 class TestConfigLoaderEngineSelection(unittest.TestCase):
+    def test_vllm_native_env_keys_are_engine_scoped(self):
+        with patch.object(sys, "argv", ["wings-launcher-v4"]):
+            with patch.dict(os.environ, {
+                "WINGS_ENGINE": "mindie",
+                "GPU_MEMORY_UTILIZATION": "0.95",
+                "ENFORCE_EAGER": "true",
+                "TENSOR_PARALLEL_SIZE": "8",
+            }, clear=True):
+                keys = _detect_explicit_cli_keys()
+        self.assertIn("gpu_memory_utilization", keys)
+        self.assertNotIn("enforce_eager", keys)
+        self.assertNotIn("tensor_parallel_size", keys)
+
+    def test_vllm_native_env_keys_are_enabled_for_vllm_ascend(self):
+        with patch.object(sys, "argv", ["wings-launcher-v4"]):
+            with patch.dict(os.environ, {
+                "WINGS_ENGINE": "vllm_ascend",
+                "ENFORCE_EAGER": "true",
+                "TENSOR_PARALLEL_SIZE": "8",
+            }, clear=True):
+                keys = _detect_explicit_cli_keys()
+        self.assertIn("enforce_eager", keys)
+        self.assertIn("tensor_parallel_size", keys)
+
     def test_lmcache_no_longer_forces_nvidia_to_vllm(self):
         model_info = _FakeModelInfo(supported=True)
         with patch.dict(os.environ, {"LMCACHE_OFFLOAD": "true"}, clear=False):
