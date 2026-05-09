@@ -962,23 +962,6 @@ def _build_llama_ascend_env(arch: str) -> List[str]:
     ]
 
 
-def _build_kimik25_ascend_env(arch: str) -> List[str]:
-    """构建 Kimi-K2.5 (KimiK25ForConditionalGeneration) Ascend 环境变量命令。"""
-    logger.info("[Kimi-K2.5] Set Ascend environment variables for %s", arch)
-    return [
-        "export HCCL_OP_EXPANSION_MODE=AIV",
-        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
-        "export OMP_PROC_BIND=false",
-        "export OMP_NUM_THREADS=1",
-        "export TASK_QUEUE_ENABLE=1",
-        "export HCCL_BUFFSIZE=1024",
-        "export VLLM_ASCEND_ENABLE_MLAPO=1",
-        "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
-        "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
-        "export VLLM_ENGINE_READY_TIMEOUT_S=3600",
-    ]
-
-
 def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     """构建模型架构特定的环境变量命令（支持 NVIDIA 和 Ascend）。
 
@@ -992,7 +975,6 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     - MiniMaxM2ForCausalLM (MiniMax-M2.5): FlashComm
     - DeepseekV32ForCausalLM (DeepSeek V3.2): MLAPO, FlashComm, VLLM_USE_V1
     - LlamaForCausalLM (LLaMA3.1-70B): 基础 NPU 内存/线程优化
-    - KimiK25ForConditionalGeneration (Kimi-K2.5): MLAPO, FlashComm, Eagle3 超时加固
 
     Args:
         params: 参数字典
@@ -1025,7 +1007,6 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
             "MiniMaxM2ForCausalLM": _build_minimaxm2_ascend_env,
             "DeepseekV32ForCausalLM": _build_deepseekv32_ascend_env,
             "LlamaForCausalLM": _build_llama_ascend_env,
-            "KimiK25ForConditionalGeneration": _build_kimik25_ascend_env,
         }
     else:
         _arch_env_builders = {}

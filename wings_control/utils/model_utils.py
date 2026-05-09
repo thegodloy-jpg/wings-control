@@ -166,11 +166,6 @@ _LLM_MODELS = {
         "MiniMax-M2.7",
         "MiniMax-M2.7-w8a8"
         ],
-    "KimiK25ForConditionalGeneration": [
-        "Kimi-K2.5",
-        "Kimi-K2.5-w8a8",
-        "kimi-k25"
-        ],
     "LlamaForCausalLM": [
         "LLaMA3-8B",
         "LLaMA3.1-70B",

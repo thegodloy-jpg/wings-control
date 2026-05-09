@@ -75,7 +75,6 @@ CATEGORIES = [
         "name": "Kimi 系列",
         "models": [
             ["Kimi-K2-Thinking", "KimiK2ForCausalLM", "✅", "❌", "❌", "⚠️", "vLLM 有 reasoning/tool parser"],
-            ["Kimi-K2.5", "KimiK25ForConditionalGeneration", "✅", "❌", "❌", "⚠️", "vLLM 官方列出多模态 (T+I+)"],
         ]
     },
     {
