@@ -264,12 +264,14 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseekv32"
+            "tool_call_parser": "deepseek_v32",
+            "reasoning_parser": "deepseek_r1"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseekv32"
+            "tool_call_parser": "deepseek_v32",
+            "reasoning_parser": "deepseek_r1"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -393,13 +395,13 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "minimax_m2",
-            "reasoning_parser": "minimax_m2_reasoning"
+            "reasoning_parser": "minimax_m2"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "minimax_m2",
-            "reasoning_parser": "minimax_m2_reasoning"
+            "reasoning_parser": "minimax_m2"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -462,7 +464,7 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-           "tool_call_parser": "hermes",
+            "tool_call_parser": "hermes",
             "reasoning_parser": "qwen3"
           },
           "vllm_distributed": {
