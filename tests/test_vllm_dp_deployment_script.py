@@ -219,6 +219,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         params["distributed"] = False
         params["nnodes"] = 1
         params["distributed_executor_backend"] = "ray"
+        params["_explicit_cli_keys"] = ["distributed_executor_backend"]
 
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(params)

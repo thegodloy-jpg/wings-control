@@ -330,7 +330,8 @@ def _is_vllm_ascend_ray_distributed(params: Dict[str, Any], engine: str) -> bool
         return False
     backend = params.get("distributed_executor_backend")
     if backend == "ray":
-        return True
+        explicit_keys = set(params.get("_explicit_cli_keys") or [])
+        return bool(params.get("distributed")) or "distributed_executor_backend" in explicit_keys
     return backend is None and bool(params.get("distributed"))
 
 
