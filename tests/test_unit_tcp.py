@@ -227,8 +227,23 @@ class TestAscendVllmAscendParserMapping(unittest.TestCase):
     def test_tcp17b_deepseekv31_w8a8_ascend_uses_v31_parser(self):
         """DeepseekV3ForCausalLM + DeepSeek-V3.1-w8a8（Ascend）→ 复用 V3.1 专属 parser。"""
         ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3.1-w8a8")
+        self.assertIs(ec.get("enable_auto_tool_choice"), True)
         self.assertEqual(ec.get("tool_call_parser"), "deepseek_v31")
         self.assertEqual(ec.get("reasoning_parser"), "deepseek_r1")
+
+    def test_tcp17c_deepseekv31_w8a8_fc_disabled_no_parser(self):
+        """DeepSeek-V3.1-w8a8 未开启 FC 时，不应注入 tool_call_parser / reasoning_parser。"""
+        ec = _load_engine_config(
+            self.HW,
+            "DeepseekV3ForCausalLM",
+            "vllm_ascend",
+            model_name="DeepSeek-V3.1-w8a8",
+            enable_auto_tool_choice=False,
+        )
+
+        self.assertNotIn("enable_auto_tool_choice", ec)
+        self.assertNotIn("tool_call_parser", ec)
+        self.assertNotIn("reasoning_parser", ec)
 
     # UT-TCP-18
     def test_tcp18_qwen3moe_ascend_hermes_qwen3(self):
@@ -311,6 +326,20 @@ class TestAscendMindieParserMapping(unittest.TestCase):
             overrides["models"],
             {"deepseekv2": {"tool_call_options": {"tool_call_parser": "deepseek_v31"}}},
         )
+
+    def test_deepseekv31_w8a8_mindie_fc_disabled_drops_internal_fields(self):
+        """DeepSeek-V3.1-w8a8 未开启 FC 时，MindIE 内部 FC 字段不应残留。"""
+        ec = self._ec(
+            "DeepseekV3ForCausalLM",
+            model_name="DeepSeek-V3.1-w8a8",
+            enable_auto_tool_choice=False,
+        )
+
+        self.assertNotIn("mindie_tool_call_parser", ec)
+        self.assertNotIn("mindie_model_type", ec)
+
+        overrides = _build_model_config_overrides(ec, is_distributed=False, world_size=16)
+        self.assertNotIn("models", overrides)
 
     def test_config_file_can_force_deepseekv31_mindie_function_call(self):
         """config-file 可强制设置 MindIE DeepSeek-V3.1 FC 内部字段并触发注入。"""
