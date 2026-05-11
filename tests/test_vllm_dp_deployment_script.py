@@ -214,12 +214,11 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export TASK_QUEUE_ENABLE=1", script)
         self.assertNotIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
 
-    def test_vllm_ascend_single_node_ray_omits_hccl_op_expansion_mode(self):
+    def test_vllm_ascend_single_node_ray_keeps_hccl_op_expansion_mode(self):
         params = _base_params(node_rank=0)
         params["distributed"] = False
         params["nnodes"] = 1
         params["distributed_executor_backend"] = "ray"
-        params["_explicit_cli_keys"] = ["distributed_executor_backend"]
 
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(params)
@@ -230,7 +229,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertIn("export HCCL_BUFFSIZE=1024", script)
         self.assertIn("export TASK_QUEUE_ENABLE=1", script)
-        self.assertNotIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
+        self.assertIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
 
     def test_deepseek_dp_deployment_speculative_switch_appends_mtp(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):

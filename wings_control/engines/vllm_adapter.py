@@ -325,14 +325,12 @@ def _build_vllm_ascend_extensions(params) -> List[str]:
 
 
 def _is_vllm_ascend_ray_distributed(params: Dict[str, Any], engine: str) -> bool:
-    """判断当前是否为 vllm_ascend Ray 执行场景。"""
+    """判断当前是否为 vllm_ascend Ray 分布式执行场景。"""
     if engine != "vllm_ascend":
         return False
-    backend = params.get("distributed_executor_backend")
-    if backend == "ray":
-        explicit_keys = set(params.get("_explicit_cli_keys") or [])
-        return bool(params.get("distributed")) or "distributed_executor_backend" in explicit_keys
-    return backend is None and bool(params.get("distributed"))
+    if not params.get("distributed"):
+        return False
+    return params.get("distributed_executor_backend", "ray") == "ray"
 
 
 def _filter_vllm_ascend_ray_incompatible_env(

@@ -53,40 +53,6 @@ class _FakeModelInfo:
 
 
 class TestConfigLoaderEngineSelection(unittest.TestCase):
-    def test_start_args_tracks_explicit_distributed_backend_cli(self):
-        from core.start_args_compat import parse_launch_args  # noqa: E402
-
-        with patch.dict(os.environ, {}, clear=True):
-            launch_args = parse_launch_args([
-                "--model-name", "DeepSeek-V3.1-w8a8",
-                "--engine", "vllm_ascend",
-                "--distributed-executor-backend", "ray",
-            ])
-
-        self.assertIn("distributed_executor_backend", launch_args._explicit_cli_keys)
-
-    def test_start_args_tracks_explicit_distributed_backend_env(self):
-        from core.start_args_compat import parse_launch_args  # noqa: E402
-
-        with patch.dict(os.environ, {"DISTRIBUTED_EXECUTOR_BACKEND": "ray"}, clear=True):
-            launch_args = parse_launch_args([
-                "--model-name", "DeepSeek-V3.1-w8a8",
-                "--engine", "vllm_ascend",
-            ])
-
-        self.assertIn("distributed_executor_backend", launch_args._explicit_cli_keys)
-
-    def test_start_args_default_distributed_backend_is_not_explicit(self):
-        from core.start_args_compat import parse_launch_args  # noqa: E402
-
-        with patch.dict(os.environ, {}, clear=True):
-            launch_args = parse_launch_args([
-                "--model-name", "DeepSeek-V3.1-w8a8",
-                "--engine", "vllm_ascend",
-            ])
-
-        self.assertNotIn("distributed_executor_backend", launch_args._explicit_cli_keys)
-
     def test_vllm_native_env_keys_are_engine_scoped(self):
         with patch.object(sys, "argv", ["wings-launcher-v4"]):
             with patch.dict(os.environ, {

@@ -11,17 +11,11 @@ import logging
 import math
 import os
 import re
-import sys
 from dataclasses import dataclass
 
 from utils.env_utils import get_master_ip, validate_ip
 
 logger = logging.getLogger("wings-launcher")
-
-
-_EXPLICIT_ENV_MAP = {
-    "distributed_executor_backend": "DISTRIBUTED_EXECUTOR_BACKEND",
-}
 
 
 def _env(name: str, default: str = "") -> str:
@@ -317,29 +311,6 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _detect_explicit_launch_keys(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
-    """检测通过 launcher CLI 或关键环境变量显式设置的参数。"""
-    flag_to_dest = {
-        option: action.dest
-        for action in parser._actions
-        for option in action.option_strings
-    }
-    explicit = set()
-    for raw_arg in argv:
-        if not raw_arg.startswith("--"):
-            continue
-        flag = raw_arg.split("=", 1)[0]
-        dest = flag_to_dest.get(flag)
-        if dest:
-            explicit.add(dest)
-
-    for dest, env_name in _EXPLICIT_ENV_MAP.items():
-        if os.environ.get(env_name) is not None:
-            explicit.add(dest)
-
-    return sorted(explicit)
-
-
 # 支持的推理引擎白名单；不在此集合中的 engine 值将被 parse_launch_args 拒绝
 SUPPORTED_ENGINES = {"vllm", "vllm_ascend", "sglang", "mindie"}
 
@@ -408,9 +379,7 @@ def parse_launch_args(argv: list[str] | None = None) -> LaunchArgs:
         ValueError: model_name 为空或 engine 不支持
     """
     parser = build_parser()
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
-    args._explicit_cli_keys = _detect_explicit_launch_keys(parser, raw_argv)
     _normalize_distributed_aliases(args)
     _validate_distributed_args(args)
 
