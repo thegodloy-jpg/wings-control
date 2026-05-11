@@ -214,6 +214,23 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export TASK_QUEUE_ENABLE=1", script)
         self.assertNotIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
 
+    def test_vllm_ascend_single_node_ray_omits_hccl_op_expansion_mode(self):
+        params = _base_params(node_rank=0)
+        params["distributed"] = False
+        params["nnodes"] = 1
+        params["distributed_executor_backend"] = "ray"
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertNotIn("ray start --head", script)
+        self.assertIn("exec python3 -m vllm.entrypoints.openai.api_server", script)
+        self.assertIn("export OMP_PROC_BIND=false", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
+        self.assertIn("export HCCL_BUFFSIZE=1024", script)
+        self.assertIn("export TASK_QUEUE_ENABLE=1", script)
+        self.assertNotIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
+
     def test_deepseek_dp_deployment_speculative_switch_appends_mtp(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(_base_params(node_rank=0, enable_speculative_decode=True))
