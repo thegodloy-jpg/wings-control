@@ -1,0 +1,4 @@
+{
+  "mindie_model_type": "deepseekv2",
+  "mindie_tool_call_parser": "deepseek_v31"
+}

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -603,6 +604,9 @@ def _is_env_override_file(path: Path) -> bool:
     )
 
 
+_ENV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+
 def _parse_env_file(fpath: Path) -> list[str]:
     """Parse a KEY=VALUE .env file and return a list of 'export KEY=VALUE' shell lines."""
     export_lines: list[str] = []
@@ -621,6 +625,12 @@ def _parse_env_file(fpath: Path) -> list[str]:
             key, _, value = line.partition("=")
             key = key.strip()
             value = value.strip()
+            if not _ENV_KEY_RE.match(key):
+                logger.warning(
+                    "Skipping line %d in %s: invalid variable name %r",
+                    lineno, fpath.name, key,
+                )
+                continue
             # 去掉可选的引号包裹
             if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
                 value = value[1:-1]

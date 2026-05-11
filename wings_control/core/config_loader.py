@@ -2067,6 +2067,20 @@ def _handle_sglang_distributed(distributed_config: Dict[str, Any], cmd_params: D
     })
 
 
+_MODEL_QUANT_SUFFIXES = ("w8a8", "w4a8", "fp8", "int8", "int4")
+
+
+def _is_quant_variant_of_model(model_name_lower: str, config_model_lower: str) -> bool:
+    """Return True when model_name is a quantized suffix variant of config_model.
+
+    例如 DeepSeek-V3.1-w8a8 应复用 DeepSeek-V3.1 的专属配置，
+    否则会回退到架构 default，导致 V3.1 的 parser 被误配为 deepseekv3。
+    """
+    if not model_name_lower or not config_model_lower:
+        return False
+    return any(model_name_lower == f"{config_model_lower}-{suffix}" for suffix in _MODEL_QUANT_SUFFIXES)
+
+
 def _match_model_engine_config(
     arch_dict: Dict[str, Any],
     model_name_lower: str,
@@ -2090,7 +2104,8 @@ def _match_model_engine_config(
     h20_model = _get_h20_model_hint()
 
     for model, config in arch_dict.items():
-        if model_name_lower != model.lower():
+        config_model_lower = model.lower()
+        if model_name_lower != config_model_lower:
             continue
 
         if is_deepseek_sglang_nvidia and h20_model in ("H20-96G", "H20-141G"):
@@ -2105,6 +2120,31 @@ def _match_model_engine_config(
             return config.get(engine_key, {})
 
         logger.info("Using engine config for model '%s' (engine_key=%s)", model, engine_key)
+        return config.get(engine_key, {})
+
+    for model, config in arch_dict.items():
+        config_model_lower = model.lower()
+        if not _is_quant_variant_of_model(model_name_lower, config_model_lower):
+            continue
+
+        if is_deepseek_sglang_nvidia and h20_model in ("H20-96G", "H20-141G"):
+            logger.info(
+                "Using dedicated config for quantized model variant '%s' via base '%s' on %s",
+                model_name_lower, model, h20_model,
+            )
+            return config.get(engine_key, {}).get(h20_model, {})
+
+        if is_deepseek_sglang_nvidia:
+            logger.info(
+                "DeepSeek+SGLang+NVIDIA quantized variant '%s' uses engine-level config for base '%s'",
+                model_name_lower, model,
+            )
+            return config.get(engine_key, {})
+
+        logger.info(
+            "Using engine config for quantized model variant '%s' via base '%s' (engine_key=%s)",
+            model_name_lower, model, engine_key,
+        )
         return config.get(engine_key, {})
 
     return {}
