@@ -62,8 +62,8 @@ esac
 # 昇腾通用环境变量
 export HCCL_BUFFSIZE=1024
 export OMP_PROC_BIND=false
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-10}
+export OMP_NUM_THREADS=1
+export TASK_QUEUE_ENABLE=1
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-export HCCL_OP_EXPANSION_MODE=AIV
 
 

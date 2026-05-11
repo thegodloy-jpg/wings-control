@@ -105,14 +105,15 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
         self.assertIn("export HCCL_CONNECT_TIMEOUT=1800", script)
         self.assertIn("export HCCL_EXEC_TIMEOUT=7200", script)
-        self.assertIn("export OMP_NUM_THREADS=100", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertIn("export HCCL_BUFFSIZE=1024", script)
+        self.assertIn("export TASK_QUEUE_ENABLE=1", script)
+        self.assertIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
         self.assertIn('echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"', script)
         self.assertNotIn("export VLLM_ASCEND_BALANCE_SCHEDULING=1", script)
         self.assertNotIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
         self.assertNotIn("export VLLM_ASCEND_ENABLE_NZ=0", script)
         self.assertIn("deepseek-v32/vendors/customize", script)
-        self.assertNotIn("export TASK_QUEUE_ENABLE=1", script)
         self.assertNotIn("export VLLM_USE_V1=1", script)
         self.assertNotIn("export ASCEND_BUFFER_POOL=4:8", script)
         self.assertIn("export VLLM_ENGINE_READY_TIMEOUT_S=7200", script)
@@ -196,8 +197,22 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
 
         self.assertNotIn("export HCCL_INTRA_PCIE_ENABLE=1", script)
         self.assertNotIn("export HCCL_INTRA_ROCE_ENABLE=0", script)
-        self.assertIn("export OMP_NUM_THREADS=100", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertIn("export HCCL_BUFFSIZE=1024", script)
+
+    def test_vllm_ascend_ray_distributed_omits_hccl_op_expansion_mode(self):
+        params = _base_params(node_rank=0)
+        params["distributed_executor_backend"] = "ray"
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
+            script = build_start_script(params)
+
+        self.assertIn("ray start --head", script)
+        self.assertIn("export OMP_PROC_BIND=false", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
+        self.assertIn("export HCCL_BUFFSIZE=1024", script)
+        self.assertIn("export TASK_QUEUE_ENABLE=1", script)
+        self.assertNotIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
 
     def test_deepseek_dp_deployment_speculative_switch_appends_mtp(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):

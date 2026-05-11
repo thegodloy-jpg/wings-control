@@ -324,6 +324,45 @@ def _build_vllm_ascend_extensions(params) -> List[str]:
     return commands
 
 
+def _is_vllm_ascend_ray_distributed(params: Dict[str, Any], engine: str) -> bool:
+    """判断当前是否为 vllm_ascend Ray 分布式场景。"""
+    if engine != "vllm_ascend":
+        return False
+    if not params.get("distributed"):
+        return False
+    return params.get("distributed_executor_backend", "ray") == "ray"
+
+
+def _filter_vllm_ascend_ray_incompatible_env(
+    commands: List[str],
+    params: Dict[str, Any],
+    engine: str,
+) -> List[str]:
+    """过滤 vllm_ascend Ray 分布式不适用的环境变量。"""
+    if not _is_vllm_ascend_ray_distributed(params, engine):
+        return commands
+    return [
+        command for command in commands
+        if command.strip() != "export HCCL_OP_EXPANSION_MODE=AIV"
+    ]
+
+
+def _build_vllm_ascend_forced_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
+    """构建 vllm_ascend 强制生效的通用环境变量。"""
+    if engine != "vllm_ascend":
+        return []
+
+    commands = [
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=1",
+        "export HCCL_BUFFSIZE=1024",
+        "export TASK_QUEUE_ENABLE=1",
+    ]
+    if not _is_vllm_ascend_ray_distributed(params, engine):
+        commands.append("export HCCL_OP_EXPANSION_MODE=AIV")
+    return commands
+
+
 def _build_base_env_commands(params, engine: str, root: str) -> List[str]:
     """构建基础环境变量设置命令列表。
 
@@ -1114,6 +1153,8 @@ def _build_env_commands(params: Dict[str, Any], current_ip: str, network_interfa
     env_commands.extend(_build_deepseek_fp8_env_commands(params, engine))
     env_commands.extend(_build_ascend910_9362_env_commands(params, engine))
     env_commands.extend(_build_model_env_commands(params, engine))
+    env_commands = _filter_vllm_ascend_ray_incompatible_env(env_commands, params, engine)
+    env_commands.extend(_build_vllm_ascend_forced_env_commands(params, engine))
 
     return env_commands
 
@@ -2395,6 +2436,8 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     # DeepSeek FP8 / Ascend910_9362 专用 env 也一并挂上，保持与 _build_env_commands 等价
     cmds.extend(_build_deepseek_fp8_env_commands(params, engine))
     cmds.extend(_build_ascend910_9362_env_commands(params, engine))
+    cmds = _filter_vllm_ascend_ray_incompatible_env(cmds, params, engine)
+    cmds.extend(_build_vllm_ascend_forced_env_commands(params, engine))
     return cmds
 
 
