@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -126,10 +127,10 @@ class TestNvidiaVllmParserMapping(unittest.TestCase):
 
     # UT-TCP-06
     def test_tcp06_deepseekv3_v31_deepseek_v31(self):
-        """DeepseekV3ForCausalLM + DeepSeek-V3.1 → deepseek_v31 / deepseek_r1。"""
+        """DeepseekV3ForCausalLM + DeepSeek-V3.1 → deepseek_v31 / deepseek_v3。"""
         ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3.1")
         self.assertEqual(ec.get("tool_call_parser"), "deepseek_v31")
-        self.assertEqual(ec.get("reasoning_parser"), "deepseek_r1")
+        self.assertEqual(ec.get("reasoning_parser"), "deepseek_v3")
 
     # UT-TCP-07
     def test_tcp07_deepseekv32_deepseek_v32_r1(self):
@@ -175,10 +176,10 @@ class TestNvidiaVllmParserMapping(unittest.TestCase):
 
     # UT-TCP-13
     def test_tcp13_minimax_m2_minimax_m2(self):
-        """MiniMaxM2ForCausalLM → minimax_m2 / minimax_m2。"""
+        """MiniMaxM2ForCausalLM → minimax_m2 / minimax_m2_append_think。"""
         ec = self._ec("MiniMaxM2ForCausalLM")
         self.assertEqual(ec.get("tool_call_parser"), "minimax_m2")
-        self.assertEqual(ec.get("reasoning_parser"), "minimax_m2")
+        self.assertEqual(ec.get("reasoning_parser"), "minimax_m2_append_think")
 
     # UT-TCP-14
     def test_tcp14_fc_disabled_no_parser(self):
@@ -219,17 +220,17 @@ class TestAscendVllmAscendParserMapping(unittest.TestCase):
 
     # UT-TCP-17
     def test_tcp17_deepseekv3_v31_ascend_deepseek_v31(self):
-        """DeepseekV3ForCausalLM + DeepSeek-V3.1（Ascend）→ deepseek_v31 / deepseek_r1。"""
+        """DeepseekV3ForCausalLM + DeepSeek-V3.1（Ascend）→ deepseek_v31 / deepseek_v3。"""
         ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3.1")
         self.assertEqual(ec.get("tool_call_parser"), "deepseek_v31")
-        self.assertEqual(ec.get("reasoning_parser"), "deepseek_r1")
+        self.assertEqual(ec.get("reasoning_parser"), "deepseek_v3")
 
     def test_tcp17b_deepseekv31_w8a8_ascend_uses_v31_parser(self):
         """DeepseekV3ForCausalLM + DeepSeek-V3.1-w8a8（Ascend）→ 复用 V3.1 专属 parser。"""
         ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3.1-w8a8")
         self.assertIs(ec.get("enable_auto_tool_choice"), True)
         self.assertEqual(ec.get("tool_call_parser"), "deepseek_v31")
-        self.assertEqual(ec.get("reasoning_parser"), "deepseek_r1")
+        self.assertEqual(ec.get("reasoning_parser"), "deepseek_v3")
 
     def test_tcp17c_deepseekv31_w8a8_fc_disabled_no_parser(self):
         """DeepSeek-V3.1-w8a8 未开启 FC 时，不应注入 tool_call_parser / reasoning_parser。"""
@@ -281,17 +282,33 @@ class TestNvidiaSglangParserMapping(unittest.TestCase):
         ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3")
         self.assertEqual(ec.get("tool_call_parser"), "deepseekv3")
 
+    def test_deepseekv31_sglang_h20_uses_deepseekv31(self):
+        """DeepSeek-V3.1 + SGLang + H20 → deepseekv31。"""
+        with patch.dict(os.environ, {"WINGS_H20_MODEL": "H20-96G"}):
+            ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3.1")
+        self.assertEqual(ec.get("tool_call_parser"), "deepseekv31")
+
+    def test_deepseekv32_sglang_uses_deepseekv32(self):
+        """DeepseekV32ForCausalLM + SGLang → deepseekv32。"""
+        ec = self._ec("DeepseekV32ForCausalLM", model_name="DeepSeek-V3.2")
+        self.assertEqual(ec.get("tool_call_parser"), "deepseekv32")
+
+    def test_qwen3_coder_sglang_uses_qwen3_coder(self):
+        """Qwen3-Coder + SGLang → qwen3_coder。"""
+        ec = self._ec("Qwen3MoeForCausalLM", model_name="Qwen3-Coder-480B-A35B-Instruct")
+        self.assertEqual(ec.get("tool_call_parser"), "qwen3_coder")
+
     # UT-TCP-21
-    def test_tcp21_qwen3_sglang_qwen25(self):
-        """Qwen3ForCausalLM + sglang → qwen25。"""
+    def test_tcp21_qwen3_sglang_qwen(self):
+        """Qwen3ForCausalLM + sglang → qwen。"""
         ec = self._ec("Qwen3ForCausalLM")
-        self.assertEqual(ec.get("tool_call_parser"), "qwen25")
+        self.assertEqual(ec.get("tool_call_parser"), "qwen")
 
     # UT-TCP-22
-    def test_tcp22_qwen3moe_sglang_qwen25(self):
-        """Qwen3MoeForCausalLM + sglang → qwen25。"""
+    def test_tcp22_qwen3moe_sglang_qwen(self):
+        """Qwen3MoeForCausalLM + sglang → qwen。"""
         ec = self._ec("Qwen3MoeForCausalLM")
-        self.assertEqual(ec.get("tool_call_parser"), "qwen25")
+        self.assertEqual(ec.get("tool_call_parser"), "qwen")
 
     # UT-TCP-23
     def test_tcp23_llama_sglang_llama3(self):
@@ -300,10 +317,50 @@ class TestNvidiaSglangParserMapping(unittest.TestCase):
         self.assertEqual(ec.get("tool_call_parser"), "llama3")
 
     # UT-TCP-24
-    def test_tcp24_glm4moe_sglang_no_parser(self):
-        """Glm4MoeForCausalLM + sglang → 无 tool_call_parser（SGLang 不配置 GLM parser）。"""
+    def test_tcp24_glm4moe_sglang_glm(self):
+        """Glm4MoeForCausalLM + sglang → glm。"""
         ec = self._ec("Glm4MoeForCausalLM")
-        self.assertNotIn("tool_call_parser", ec)
+        self.assertEqual(ec.get("tool_call_parser"), "glm")
+
+    def test_qwen35_sglang_uses_qwen(self):
+        """Qwen3.5 + SGLang → qwen。"""
+        ec = self._ec("Qwen3_5ForConditionalGeneration")
+        self.assertEqual(ec.get("tool_call_parser"), "qwen")
+
+    def test_glm4_sglang_uses_glm(self):
+        """Glm4ForCausalLM + SGLang → glm。"""
+        ec = self._ec("Glm4ForCausalLM")
+        self.assertEqual(ec.get("tool_call_parser"), "glm")
+
+    def test_config_file_kebab_case_keys_override_sglang_defaults(self):
+        """config-file 中 CLI 风格 kebab-case key 应归一化后覆盖 SGLang 默认值。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "sglang_kebab_config.json"
+            config_path.write_text(
+                json.dumps({
+                    "context-length": 32768,
+                    "mem-fraction-static": 0.95,
+                    "max-running-requests": 128,
+                    "tool-call-parser": "hermes",
+                    "grammar-backend": "xgrammar",
+                }),
+                encoding="utf-8",
+            )
+
+            ec = _load_engine_config(
+                self.HW,
+                "DeepseekV32ForCausalLM",
+                "sglang",
+                model_name="DeepSeek-V3.2",
+                config_file=str(config_path),
+            )
+
+        self.assertEqual(ec.get("context_length"), 32768)
+        self.assertEqual(ec.get("mem_fraction_static"), 0.95)
+        self.assertEqual(ec.get("max_running_requests"), 128)
+        self.assertEqual(ec.get("tool_call_parser"), "hermes")
+        self.assertEqual(ec.get("grammar_backend"), "xgrammar")
+        self.assertNotIn("tool-call-parser", ec)
 
 
 class TestAscendMindieParserMapping(unittest.TestCase):

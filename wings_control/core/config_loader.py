@@ -1516,6 +1516,41 @@ def _load_engine_fallback_defaults(engine: str) -> Dict[str, Any]:
     return cfg
 
 
+def _normalize_user_config_keys(user_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize top-level user config keys from kebab-case to snake_case.
+
+    ``--config-file`` users often copy CLI flag names such as
+    ``tool-call-parser`` into JSON.  Internally, engine_config uses Python-style
+    snake_case keys (``tool_call_parser``); without normalization the kebab key
+    becomes a separate field and cannot override defaults.
+
+    Only top-level keys are normalized.  Nested dict values may be engine-native
+    JSON payloads and must remain untouched.
+    """
+    if not isinstance(user_config, dict):
+        return user_config
+
+    normalized: Dict[str, Any] = {}
+    renamed: Dict[str, str] = {}
+    for key, value in user_config.items():
+        normalized_key = key.replace('-', '_') if isinstance(key, str) else key
+        if normalized_key in normalized and normalized_key != key:
+            logger.warning(
+                "Duplicate user config key after normalization: %s -> %s; "
+                "keeping existing value",
+                key,
+                normalized_key,
+            )
+            continue
+        normalized[normalized_key] = value
+        if normalized_key != key:
+            renamed[str(key)] = str(normalized_key)
+
+    if renamed:
+        logger.info("Normalized user config keys: %s", renamed)
+    return normalized
+
+
 def _load_user_config(config) -> Dict[str, Any]:
     """加载用户自定义 JSON 配置文件，合并到默认配置之上。
 
@@ -1531,14 +1566,14 @@ def _load_user_config(config) -> Dict[str, Any]:
     # 支持已反序列化的 dict 对象
     if isinstance(config, dict):
         logger.info("Config is already a dict, keys: %s", list(config.keys()))
-        return config
+        return _normalize_user_config_keys(config)
 
     if config.strip().startswith('{') and config.strip().endswith('}'):
         # JSON
         try:
             user_config = json.loads(config)
             logger.info("Successfully parsed config from JSON string, keys: %s", list(user_config.keys()))
-            return user_config
+            return _normalize_user_config_keys(user_config)
         except json.JSONDecodeError:
             logger.info("The config-file is not JSON string, will load it as a file")
     elif os.path.exists(config):
@@ -1551,6 +1586,7 @@ def _load_user_config(config) -> Dict[str, Any]:
             user_config = load_json_config(resolved)
             if user_config:
                 logger.info("User config loaded, keys: %s", list(user_config.keys()))
+                user_config = _normalize_user_config_keys(user_config)
     else:
         logger.warning("User-specified config not found or invalid: %s", config)
 

@@ -86,13 +86,13 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "deepseek_v31",
-            "reasoning_parser": "deepseek_r1"
+            "reasoning_parser": "deepseek_v3"
           },
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "deepseek_v31",
-            "reasoning_parser": "deepseek_r1"
+            "reasoning_parser": "deepseek_v3"
           },
           "mindie": {
             "maxSeqLen": 4096,
@@ -114,13 +114,13 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "deepseek_v31",
-            "reasoning_parser": "deepseek_r1"
+            "reasoning_parser": "deepseek_v3"
           },
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "deepseek_v31",
-            "reasoning_parser": "deepseek_r1"
+            "reasoning_parser": "deepseek_v3"
           },
           "mindie": {
             "maxSeqLen": 4096,
@@ -401,7 +401,7 @@
               "enable_cpu_binding": true
             },
             "tool_call_parser": "minimax_m2",
-            "reasoning_parser": "minimax_m2"
+            "reasoning_parser": "minimax_m2_append_think"
           },
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
@@ -415,7 +415,7 @@
               "enable_cpu_binding": true
             },
             "tool_call_parser": "minimax_m2",
-            "reasoning_parser": "minimax_m2"
+            "reasoning_parser": "minimax_m2_append_think"
           }
         }
       },

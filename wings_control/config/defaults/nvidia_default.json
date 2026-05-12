@@ -96,13 +96,13 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "deepseek_v31",
-            "reasoning_parser": "deepseek_r1"
+            "reasoning_parser": "deepseek_v3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "deepseek_v31",
-            "reasoning_parser": "deepseek_r1"
+            "reasoning_parser": "deepseek_v3"
           },
           "sglang": {
             "H20-96G": {
@@ -110,7 +110,7 @@
               "context_length": 4096,
               "mem_fraction_static": 0.9,
               "grammar_backend": "xgrammar",
-              "tool_call_parser": "deepseekv3"
+              "tool_call_parser": "deepseekv31"
             },
             "H20-141G": {
               "dp": 8,
@@ -129,13 +129,13 @@
               "show_time_cost": true,
               "enable_torch_compile": true,
               "torch_compile_max_bs": 32,
-              "tool_call_parser": "deepseekv3"
+              "tool_call_parser": "deepseekv31"
             }
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "deepseekv3"
+            "tool_call_parser": "deepseekv31"
           }
         }
       },
@@ -156,12 +156,12 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           }
         },
         "Qwen3-Coder-480B-A35B-Instruct": {
@@ -178,12 +178,12 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen3_coder"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen3_coder"
           }
         },
         "Qwen3-Coder-30B-A3B-Instruct": {
@@ -200,12 +200,12 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen3_coder"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen3_coder"
           }
         }
       },
@@ -226,12 +226,12 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           }
         }
       },
@@ -276,12 +276,12 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "deepseekv3"
+            "tool_call_parser": "deepseekv32"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "deepseekv3"
+            "tool_call_parser": "deepseekv32"
           }
         }
       },
@@ -301,11 +301,13 @@
           },
           "sglang": {
             "trust_remote_code": true,
-            "context_length": 4096
+            "context_length": 4096,
+            "tool_call_parser": "glm"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
-            "context_length": 4096
+            "context_length": 4096,
+            "tool_call_parser": "glm"
           }
         }
       },
@@ -325,11 +327,13 @@
           },
           "sglang": {
             "trust_remote_code": true,
-            "context_length": 4096
+            "context_length": 4096,
+            "tool_call_parser": "glm"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
-            "context_length": 4096
+            "context_length": 4096,
+            "tool_call_parser": "glm"
           }
         }
       },
@@ -352,12 +356,12 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           }
         }
       },
@@ -380,12 +384,12 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           }
         }
       },
@@ -395,13 +399,13 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "minimax_m2",
-            "reasoning_parser": "minimax_m2"
+            "reasoning_parser": "minimax_m2_append_think"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "minimax_m2",
-            "reasoning_parser": "minimax_m2"
+            "reasoning_parser": "minimax_m2_append_think"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -451,11 +455,13 @@
           },
           "sglang": {
             "trust_remote_code": true,
-            "context_length": 4096
+            "context_length": 4096,
+            "tool_call_parser": "glm"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
-            "context_length": 4096
+            "context_length": 4096,
+            "tool_call_parser": "glm"
           }
         }
       },
@@ -476,12 +482,12 @@
           "sglang": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           },
           "sglang_distributed": {
             "trust_remote_code": true,
             "context_length": 4096,
-            "tool_call_parser": "qwen25"
+            "tool_call_parser": "qwen"
           }
         }
       }

@@ -31,7 +31,7 @@ class TestMiniMaxM2AscendDefaults(unittest.TestCase):
         self.assertEqual(cfg["max_model_len"], 34816)
         self.assertEqual(cfg["max_num_seqs"], 64)
         self.assertEqual(cfg["tool_call_parser"], "minimax_m2")
-        self.assertEqual(cfg["reasoning_parser"], "minimax_m2_reasoning")
+        self.assertEqual(cfg["reasoning_parser"], "minimax_m2_append_think")
         self.assertEqual(cfg["compilation_config"], {"cudagraph_mode": "FULL_DECODE_ONLY"})
         self.assertEqual(cfg["additional_config"], {"enable_cpu_binding": True})
 
@@ -64,7 +64,7 @@ class TestMiniMaxM2AscendStartScript(unittest.TestCase):
                 "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
                 "additional_config": {"enable_cpu_binding": True},
                 "tool_call_parser": "minimax_m2",
-                "reasoning_parser": "minimax_m2_reasoning",
+                "reasoning_parser": "minimax_m2_append_think",
             },
         }
 
@@ -97,7 +97,7 @@ class TestMiniMaxM2AscendStartScript(unittest.TestCase):
         self.assertIn("--compilation-config '{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}'", script)
         self.assertIn("--additional-config '{\"enable_cpu_binding\":true}'", script)
         self.assertIn("--tool-call-parser minimax_m2", script)
-        self.assertIn("--reasoning-parser minimax_m2_reasoning", script)
+        self.assertIn("--reasoning-parser minimax_m2_append_think", script)
 
 
 if __name__ == "__main__":
