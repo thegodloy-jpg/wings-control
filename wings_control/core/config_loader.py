@@ -1784,6 +1784,11 @@ def _resolve_engine_choice(
     """Select an engine when missing, otherwise validate the user-provided engine."""
     engine = cmd_known_params.get("engine")
     if not engine:
+        if device_type == "nvidia" and (
+            cmd_known_params.get("enable_sparse") or cmd_known_params.get("enable_speculative_decode")
+        ):
+            logger.info("vLLM-only runtime feature enabled, automatically selected engine: vllm")
+            return "vllm"
         return _select_engine_automatically(device_type, device_name, gpu_usage_mode, model_info)
     return _validate_user_engine(engine, device_name, gpu_usage_mode, model_info)
 

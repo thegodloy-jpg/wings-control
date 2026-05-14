@@ -578,6 +578,51 @@ def _build_rank_table_device_ip_patch_commands() -> List[str]:
     ]
 
 
+_RANK_TABLE_DIAGNOSTIC_PYTHON_LINES = (
+    "import json, os",
+    "path = os.environ.get('RANK_TABLE_FILE', '')",
+    "print(f'[mindie] RANK_TABLE_FILE={path}')",
+    "print(f'[mindie] HCCL_IF_IP={os.environ.get(\"HCCL_IF_IP\", \"\")}')",
+    "print(f'[mindie] HCCL_SOCKET_IFNAME={os.environ.get(\"HCCL_SOCKET_IFNAME\", \"\")}')",
+    "print(f'[mindie] HCCL_DEVICE_IPS={\"set\" if os.environ.get(\"HCCL_DEVICE_IPS\") else \"unset\"}')",
+    "if not path or not os.path.isfile(path):",
+    "    print(f'[mindie] WARN: rank table file not found for diagnostics: {path}')",
+    "else:",
+    "    with open(path, 'r', encoding='utf-8') as f:",
+    "        rank_table = json.load(f)",
+    "    servers = rank_table.get('server_list', [])",
+    (
+        "    print(f'[mindie] rank table server_count="
+        "{rank_table.get(\"server_count\")} actual_servers={len(servers)}')"
+    ),
+    "    for server_idx, server in enumerate(servers):",
+    "        if not isinstance(server, dict):",
+    "            continue",
+    (
+        "        host_like = {str(server.get(k, '')) "
+        "for k in ('server_id', 'container_ip', 'host_nic_ip') if server.get(k)}"
+    ),
+    (
+        "        print(f'[mindie] rank table server[{server_idx}] "
+        "server_id={server.get(\"server_id\")} "
+        "container_ip={server.get(\"container_ip\")}')"
+    ),
+    "        for device in server.get('device', []) or []:",
+    "            if not isinstance(device, dict):",
+    "                continue",
+    "            device_ip = str(device.get('device_ip', ''))",
+    (
+        "            print(f'[mindie] rank table device rank={device.get(\"rank_id\")} "
+        "device_id={device.get(\"device_id\")} device_ip={device_ip}')"
+    ),
+    "            if device_ip in host_like:",
+    (
+        "                print(f'[mindie] WARN: rank table device_ip {device_ip} "
+        "equals server/container IP; 910B multi-node usually needs hccn/RDMA IP')"
+    ),
+)
+
+
 def _build_rank_table_diagnostics_commands() -> List[str]:
     """Build HCCL network and rank table diagnostic commands."""
     return [
@@ -589,47 +634,7 @@ def _build_rank_table_diagnostics_commands() -> List[str]:
             "else echo '[mindie] WARN: /etc/hccn.conf not found'; fi"
         ),
         "python3 << 'HCCL_RANK_TABLE_DIAG_EOF'",
-        "import json, os",
-        "path = os.environ.get('RANK_TABLE_FILE', '')",
-        "print(f'[mindie] RANK_TABLE_FILE={path}')",
-        "print(f'[mindie] HCCL_IF_IP={os.environ.get(\"HCCL_IF_IP\", \"\")}')",
-        "print(f'[mindie] HCCL_SOCKET_IFNAME={os.environ.get(\"HCCL_SOCKET_IFNAME\", \"\")}')",
-        "print(f'[mindie] HCCL_DEVICE_IPS={\"set\" if os.environ.get(\"HCCL_DEVICE_IPS\") else \"unset\"}')",
-        "if not path or not os.path.isfile(path):",
-        "    print(f'[mindie] WARN: rank table file not found for diagnostics: {path}')",
-        "else:",
-        "    with open(path, 'r', encoding='utf-8') as f:",
-        "        rank_table = json.load(f)",
-        "    servers = rank_table.get('server_list', [])",
-        (
-            "    print(f'[mindie] rank table server_count="
-            "{rank_table.get(\"server_count\")} actual_servers={len(servers)}')"
-        ),
-        "    for server_idx, server in enumerate(servers):",
-        "        if not isinstance(server, dict):",
-        "            continue",
-        (
-            "        host_like = {str(server.get(k, '')) "
-            "for k in ('server_id', 'container_ip', 'host_nic_ip') if server.get(k)}"
-        ),
-        (
-            "        print(f'[mindie] rank table server[{server_idx}] "
-            "server_id={server.get(\"server_id\")} "
-            "container_ip={server.get(\"container_ip\")}')"
-        ),
-        "        for device in server.get('device', []) or []:",
-        "            if not isinstance(device, dict):",
-        "                continue",
-        "            device_ip = str(device.get('device_ip', ''))",
-        (
-            "            print(f'[mindie] rank table device rank={device.get(\"rank_id\")} "
-            "device_id={device.get(\"device_id\")} device_ip={device_ip}')"
-        ),
-        "            if device_ip in host_like:",
-        (
-            "                print(f'[mindie] WARN: rank table device_ip {device_ip} "
-            "equals server/container IP; 910B multi-node usually needs hccn/RDMA IP')"
-        ),
+        *_RANK_TABLE_DIAGNOSTIC_PYTHON_LINES,
         "HCCL_RANK_TABLE_DIAG_EOF",
     ]
 

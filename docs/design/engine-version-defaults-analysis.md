@@ -1,4 +1,4 @@
-# 引擎稳定版本默认配置方案 — 完整分析与补充设计
+﻿# 引擎稳定版本默认配置方案 — 完整分析与补充设计
 
 > **源方案**: `D:\project\wings-k8s-260323\...\docs\design-engine-version-defaults.md`  
 > **分析基线**: `D:\project\wings-k8s-260325\...\wings_control\` 当前代码  
@@ -25,10 +25,10 @@
 
 | 文档 | 说明 |
 |------|------|
-| [design-model-file-config.md](design-model-file-config.md) | **主设计文档** — 目录结构、查找链、合并流程、支持模型列表 |
-| [design-model-file-config-schema.md](design-model-file-config-schema.md) | **Schema 与命名规范** — JSON Schema 定义、文件命名规则、校验策略、完整示例 |
-| [design-model-file-config-integration.md](design-model-file-config-integration.md) | **代码集成与迁移** — 代码插入点、新增函数设计、env_vars 注入、测试策略 |
-| [design-model-file-config-mindie.md](design-model-file-config-mindie.md) | **MindIE 专项** — 统一扁平格式决策、flat→nested 映射关系、MindIE 配置示例 |
+| [model-file-config.md](model-file-config.md) | **主设计文档** — 目录结构、查找链、合并流程、支持模型列表 |
+| [model-file-config-schema.md](model-file-config-schema.md) | **Schema 与命名规范** — JSON Schema 定义、文件命名规则、校验策略、完整示例 |
+| [model-file-config-integration.md](model-file-config-integration.md) | **代码集成与迁移** — 代码插入点、新增函数设计、env_vars 注入、测试策略 |
+| [model-file-config-mindie.md](model-file-config-mindie.md) | **MindIE 专项** — 统一扁平格式决策、flat→nested 映射关系、MindIE 配置示例 |
 
 ---
 

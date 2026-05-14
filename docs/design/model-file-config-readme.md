@@ -1,4 +1,4 @@
-# 模型级文件化配置方案导读
+﻿# 模型级文件化配置方案导读
 
 本系列文档描述 `model_deploy_config` 的演进方向。经过本轮评审后，方案从“文件查找替换旧逻辑”收敛为“文件链分层继承 + 旧逻辑兜底”，这样既能减少重复配置，也更适合渐进迁移。
 
@@ -17,13 +17,13 @@
 
 ## 2. 推荐阅读顺序
 
-1. [design-model-file-config.md](design-model-file-config.md)
+1. [model-file-config.md](model-file-config.md)
    先看主设计，明确目录结构、查找链、合并顺序和迁移边界。
-2. [design-model-file-config-schema.md](design-model-file-config-schema.md)
+2. [model-file-config-schema.md](model-file-config-schema.md)
    再看 Schema、命名规则和示例，确认配置文件怎么写。
-3. [design-model-file-config-integration.md](design-model-file-config-integration.md)
+3. [model-file-config-integration.md](model-file-config-integration.md)
    最后看集成方案，确认代码接入点和返回值设计。
-4. [design-model-file-config-mindie.md](design-model-file-config-mindie.md)
+4. [model-file-config-mindie.md](model-file-config-mindie.md)
    仅在涉及 MindIE 时阅读，关注扁平参数与嵌套 `config.json` 的映射。
 
 ---
@@ -32,11 +32,11 @@
 
 | 文档 | 内容 | 定位 |
 |------|------|------|
-| [design-model-file-config.md](design-model-file-config.md) | 主设计：目录结构、分层继承、env 原则、迁移策略 | 方案主文档 |
-| [design-model-file-config-schema.md](design-model-file-config-schema.md) | Schema、命名规范、校验规则、示例 | 配置编写规范 |
-| [design-model-file-config-integration.md](design-model-file-config-integration.md) | 集成点、辅助函数、返回值结构、测试建议 | 开发落地说明 |
-| [design-model-file-config-mindie.md](design-model-file-config-mindie.md) | MindIE 参数映射与迁移方式 | MindIE 专项 |
-| [design-engine-version-defaults-analysis.md](design-engine-version-defaults-analysis.md) | 版本默认配置前置分析 | 背景材料 |
+| [model-file-config.md](model-file-config.md) | 主设计：目录结构、分层继承、env 原则、迁移策略 | 方案主文档 |
+| [model-file-config-schema.md](model-file-config-schema.md) | Schema、命名规范、校验规则、示例 | 配置编写规范 |
+| [model-file-config-integration.md](model-file-config-integration.md) | 集成点、辅助函数、返回值结构、测试建议 | 开发落地说明 |
+| [model-file-config-mindie.md](model-file-config-mindie.md) | MindIE 参数映射与迁移方式 | MindIE 专项 |
+| [engine-version-defaults-analysis.md](engine-version-defaults-analysis.md) | 版本默认配置前置分析 | 背景材料 |
 
 ---
 

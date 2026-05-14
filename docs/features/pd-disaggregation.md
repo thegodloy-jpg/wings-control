@@ -1,6 +1,6 @@
-# Ascend NPU PD 分离部署指南
+# Ascend NPU PD 分离特性
 
-> 基于 vllm-ascend v0.17.0rc1 + wings_control 的 Prefill-Decode 分离部署实践
+> 基于 vLLM-Ascend + Wings-Control 的 Prefill-Decode 分离能力说明。PD 分离不是独立部署形态；它通过 Docker Compose 或 K8s 编排落地，`wings_start.sh` 支持的启动项统一使用 CLI 字段，环境变量只保留无 CLI 的运行时变量。
 
 ## 1. 概述
 
@@ -49,7 +49,7 @@
 
 ### 2.2 软件要求
 
-- Docker 20.10+（无需 docker-compose）
+- Docker 20.10+ 与 Docker Compose V2，或可用的 K8s 集群
 - CANN 8.5.1+
 - 容器镜像: `swr.cn-south-1.myhuaweicloud.com/ascendhub/vllm-ascend:v0.17.0rc1`
 
@@ -62,63 +62,99 @@
 
 ### 3.1 通用环境变量（P/D 共用）
 
-```bash
-# 基础配置
-DEVICE=ascend
-DEVICE_COUNT=1                    # 每个节点使用的 NPU 数
-ENGINE=vllm_ascend
-MODEL_NAME=Qwen3-8B
-MODEL_PATH=/models/Qwen3-8B
-
-# 网络配置
-RANK_IP=7.6.52.170               # 当前节点 IP
-NETWORK_INTERFACE=ens65f1np1      # RDMA 网卡名（关键！）
-
-# A+X 环境配置（triton/triton-ascend 版本冲突）
-ASCEND_ENFORCE_EAGER=true         # A+X 环境必须设为 true
-
-# PD 并行配置（MooncakeConnectorV1 要求）
-PD_PREFILL_TP_SIZE=1
-PD_PREFILL_DP_SIZE=1
-PD_DECODE_TP_SIZE=1
-PD_DECODE_DP_SIZE=1
-```
+| 字段 | 示例值 | 说明 |
+|------|--------|------|
+| `WINGS_DEVICE` | `ascend` | 硬件类型 |
+| `WINGS_DEVICE_COUNT` | `1` | 每个 P/D 实例使用的 NPU 数 |
+| `RANK_IP` | `7.6.52.170` | 当前节点 IP |
+| `NETWORK_INTERFACE` | `ens65f1np1` | RDMA 网卡名 |
+| `ASCEND_ENFORCE_EAGER` | `true` | A+X 环境跳过图编译 |
+| `PD_PREFILL_TP_SIZE` / `PD_PREFILL_DP_SIZE` | `1` / `1` | Prefill 并行配置 |
+| `PD_DECODE_TP_SIZE` / `PD_DECODE_DP_SIZE` | `1` / `1` | Decode 并行配置 |
 
 ### 3.2 P 节点专属环境变量
 
-```bash
-PD_ROLE=P
-ENGINE_PORT=17200                 # 引擎端口（避免与 D 冲突）
-PORT=18200                        # Proxy 端口
-HEALTH_PORT=19400                 # 健康检查端口
-MONITOR_PROXY_PORT=19500
-VLLM_LLMDD_RPC_PORT=5569
-VLLM_MOONCAKE_BOOTSTRAP_PORT=23000
-```
+| 字段 | 示例值 | 说明 |
+|------|--------|------|
+| `PD_ROLE` | `P` | Prefill 角色 |
+| `ENGINE_PORT` | `17200` | Engine 端口，避免与 D 冲突 |
+| `--port` | `18200` | Proxy 端口，通过 CLI 传入 |
+| `HEALTH_PORT` | `19400` | 健康检查端口 |
+| `MONITOR_PROXY_PORT` | `19500` | 监控代理端口 |
+| `VLLM_LLMDD_RPC_PORT` | `5569` | vLLM LLMDD RPC 端口 |
+| `VLLM_MOONCAKE_BOOTSTRAP_PORT` | `23000` | Mooncake bootstrap 端口 |
 
 ### 3.3 D 节点专属环境变量
 
+| 字段 | 示例值 | 说明 |
+|------|--------|------|
+| `PD_ROLE` | `D` | Decode 角色 |
+| `ENGINE_PORT` | `17100` | Engine 端口 |
+| `--port` | `18100` | Proxy 端口，通过 CLI 传入 |
+| `HEALTH_PORT` | `19200` | 健康检查端口 |
+| `MONITOR_PROXY_PORT` | `19300` | 监控代理端口 |
+| `VLLM_LLMDD_RPC_PORT` | `5570` | vLLM LLMDD RPC 端口 |
+| `VLLM_MOONCAKE_BOOTSTRAP_PORT` | `23100` | Mooncake bootstrap 端口 |
+
+## 4. Compose / K8s 使用方式
+
+### 4.1 Control 容器完整启动命令
+
+Prefill 节点控制容器完整启动命令：
+
 ```bash
-PD_ROLE=D
-ENGINE_PORT=17100
-PORT=18100
-HEALTH_PORT=19200
-MONITOR_PROXY_PORT=19300
-VLLM_LLMDD_RPC_PORT=5570
-VLLM_MOONCAKE_BOOTSTRAP_PORT=23100
+WINGS_DEVICE="ascend" \
+WINGS_DEVICE_COUNT="1" \
+PD_ROLE="P" \
+ENGINE_PORT="17200" \
+HEALTH_PORT="19400" \
+MONITOR_PROXY_PORT="19500" \
+RANK_IP="7.6.52.170" \
+NETWORK_INTERFACE="ens65f1np1" \
+ASCEND_ENFORCE_EAGER="true" \
+PD_PREFILL_TP_SIZE="1" \
+PD_PREFILL_DP_SIZE="1" \
+PD_DECODE_TP_SIZE="1" \
+PD_DECODE_DP_SIZE="1" \
+VLLM_LLMDD_RPC_PORT="5569" \
+VLLM_MOONCAKE_BOOTSTRAP_PORT="23000" \
+bash /opt/wings-control/wings_start.sh \
+  --model-name "Qwen3-8B" \
+  --model-path "/models/Qwen3-8B" \
+  --engine vllm_ascend \
+  --device-count 1 \
+  --port 18200 \
+  --trust-remote-code
 ```
 
-## 4. 容器部署
-
-### 4.1 Control 容器
+Decode 节点控制容器完整启动命令：
 
 ```bash
-# 安装依赖
-pip install orjson fastapi uvicorn pydantic pydantic-settings httpx python-dotenv
-
-# 启动 wings_control
-python3 -m wings_control
+WINGS_DEVICE="ascend" \
+WINGS_DEVICE_COUNT="1" \
+PD_ROLE="D" \
+ENGINE_PORT="17100" \
+HEALTH_PORT="19200" \
+MONITOR_PROXY_PORT="19300" \
+RANK_IP="7.6.52.170" \
+NETWORK_INTERFACE="ens65f1np1" \
+ASCEND_ENFORCE_EAGER="true" \
+PD_PREFILL_TP_SIZE="1" \
+PD_PREFILL_DP_SIZE="1" \
+PD_DECODE_TP_SIZE="1" \
+PD_DECODE_DP_SIZE="1" \
+VLLM_LLMDD_RPC_PORT="5570" \
+VLLM_MOONCAKE_BOOTSTRAP_PORT="23100" \
+bash /opt/wings-control/wings_start.sh \
+  --model-name "Qwen3-8B" \
+  --model-path "/models/Qwen3-8B" \
+  --engine vllm_ascend \
+  --device-count 1 \
+  --port 18100 \
+  --trust-remote-code
 ```
+
+在 Compose/K8s 中，把上述 CLI 字段放入 `command` / `args`，把前置环境变量放入 `environment` / `env`。
 
 ### 4.2 Engine 容器
 
@@ -136,30 +172,16 @@ while [ ! -f /shared-volume/start_command.sh ]; do sleep 2; done
 bash /shared-volume/start_command.sh
 ```
 
-### 4.3 Docker Run 完整示例
+### 4.3 启动
+
+PD 场景建议沿用根目录 [../README.md](../README.md) 的三容器模板：每个 P/D 实例都是一组独立的 `wings-control` + Engine，共享卷、端口和设备号必须互相隔离。
 
 ```bash
-# P 节点 - Control
-docker run -d --name pd-control-p --network host \
-  -e PD_ROLE=P -e ENGINE_PORT=17200 -e PORT=18200 \
-  -e HEALTH_PORT=19400 -e NETWORK_INTERFACE=ens65f1np1 \
-  -e ASCEND_ENFORCE_EAGER=true \
-  -v pd-shared-vol-p:/shared-volume \
-  -v /data/zhanghui/wings-control:/opt/wings-control:ro \
-  vllm-ascend:v0.17.0rc1 \
-  python3 -m wings_control
-
-# P 节点 - Engine
-docker run -d --name pd-engine-p --network host --privileged \
-  -e ASCEND_RT_VISIBLE_DEVICES=2 \
-  -v pd-shared-vol-p:/shared-volume \
-  -v /data/xqr/Qwen3-8B:/models/Qwen3-8B:ro \
-  vllm-ascend:v0.17.0rc1 \
-  /bin/sh -c "pip install mooncake-transfer-engine && \
-    export LD_LIBRARY_PATH=/usr/local/lib:\$LD_LIBRARY_PATH && \
-    while [ ! -f /shared-volume/start_command.sh ]; do sleep 2; done && \
-    bash /shared-volume/start_command.sh"
+docker compose -f docker-compose.pd-qwen3-8b.yml up -d
+docker compose -f docker-compose.pd-qwen3-8b.yml logs -f
 ```
+
+K8s 场景建议把 P/D 分别建成独立 Pod 或独立 Deployment，并使用不同 Service 暴露 Proxy 端口。
 
 ## 5. 关键问题与解决方案
 
@@ -167,7 +189,7 @@ docker run -d --name pd-engine-p --network host --privileged \
 
 | # | 问题 | 错误信息 | 解决方案 |
 |---|------|---------|---------|
-| 1 | Docker 版本太旧 | `docker compose: command not found` | 使用原生 `docker run` |
+| 1 | Docker Compose 不可用 | `docker compose: command not found` | 安装 Docker Compose V2，或改用 K8s 编排 |
 | 2 | 端口冲突 | `Address already in use` | 使用不同 ENGINE_PORT/PORT |
 | 3 | Shell 转义 | Python SyntaxWarning | 使用 `\\$` 替代 `\$` |
 | 4 | NPU 内存满 | HBM 占用 >90% | 使用空闲 NPU |
@@ -233,7 +255,7 @@ docker logs pd-engine-d 2>&1 | tail -50
 # "INFO:     Started server process"
 ```
 
-## 7. wings_control 代码修改点
+## 7. 实现参考
 
 本次部署对 wings_control 进行了以下关键修改：
 

@@ -1,4 +1,4 @@
-# vLLM / vLLM-Ascend 高级特性 start_command 验证
+﻿# vLLM / vLLM-Ascend 高级特性 start_command 验证
 
 > 目的：明确 `engine=vllm` 与 `engine=vllm_ascend` 场景下，开启各高级特性后，最终写入共享卷的 `start_command.sh` 中会出现哪些关键片段，尤其是 `install.py --features` 的 engine key、补丁安装命令和 `python3 -m vllm.entrypoints.openai.api_server` 启动参数。
 

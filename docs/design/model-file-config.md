@@ -1,10 +1,10 @@
-# 按模型文件化配置方案设计
+﻿# 按模型文件化配置方案设计
 
 > 关联文档:
-> - [design-model-file-config-schema.md](design-model-file-config-schema.md)
-> - [design-model-file-config-integration.md](design-model-file-config-integration.md)
-> - [design-model-file-config-mindie.md](design-model-file-config-mindie.md)
-> - [design-engine-version-defaults-analysis.md](design-engine-version-defaults-analysis.md)
+> - [model-file-config-schema.md](model-file-config-schema.md)
+> - [model-file-config-integration.md](model-file-config-integration.md)
+> - [model-file-config-mindie.md](model-file-config-mindie.md)
+> - [engine-version-defaults-analysis.md](engine-version-defaults-analysis.md)
 
 ---
 

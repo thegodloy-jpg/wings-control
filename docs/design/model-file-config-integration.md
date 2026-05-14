@@ -1,8 +1,8 @@
-# 模型文件化配置方案代码集成与迁移说明
+﻿# 模型文件化配置方案代码集成与迁移说明
 
 > 关联文档:
-> - [design-model-file-config.md](design-model-file-config.md)
-> - [design-model-file-config-schema.md](design-model-file-config-schema.md)
+> - [model-file-config.md](model-file-config.md)
+> - [model-file-config-schema.md](model-file-config-schema.md)
 
 ---
 

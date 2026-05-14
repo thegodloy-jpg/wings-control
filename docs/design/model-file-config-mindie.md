@@ -1,7 +1,7 @@
 # 模型文件化配置 — MindIE 专项说明
 
-> 关联文档: [design-model-file-config.md](design-model-file-config.md) — 主设计文档  
-> 关联文档: [design-model-file-config-integration.md](design-model-file-config-integration.md) — 代码集成方案
+> 关联文档: [model-file-config.md](model-file-config.md) — 主设计文档
+> 关联文档: [model-file-config-integration.md](model-file-config-integration.md) — 代码集成方案
 
 ---
 

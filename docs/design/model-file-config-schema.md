@@ -1,6 +1,6 @@
-# 模型文件化配置方案 Schema 与命名规范
+﻿# 模型文件化配置方案 Schema 与命名规范
 
-> 关联文档: [design-model-file-config.md](design-model-file-config.md)
+> 关联文档: [model-file-config.md](model-file-config.md)
 
 ---
 

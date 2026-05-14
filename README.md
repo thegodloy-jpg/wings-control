@@ -1,506 +1,227 @@
-# Wings-Control 统一推理控制 Sidecar
+# Wings-Control
 
-> **引擎**: vLLM · vLLM-Ascend · SGLang · MindIE · Wings  
-> **硬件**: NVIDIA GPU · Ascend 910B NPU  
-> **模式**: 单机 · 分布式 (Ray/HCCL/nnodes) · Master-Worker  
-> **兼容**: 与 wings/wings_start.sh 100% CLI 兼容
+Wings-Control 是统一推理控制 Sidecar。它不直接运行 vLLM、vLLM-Ascend、SGLang 或 MindIE，而是负责解析启动字段、探测或读取硬件上下文、合并默认配置和用户配置、生成 `/shared-volume/start_command.sh`，并托管 Proxy、Health、Monitor Proxy 等控制面服务。真实推理 Engine 容器等待并执行这个启动脚本。
 
----
+## 运行链路
 
-## 快速开始
+```text
+CLI / env / config-file / hardware_info.json
+        |
+        v
+wings_start.sh
+        |
+        v
+python -m wings_control
+  - 解析启动参数
+  - 读取硬件信息
+  - 自动选择或校验引擎
+  - 合并默认配置、模型配置和用户配置
+  - 写出 /shared-volume/start_command.sh
+  - 启动 Proxy / Health / Monitor Proxy
+        |
+        v
+Engine 容器执行 /shared-volume/start_command.sh
+```
+
+## 交付组件
+
+| 组件 | 职责 |
+|------|------|
+| 控制面镜像 | 运行 `bash /opt/wings-control/wings_start.sh`，生成 Engine 启动脚本并托管控制面服务。部署文档通常写作 `wings-control:<version>`；当前构建脚本的历史产物名为 `fusionregistry:5000/wings-infer:<version>` |
+| `wings-accel:<version>` | 可选加速包镜像，通常作为 Compose 初始化容器或 K8s `initContainer`，把加速包准备到 `/accel-volume` |
+| Engine 镜像 | 真实推理运行时，例如 vLLM、vLLM-Ascend、SGLang、MindIE |
+
+## 支持范围
+
+正式部署形态只分为两类：
+
+1. Docker Compose
+2. K8s
+
+单机多卡、多机分布式、PD 分离、LMCache、Sparse KV、投机推理、Function Call、RAG 加速、Wings Router 等属于特性或能力场景，不作为独立部署形态描述。
+
+支持的 `--engine` 值来自 `wings_control/core/start_args_compat.py`：
+
+| 引擎值 | 典型硬件 | 适配器 |
+|--------|----------|--------|
+| `vllm` | NVIDIA | `wings_control/engines/vllm_adapter.py` |
+| `vllm_ascend` | Ascend | 复用 vLLM 适配器，追加 Ascend 环境和参数 |
+| `sglang` | NVIDIA | `wings_control/engines/sglang_adapter.py` |
+| `mindie` | Ascend | `wings_control/engines/mindie_adapter.py` |
+
+## 快速入口
+
+| 目标 | 文档 |
+|------|------|
+| 了解产品边界和运行链路 | [产品总览](docs/product-overview.md) |
+| 查看兼容性口径和人工维护矩阵 | [兼容性矩阵](docs/compatibility.md) |
+| 使用 Docker Compose 部署 | [Docker Compose 部署](docs/deployment/docker-compose.md) |
+| 使用 K8s 部署 | [K8s 部署](docs/deployment/k8s.md) |
+| 使用 PD 分离、分布式、LMCache、Sparse KV 等能力 | [特性索引](docs/features/index.md) |
+| 查看完整文档目录 | [docs/README.md](docs/README.md) |
+
+兼容性结论应以当前 `wings_control/utils/model_utils.py`、`wings_control/config/defaults/`、`tests/`、`docs/examples/` 和实际部署验证为准；手写矩阵需要随代码和配置同步维护。
+
+## 关键目录
+
+| 路径 | 说明 |
+|------|------|
+| `wings_control/wings_start.sh` | 兼容历史 Wings 启动入口的 Shell 包装脚本 |
+| `wings_control/wings_control.py` | Sidecar launcher 主流程，负责写脚本和守护子服务 |
+| `wings_control/core/start_args_compat.py` | `python -m wings_control` 的 CLI 契约和环境变量回退 |
+| `wings_control/core/config_loader.py` | 默认配置、模型配置、用户配置和 CLI 覆盖的合并逻辑 |
+| `wings_control/core/hardware_detect.py` | 从 `/shared-volume/hardware_info.json` 或环境变量读取硬件上下文 |
+| `wings_control/engines/` | vLLM、SGLang、MindIE 启动脚本生成适配器 |
+| `wings_control/proxy/` | OpenAI 兼容代理、健康检查和监控代理 |
+| `wings_control/config/defaults/` | 引擎、硬件和模型架构默认配置 |
+| `build/` | `wings-accel` 与控制面镜像构建脚本 |
+
+## 配置优先级
+
+`wings_start.sh` 层的优先级是：
+
+```text
+CLI 参数 > 环境变量 > 脚本默认值
+```
+
+进入 Python launcher 后，配置合并的有效优先级是：
+
+```text
+引擎/硬件/模型默认配置 < --config-file 指定的用户 JSON < CLI/环境变量启动字段 < 适配器生成的运行时参数
+```
+
+硬件信息优先从 `WINGS_HARDWARE_FILE` 指向的 JSON 读取，默认路径为 `/shared-volume/hardware_info.json`。文件不存在或读取失败时，回退到 `WINGS_DEVICE` / `DEVICE` / `HARDWARE_TYPE`、`WINGS_DEVICE_COUNT` / `DEVICE_COUNT`、`WINGS_DEVICE_NAME` 等环境变量。
+
+## 默认端口
+
+| 服务 | 默认端口 | 覆盖方式 | 用途 |
+|------|----------|----------|------|
+| Engine | `17000` | `ENGINE_PORT` | Engine 容器内真实推理服务 |
+| Proxy | `18000` | `--port` / `PROXY_PORT` / `PORT` | OpenAI 兼容 API 入口 |
+| Health | `19000` | `HEALTH_PORT` | `/health` 与 `/v1/health` |
+| Monitor Proxy | `19100` | `MONITOR_PROXY_PORT` | 透传 Engine 侧监控接口 |
+
+当前 `wings_control.py` 的 v4 MVP 要求启用 Proxy，`ENABLE_REASON_PROXY=false` 会直接返回错误。
+
+## 共享卷契约
+
+| 路径 | 生产方 | 消费方 | 说明 |
+|------|--------|--------|------|
+| `/shared-volume/start_command.sh` | `wings-control` | Engine 容器 | 最终引擎启动脚本 |
+| `/shared-volume/progress.jsonl` | Engine / log analyzer | 控制面和运维侧 | 启动进度记录 |
+| `/shared-volume/accel_features.jsonl` | Engine / log analyzer | 控制面和运维侧 | 加速特性记录 |
+| `/shared-volume/lmcache_config.yaml` | vLLM 适配器 | Engine 容器 | LMCache Offload 开启时生成的配置 |
+| `/accel-volume` | `wings-accel` | 控制面和 Engine 容器 | 可选加速包目录 |
+
+## 最小启动示例
+
+`wings_start.sh` 支持的参数以脚本内 `usage()` 和 `case` 分支为准；当前没有 `--chip` 参数。卡型或硬件详情通过环境变量或 `hardware_info.json` 传入。
 
 ```bash
-# 1. 构建镜像
-cd infer-control-sidecar-unified/
-docker build -t wings-control:latest wings-control/
-
-# 2. 单容器测试（仅生成启动脚本）
-docker run --rm -it \
-  -e WINGS_SKIP_PID_CHECK=true \
-  -p 18000:18000 -p 19000:19000 \
-  wings-control:latest \
-  --model-name test-model --model-path /weights
-
-# 3. 验证
-curl http://localhost:19000/health
+WINGS_DEVICE="nvidia" \
+WINGS_DEVICE_COUNT="2" \
+WINGS_DEVICE_NAME="H20-96G" \
+ENGINE_PORT="17000" \
+HEALTH_PORT="19000" \
+MONITOR_PROXY_PORT="19100" \
+bash /opt/wings-control/wings_start.sh \
+  --model-name "Qwen3.5-27B" \
+  --model-path "/models/Qwen3.5-27B" \
+  --engine vllm \
+  --device-count 2 \
+  --port 18000 \
+  --input-length 8192 \
+  --output-length 2048 \
+  --trust-remote-code
 ```
 
-更多场景参见 [docs/QUICKSTART.md](docs/QUICKSTART.md)
+在 Compose 或 K8s 中，优先把有 CLI 形式的字段放入 `command` / `args`，把运行时环境放入 `environment` / `env`，例如 `ENGINE_PORT`、`HEALTH_PORT`、`MONITOR_PROXY_PORT`、`WINGS_DEVICE`、`WINGS_DEVICE_COUNT`、`WINGS_DEVICE_NAME`、`WINGS_HARDWARE_FILE`、`RANK_IP`、`MASTER_IP`、`NODE_IPS`、`PD_ROLE`、`LMCACHE_*`、`WINGS_ROUTE_*`。
 
----
+通过 `wings_start.sh` 传递的常用 CLI 字段：
 
-## 架构
+| 参数 | 环境变量回退 | 是否必填 | 默认值 | 说明 |
+|------|--------------|----------|--------|------|
+| `--model-name` | `MODEL_NAME` | 是 | 无 | API 暴露的模型名；`wings_start.sh` 未提供时会退出 |
+| `--model-path` | `MODEL_PATH` | 否 | `/weights` | 模型权重目录；目录下的 `config.json` 会被 `model_utils.py` 读取 |
+| `--engine` | `ENGINE` | 否 | `vllm` | 推理引擎，支持 `vllm`、`vllm_ascend`、`sglang`、`mindie` |
+| `--port` | `PORT` / `PROXY_PORT` | 否 | `18000` | Proxy 对外端口；Engine 端口由 `ENGINE_PORT` 控制 |
+| `--host` | `HOST` | 否 | 空 / `0.0.0.0` | 服务监听地址，通常不需要显式传入 |
+| `--model-type` | `MODEL_TYPE` | 否 | `auto` | `auto`、`llm`、`embedding`、`rerank` 等；`auto` 时由 `model_utils.py` 推断 |
+| `--save-path` | `SAVE_PATH` | 否 | `/opt/wings/outputs` | 生成输出目录，主要用于多模态/扩展场景 |
+| `--input-length` | `INPUT_LENGTH` | 否 | `4096` | 最大输入长度 |
+| `--output-length` | `OUTPUT_LENGTH` | 否 | `1024` | 最大输出长度 |
+| `--max-num-seqs` | `MAX_NUM_SEQS` | 否 | `32` | 最大并发序列数 |
+| `--max-num-batched-tokens` | `MAX_NUM_BATCHED_TOKENS` | 否 | `4096` | 最大批处理 token 数 |
+| `--dtype` | `DTYPE` | 否 | `auto` | 权重/计算 dtype |
+| `--kv-cache-dtype` | `KV_CACHE_DTYPE` | 否 | `auto` | KV cache dtype |
+| `--quantization` | `QUANTIZATION` | 否 | 空 | 量化方式 |
+| `--quantization-param-path` | `QUANTIZATION_PARAM_PATH` | 否 | 空 | 量化参数路径 |
+| `--gpu-memory-utilization` | `GPU_MEMORY_UTILIZATION` | 否 | `0.9` | 显存利用率上限 |
+| `--block-size` | `BLOCK_SIZE` | 否 | `16` | KV block size；Ascend prefix cache 场景可能被代码修正 |
+| `--seed` | `SEED` | 否 | `0` | 随机种子 |
+| `--trust-remote-code` | `TRUST_REMOTE_CODE` | 否 | 关闭 | 信任模型仓库自定义代码 |
+| `--enable-chunked-prefill` | `ENABLE_CHUNKED_PREFILL` | 否 | 关闭 | 开启 chunked prefill |
+| `--enable-prefix-caching` | `ENABLE_PREFIX_CACHING` | 否 | 关闭 | 开启 prefix cache |
+| `--enable-expert-parallel` | `ENABLE_EXPERT_PARALLEL` | 否 | 关闭 | MoE 专家并行 |
+| `--enable-speculative-decode` | `ENABLE_SPECULATIVE_DECODE` | 否 | 关闭 | 开启投机推理 |
+| `--speculative-decode-model-path` | `SPECULATIVE_DECODE_MODEL_PATH` | 否 | 空 | 草稿模型路径；只在投机推理草稿模型策略中需要 |
+| `--enable-sparse` | `ENABLE_SPARSE` | 否 | 关闭 | 开启 Sparse KV 相关逻辑 |
+| `--enable-rag-acc` | `ENABLE_RAG_ACC` | 否 | 关闭 | 开启 RAG 加速相关链路 |
+| `--enable-auto-tool-choice` | `ENABLE_AUTO_TOOL_CHOICE` | 否 | 关闭 | 开启 Function Call / Tool Choice |
+| `--distributed` | `DISTRIBUTED` | 否 | 关闭 | 开启分布式入口；拓扑用 `RANK_IP`、`MASTER_IP`、`NODE_IPS`、`NNODES` 等环境变量 |
+| `--device-count` | `DEVICE_COUNT` / `WINGS_DEVICE_COUNT` | 否 | `1` | 当前实例使用的 GPU/NPU 数 |
+| `--config-file` | `CONFIG_FILE` | 否 | 空 | 用户自定义 JSON 配置文件 |
+| `--gpu-usage-mode` | `GPU_USAGE_MODE` | 否 | `full` | GPU 使用模式，供配置选择逻辑使用 |
 
-```
-┌─ K8s Pod ──────────────────────────────────────────────┐
-│  (可选) initContainer: accel-init → /accel-volume/     │
-│                                                         │
-│  wings-control (Sidecar)          engine 容器             │
-│  ┌────────────────────┐   ┌──────────────────────┐     │
-│  │ wings_start.sh     │   │ 等待 start_command.sh│     │
-│  │  → python -m app.main │ │  → bash 执行         │     │
-│  │  → 生成脚本 ───────┼──→│  → serve :17000      │     │
-│  │  → proxy :18000    │   │                      │     │
-│  │  → health :19000   │   │                      │     │
-│  └────────────────────┘   └──────────────────────┘     │
-│              共享卷: /shared-volume/                     │
-└─────────────────────────────────────────────────────────┘
-```
+`python -m wings_control` 的内部 parser 还支持 `--nnodes`、`--node-ips`、`--nodes`、`--master-ip`、`--head-node-addr`、`--distributed-executor-backend`、`--ray-head-ip`、`--compilation-config` 等字段；默认镜像入口经过 `wings_start.sh` 时，分布式拓扑仍建议用 `RANK_IP`、`MASTER_IP`、`NODE_IPS`、`NNODES` 等环境变量传入。
 
-**数据流**: CLI/环境变量 → `wings_start.sh` → `app.main` → 配置合并(4层) → 引擎适配器 → `start_command.sh` → engine 容器执行
+## 启动后验证
 
-**配置优先级**: CLI 参数 > 环境变量 > 用户配置文件 > 模型特定配置 > 硬件默认配置
-
----
-
-## 支持矩阵
-
-| 引擎 | 单机 | 分布式 | 硬件 | K8s Overlay |
-|------|------|--------|------|-------------|
-| vllm | ✅ | ✅ Ray/DP | NVIDIA GPU | `vllm-single/` · `vllm-distributed/` |
-| vllm_ascend | ✅ | ✅ Ray | Ascend 910B | `vllm-ascend-single/` · `vllm-ascend-distributed/` |
-| sglang | ✅ | ✅ nnodes | NVIDIA GPU | `sglang-single/` · `sglang-distributed/` |
-| mindie | ✅ | ✅ HCCL | Ascend 910B | `mindie-single/` · `mindie-distributed/` |
-| wings | ✅ | — | GPU/NPU | — |
-
-**自动引擎选择**: Ascend + vllm → `vllm_ascend` · mmgm 模型 → `wings` · embedding/rerank + Ascend → `vllm_ascend`
-
----
-
-## 项目结构
-
-```
-infer-control-sidecar-unified/
-├── .env.example                      # 环境变量模板
-├── wings_control/                    # 后端控制服务 (Python 包)
-│   ├── Dockerfile                    # Sidecar 镜像
-│   ├── wings_start.sh                # 启动入口 (ENTRYPOINT)
-│   ├── wings_control.py              # 主入口 (角色分发 / 进程守护)
-│   ├── health.py                     # 健康检查 (独立 uvicorn :19000)
-│   ├── requirements.txt
-│   ├── config/                       # 配置 (settings.py)
-│   │   └── defaults/                 # 引擎默认 JSON 配置
-│   ├── core/                         # 核心 (config_loader · wings_entry · engine_manager · hardware_detect · port_plan · start_args_compat)
-│   ├── engines/                      # 适配器 (vllm_adapter · sglang_adapter · mindie_adapter)
-│   ├── distributed/                  # 分布式 (master · worker · monitor · scheduler)
-│   ├── proxy/                        # 当前代理 (gateway · health_router · health_service · http_client · queueing · proxy_config · monitor_proxy · tags)
-│   ├── proxy-new/                    # 重构版代理 (新增 priority_queue · metrics_poller · prefix_affinity · request_preprocessor · token_estimator · stream_compress)
-│   │                                 # 详见 [wings_control/proxy-new/README.md](wings_control/proxy-new/README.md)
-│   ├── rag_acc/                      # RAG 加速 (rag_app · stream_collector · document_processor · templates)
-│   └── utils/                        # 工具 (env_utils · file_utils · model_utils · noise_filter · log_config · process_utils)
-│                                     # ⚠️ device_utils.py 为遗留代码，未被调用
-│                                     #    实际硬件检测由 core/hardware_detect.py 通过环境变量完成
-├── wings-accel/                      # 加速包 (可选 initContainer)
-│   └── build-accel-image.sh          # Accel 镜像构建脚本
-├── k8s/{base,overlays/}              # Kustomize (8 个部署 overlay)
-└── docs/                             # 详细文档 (deploy/ · verify/)
-```
-
----
-
-## 部署
-
-### Docker Compose (单机)
-
-```yaml
-services:
-  wings-control:
-    image: wings-control:latest
-    ports: ["18000:18000", "19000:19000"]
-    environment:
-      ENGINE: vllm
-      MODEL_NAME: DeepSeek-R1-Distill-Qwen-1.5B
-      MODEL_PATH: /models/DeepSeek-R1-Distill-Qwen-1.5B
-      WINGS_SKIP_PID_CHECK: "true"
-      BACKEND_URL: http://engine:17000
-    volumes: [shared-vol:/shared-volume, /path/to/models:/models:ro]
-
-  engine:
-    image: vllm/vllm-openai:latest
-    runtime: nvidia
-    command: /bin/sh -c "while [ ! -f /shared-volume/start_command.sh ]; do sleep 2; done; bash /shared-volume/start_command.sh"
-    volumes: [shared-vol:/shared-volume, /path/to/models:/models:ro]
-
-volumes:
-  shared-vol:
-```
-
-### K8s (Kustomize)
+查看生成的引擎启动脚本：
 
 ```bash
-# 单机
-kubectl apply -k k8s/overlays/vllm-single/
-
-# 分布式
-kubectl apply -k k8s/overlays/vllm-distributed/
+cat /shared-volume/start_command.sh
 ```
 
-### Docker 命令行
+健康和 API 检查：
 
 ```bash
-# 单机
-docker run --runtime nvidia -p 18000:18000 -p 19000:19000 \
-  -v /models:/models:ro wings-control:latest \
-  --model-name Qwen2-7B --model-path /models/Qwen2-7B --engine vllm
-
-# 分布式 rank-0
-# 角色判定: RANK_IP == MASTER_IP → master，RANK_IP != MASTER_IP → worker
-docker run --network host -e DISTRIBUTED=true -e NNODES=2 \
-  -e RANK_IP=192.168.1.100 -e MASTER_IP=192.168.1.100 \
-  -e HEAD_NODE_ADDR=192.168.1.100 \
-  wings-control:latest --model-name DeepSeek-R1 --model-path /models/DeepSeek-R1 --distributed
+curl http://127.0.0.1:19000/health
+curl http://127.0.0.1:19000/v1/health
+curl http://127.0.0.1:18000/v1/models
 ```
 
----
-
-## 端口规划
-
-| 端口 | 用途 | 暴露 |
-|------|------|------|
-| 17000 | 推理引擎 | Pod 内部 |
-| 18000 | API 代理 (OpenAI 兼容) | NodePort/LB |
-| 19000 | 健康检查 (K8s 探针) | 探针 |
-
-分布式端口: Ray `28020` (env `RAY_PORT`) · SGLang `28030` (env `SGLANG_DIST_PORT`) · vLLM DP `13355` · MindIE `27070` · NIXL `5759`
-
----
-
-## 健康检查
+查看控制面日志：
 
 ```bash
-curl http://<host>:19000/health         # 200=就绪 201=启动中 502=失败 503=降级
-curl http://<host>:19000/health/detail  # JSON 详情
+cat /var/log/wings/wings_start.log
 ```
 
-```yaml
-readinessProbe:
-  httpGet: { path: /health, port: 19000 }
-  initialDelaySeconds: 60
-  periodSeconds: 10
-  failureThreshold: 36
-livenessProbe:
-  httpGet: { path: /health, port: 19000 }
-  initialDelaySeconds: 120
-  periodSeconds: 30
-  failureThreshold: 5
-```
+## 构建
 
----
-
-## CLI 参数
-
-| 参数 | 环境变量 | 默认 | 说明 |
-|------|----------|------|------|
-| `--model-name` | `MODEL_NAME` | **必填** | 模型名 |
-| `--model-path` | `MODEL_PATH` | `/weights` | 模型路径 |
-| `--engine` | `ENGINE` | `vllm` | vllm/vllm_ascend/sglang/mindie/wings |
-| `--port` | `PORT` | `18000` | 监听端口 |
-| `--input-length` | `INPUT_LENGTH` | `4096` | 最大输入 |
-| `--output-length` | `OUTPUT_LENGTH` | `1024` | 最大输出 |
-| `--gpu-memory-utilization` | `GPU_MEMORY_UTILIZATION` | `0.9` | 显存利用率 |
-| `--max-num-seqs` | `MAX_NUM_SEQS` | `32` | 最大并发序列 |
-| `--dtype` | `DTYPE` | `auto` | 数据类型 |
-| `--model-type` | `MODEL_TYPE` | `auto` | auto/llm/embedding/rerank/mmum/mmgm |
-| `--distributed` | `DISTRIBUTED` | `false` | 分布式模式 |
-| `--trust-remote-code` | `TRUST_REMOTE_CODE` | `true` | 信任远程代码 |
-| `--enable-prefix-caching` | `ENABLE_PREFIX_CACHING` | `false` | 前缀缓存 |
-| `--enable-chunked-prefill` | `ENABLE_CHUNKED_PREFILL` | `false` | 分块预填充 |
-| `--enable-expert-parallel` | `ENABLE_EXPERT_PARALLEL` | `false` | MoE 专家并行 |
-| `--enable-speculative-decode` | `ENABLE_SPECULATIVE_DECODE` | `false` | 推测解码 |
-| `--enable-rag-acc` | `ENABLE_RAG_ACC` | `false` | RAG 加速 |
-| `--enable-auto-tool-choice` | `ENABLE_AUTO_TOOL_CHOICE` | `false` | 函数调用 |
-| `--config-file` | `CONFIG_FILE` | — | 自定义配置 |
-| `--device-count` | `DEVICE_COUNT` | `1` | 设备数 |
-| `--save-path` | `SAVE_PATH` | `/opt/wings/outputs` | 输出目录 |
-
-完整 30+ 参数详见 `wings_start.sh --help`
-
----
-
-## 环境变量速查
-
-### Sidecar
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `SHARED_VOLUME_PATH` | `/shared-volume` | 共享卷 |
-| `WINGS_SKIP_PID_CHECK` | `false` | 跳过 PID 检查 (sidecar 必须 true) |
-| `ENABLE_REASON_PROXY` | `true` | 启用代理 |
-| `BACKEND_URL` | `http://127.0.0.1:17000` | 后端 URL |
-
-### 分布式
-
-| 变量 | 说明 |
-|------|------|
-| `DISTRIBUTED` | 是否分布式 |
-| `NNODES` | 节点总数 |
-| `RANK_IP` | 当前节点 IP（由 MaaS 上层传入，每个 Pod 唯一） |
-| `MASTER_IP` | Master 节点 IP（角色判定: RANK_IP == MASTER_IP → master） |
-| `HEAD_NODE_ADDR` | Head 节点 IP |
-| `NODE_IPS` | 所有节点 IP (逗号分隔) |
-
-### 硬件
-
-| 变量 | 说明 |
-|------|------|
-| `WINGS_DEVICE` | nvidia/ascend |
-| `WINGS_DEVICE_COUNT` | 设备数 |
-| `WINGS_DEVICE_MEMORY` | 显存 GB (cuda_graph_sizes 计算) |
-
-### 加速
-
-| 变量 | 说明 |
-|------|------|
-| `ENABLE_ACCEL` | 启用 Accel 补丁注入 |
-| `WINGS_ENGINE_PATCH_OPTIONS` | 覆盖补丁选项 (JSON) |
-
-完整模板: [.env.example](.env.example)
-
----
-
-## Accel 加速包
-
-可选的 initContainer，将 `wings_engine_patch` 注入 engine 容器：
+本地调试可使用根目录的 `Dockerfile.simple` 构建控制面镜像：
 
 ```bash
-bash wings-accel/build-accel-image.sh  # 构建 wings-accel:latest
+docker build -f Dockerfile.simple -t wings-control:test .
 ```
 
-启用: 设置 `ENABLE_ACCEL=true`，sidecar 自动注入 `WINGS_ENGINE_PATCH_OPTIONS`
-
-详情: [docs/deploy/deploy-accel.md](docs/deploy/deploy-accel.md)
-
----
-
-## Master-Worker 分布式
-
-`main.py` 自动判断角色:
-
-| 条件 | 角色 | 行为 |
-|------|------|------|
-| `DISTRIBUTED=false` | standalone | 直接生成脚本 + proxy/health |
-| `DISTRIBUTED=true` + `MASTER_IP=本机` | master | FastAPI 协调 (注册/心跳/调度) |
-| `DISTRIBUTED=true` + `MASTER_IP≠本机` | worker | 注册 → 等待指令 → 生成脚本 |
-
-调度策略: `least_load` (默认) · `round_robin` · `random`
-
----
-
-## 从 wings 迁移
-
-```yaml
-# 原版 wings — 单容器
-containers:
-  - name: wings
-    image: wings:latest
-    args: ["--model-name", "DeepSeek-R1", "--engine", "vllm"]
-
-# 迁移后 unified — 双容器 (参数不变)
-volumes:
-  - name: shared-volume
-    emptyDir: {}
-containers:
-  - name: wings-control
-    image: wings-control:latest
-    args: ["--model-name", "DeepSeek-R1", "--engine", "vllm"]
-    env: [{name: WINGS_SKIP_PID_CHECK, value: "true"}]
-    volumeMounts: [{name: shared-volume, mountPath: /shared-volume}]
-  - name: engine
-    image: vllm/vllm-openai:latest
-    command: ["/bin/sh", "-c", "while [ ! -f /shared-volume/start_command.sh ]; do sleep 2; done; bash /shared-volume/start_command.sh"]
-    volumeMounts: [{name: shared-volume, mountPath: /shared-volume}]
-```
-
----
-
-## 故障排查
-
-| 症状 | 解决 |
-|------|------|
-| health 持续 201 | 引擎启动慢，增大 failureThreshold |
-| health 502 | 引擎启动失败，查 engine 容器日志 |
-| proxy 502 | 确认 BACKEND_URL 和 ENGINE_PORT |
-| start_command.sh 未生成 | 查 wings-control 日志 |
-| 分布式卡住 | 检查 HEAD_NODE_ADDR 可达性 |
-| Ascend 用了 vllm | 设置 WINGS_DEVICE=ascend |
+交付构建的设计入口在 `build/build.sh`，默认版本为 `26.0.0`，也可显式传入版本：
 
 ```bash
-# 常用调试
-kubectl exec -it deploy/infer -c wings-control -- cat /shared-volume/start_command.sh
-kubectl exec -it deploy/infer -c wings-control -- curl localhost:19000/health/detail
+bash build/build.sh 26.0.0
 ```
 
-详情: [docs/troubleshooting.md](docs/troubleshooting.md)
+注意：当前 `build/build.sh` 中调用的控制面构建脚本名和实际文件名存在历史命名不一致，`build/wings-control/` 下实际脚本为 `build_wings_accel.sh`，但其内容是在构建控制面镜像。直接使用交付构建脚本前需要先修正这个命名差异，或单独进入 `build/wings-control/` 调用现有脚本。
 
----
+## 常见问题
 
-## 文档索引
-
-| 文档 | 说明 |
-|------|------|
-| [快速上手](docs/QUICKSTART.md) | 6 步构建到推理 |
-| [架构详解](docs/architecture.md) | 模块·端口·状态机 |
-| [故障排查](docs/troubleshooting.md) | 9 类问题 |
-| [vLLM](docs/deploy/deploy-vllm.md) · [vLLM-Ascend](docs/deploy/deploy-vllm-ascend.md) · [SGLang](docs/deploy/deploy-sglang.md) · [MindIE](docs/deploy/deploy-mindie.md) | 引擎部署 |
-| [Accel](docs/deploy/deploy-accel.md) | 加速包 |
-| [版本差异](docs/version-diff-report.md) | wings vs unified |
-| [Bug 修复](docs/BUG_FIX_REPORT.md) | 9 Bug 详情 |
-| [安全审计R4](docs/security-audit-fix-report.md) | 第四轮安全专项 |
-| [质量+分布式审计R5](docs/code-quality-distributed-audit-r5.md) | 第五轮代码质量与分布式逻辑 |
-
----
-
-## Changelog
-
-### [Unreleased] — 移除 fschat 依赖，消除 422 问题
-
-**背景**
-
-当 `RAG_ACC_ENABLED=true` 时，代理在 `handle_rag_scenario()` 中使用 fastchat 的
-`ChatCompletionRequest(**payload_dict)` 对请求进行 Pydantic 校验。fastchat 的 `content`
-字段类型为 `str`，导致以下两类合法请求被拒绝并返回 422：
-
-- 多模态消息：`content: [{"type": "text", "text": "..."}]`（数组格式）
-- tool_calls 场景：`content: null`（assistant 消息）
-
-这些格式在 **vLLM v0.12.0** 的原生 `ChatCompletionRequest`（基于 openai Python 库的
-TypedDict union，`ConfigDict(extra="allow")`）中完全合法，422 仅由 sidecar 自身的
-fastchat 校验触发。
-
-**变更**
-
-| 文件 | 变更内容 |
-|------|------|
-| `proxy/gateway.py` | 新增 `_DictAttrView`；`handle_rag_scenario()` 由 `ChatCompletionRequest(**d)` 改为 `_DictAttrView(d)`；删除 fastchat import |
-| `rag_acc/rag_app.py` | 删除 fastchat import；放宽函数参数类型注解 |
-| `rag_acc/extract_dify_info.py` | 删除 fastchat import；放宽函数参数类型注解 |
-| `requirements.txt` | 删除 `fschat>=0.2.36` |
-
-**`_DictAttrView` 设计**
-
-```python
-class _DictAttrView:
-    """Dict wrapper allowing attribute-style access (obj.key → dict[key]).
-    Missing keys return None, matching Pydantic optional field defaults."""
-    def __init__(self, data: dict) -> None: self._data = data
-    def __getattr__(self, name: str): return self._data.get(name)
-```
-
-`rag_acc` 内部代码已有 `isinstance(msg, dict)` / `_get_msg_field()` 兼容逻辑，
-无需修改任何 rag_acc 业务逻辑，存量 RAG 加速功能完全不受影响。
-
-**行为对比**
-
-| 场景 | 修复前 | 修复后 |
-|------|--------|--------|
-| 普通请求，RAG_ACC=false | ✅ 正常 | ✅ 正常 |
-| 普通请求，RAG_ACC=true | ✅ 正常 | ✅ 正常 |
-| multimodal content，RAG_ACC=false | ✅ 正常（vLLM 原生接受） | ✅ 正常 |
-| multimodal content，RAG_ACC=true | ❌ 422（fastchat 拒绝） | ✅ 正常 |
-| content: null，RAG_ACC=true | ❌ 422（fastchat 拒绝） | ✅ 正常 |
-
----
-
-### [Unreleased] — 性能优化：byte pre-scan + 消除重复 JSON 解析
-
-**背景**
-
-在高并发短输入场景（LLM 推理延迟约 50-200ms），代理层的固定开销占总延迟比例更大。
-性能测试数据（gateway-perf-test）显示：引入 `_normalize_messages()` 后，普通请求
-P99 延迟上升约 35%，null_content 请求 P99 上升约 102%。
-
-两处根因：
-1. `RequestPreprocessor.preprocess()` 对每个请求无条件遍历 messages 列表，查找需要归一化的 content，而实际上绝大多数请求 content 为纯字符串，无需处理。
-2. `RAG_ACC_ENABLED=True` 时，`handle_rag_scenario()` 内对同一 body 执行第二次 `json.loads()`，而 `RequestPreprocessor` 已完成首次解析。
-
-**变更**
-
-| 文件 | 变更内容 |
-|------|------|
-| `proxy/request_preprocessor.py` | 新增 `_needs_normalization(body_bytes)` 静态方法；在调用 `_normalize_messages()` 前做字节级预扫描，命中 `"content":[` / `"content":null` 等模式才进入遍历 |
-| `proxy/gateway.py` | `handle_rag_scenario()` 新增 `preparse_payload: dict \| None = None` 参数；`chat_completions()` 传入 `result.payload`，消除第二次 `json.loads()` |
-
-**优化原理与量化**
-
-```
-普通请求（content: str）:
-  旧路径: json.loads → _normalize_messages 遍历（空跑）→ ...
-  新路径: json.loads → _needs_normalization 字节扫描 (~1-5μs) → 跳过遍历
-
-RAG 流式请求:
-  旧路径: preprocess json.loads → handle_rag_scenario json.loads（重复）
-  新路径: preprocess json.loads → handle_rag_scenario 直接使用 result.payload
-```
-
-Python 内置 `in` 字节搜索使用 C 层 Boyer-Moore 算法。对于 1KB body 约 1μs，10KB body 约 5μs，远低于一次 `json.loads()`（约 50-500μs）。
-
-**行为不变性**
-
-- 字节扫描为误报安全（false positive → 进入 `_normalize_messages()` 再精确判断）
-- false negative 理论上极小（仅当 `"content":[` 等字节串恰好出现在 string 值内，且 content 字段本身也是数组时才会误判为不需归一化，实际场景几乎不存在）
-- `handle_rag_scenario()` 在没有 `preparse_payload` 时（直接调用路径）仍回退到本地 `json.loads()`，向后兼容
-
----
-
-### [Unreleased] — 多引擎适配性修复：ENGINE 环境变量、SGLang 指标、abort 路径
-
-**背景**
-
-代理层的多个内置优化模块（KV Cache 准入控制、客户端断连 abort、健康状态机）在设计时以 vLLM 为基准，对新引擎适配存在三个问题：
-1. **MindIE** 不支持 `/v1/abort`，`asyncio.create_task` 裸调导致 task 内 404 异常得不到捕获，产生 `Task exception was never retrieved` 日志噪音。
-2. **SGLang** 指标名称为 `sglang:token_usage`，与现有正则 `vllm:gpu_cache_usage_perc` 不匹配，`cache_pct` 始终为 0，准入控制对 SGLang 完全失效。
-3. **SGLang** abort 端点为 `POST /cancel_batch`，现有代码发送到 `/v1/abort` 和 vLLM 共用发送方式，导致 404。
-4. **MindIE sidecar 模式**下 PID 文件对 control 容器不可见，健康探测的 `_is_mindie()` / `_is_sglang()` 判断失效，无法切换到正确的远端健康端口。
-
-**变更**
-
-| 文件 | 变更内容 |
-|------|------|
-| `proxy/proxy_config.py` | 新增 `ENGINE = os.getenv("ENGINE", "vllm")` 全局引擎类型常量 |
-| `proxy/gateway.py` | `_abort_backend_request()` 新增 ENGINE 分支：MindIE 直接跳过；SGLang 使用 `/cancel_batch`；task 内部包装独立 `_do_abort()` 协程带 try/except |
-| `proxy/health_router.py` | `_is_mindie()` / `_is_sglang()` 优先读取 `ENGINE` 环境变量，无法获取时降级到 PID 文件 |
-| `proxy/metrics_poller.py` | 新增 SGLang 指标正则；`_parse_metrics()` 优先匹配 vLLM，未命中时降级到 SGLang；`ENABLED` 自动屏蔽 MindIE |
-| `proxy/README.md` | 新建，包含目录、环境变量、请求流程图、引擎适配矩阵、快速启动示例 |
-
-**ENGINE 环境变量设计**
-
-```
-ENGINE 可选值: vllm | vllm-ascend | sglang | mindie
-未设置时默认为: vllm
-```
-
-**引擎适配矩阵（修复后）**
-
-| 功能 | vllm | vllm-ascend | sglang | mindie |
-|---|---|---|---|---|
-| KV Cache 准入控制 | ✅ | ✅ | ✅ | ❌ 自动禁用 |
-| abort 断连释放 GPU | ✅ `/v1/abort` | ✅ `/v1/abort` | ✅ `/cancel_batch` | ❌ 自动跳过 |
-| 健康探测端口切换 | — | — | SGLang 専项参数 | ✅ `MINDIE_HEALTH_PORT` |
-| SJF 调度 / gzip 压缩 / 预处理 | ✅ | ✅ | ✅ | ✅ |
-
-### [Unreleased] — 代码质量/安全修复 + 分布式逻辑加固
-
-**代码质量与安全 (13 项)**
-
-| 级别 | 修复 | 文件 |
-|------|------|------|
-| CRITICAL | HTTP 请求超时、Shell 注入防护、JSON Schema 校验 | scheduler.py, wings_entry.py |
-| HIGH | bare except 清理、全局状态锁、调度器竞态、socket 泄漏、RAG JSON 校验、路径穿越 | worker.py, scheduler.py, vllm_adapter.py, stream_collector.py, config_loader.py |
-| MEDIUM | 统一超时配置常量 | settings.py |
-
-**分布式逻辑加固 (4 项修复 + 3 项误报确认)**
-
-| # | 修复 | 文件 |
-|---|------|------|
-| C1 | 添加 node_ips 去重校验 + nnodes 一致性检查 | distributed/master.py |
-| C3 | MindIE 分布式 nnodes ≤ 1 警告 | core/config_loader.py |
-| C4 | 修正 RAY_PORT 默认值文档 (6379→28020) | engines/vllm_adapter.py |
-| H1 | Ascend Ray Worker 优先尝试已知 head_addr | engines/vllm_adapter.py |
-
-误报确认：SGLang --host 绑定方向正确、Worker LaunchArgs 设计合理、Monitor 已有锁保护。
-
----
-
-## License
-
-MIT
+| 现象 | 优先检查 |
+|------|----------|
+| `/shared-volume/start_command.sh` 未生成 | `wings-control` 日志、`MODEL_NAME`、`MODEL_PATH`、`ENGINE`、`--config-file` 路径 |
+| `--chip` 报未知参数 | 当前脚本没有 `--chip`；改用 `WINGS_DEVICE_NAME` 或 `/shared-volume/hardware_info.json` |
+| Health 未就绪 | Engine 容器是否执行脚本、`ENGINE_PORT` 是否一致、Engine 是否监听成功 |
+| Proxy 返回 502 | Engine 是否监听 `ENGINE_PORT`，Proxy 与 Engine 是否共享网络命名空间或可互通 |
+| `ENABLE_REASON_PROXY=false` 后退出 | 当前 v4 MVP 不支持关闭 Proxy |
+| 分布式校验失败 | `DISTRIBUTED=true`、`RANK_IP`、`MASTER_IP`、`NODE_IPS`、`NNODES` 是否一致且节点间互通 |
+| Ascend 启动失败 | NPU 设备、驱动挂载、CANN 环境、`WINGS_DEVICE=ascend`、`WINGS_DEVICE_NAME`、`--engine vllm_ascend` 或 `--engine mindie` |
+| LMCache 未生效 | `LMCACHE_OFFLOAD=true`、容量相关 `LMCACHE_*` 变量、`/shared-volume/lmcache_config.yaml` 是否生成 |

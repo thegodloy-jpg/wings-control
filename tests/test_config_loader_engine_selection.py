@@ -10,16 +10,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-# 让测试可独立运行：把 wings_control 目录加入 sys.path
+# 让测试可独立运行：同时支持包路径导入和模块内历史顶层导入
 ROOT = Path(__file__).resolve().parents[1]  # wings-control/
 sys.path.insert(0, str(ROOT / "wings_control"))
+sys.path.insert(0, str(ROOT))
 
-from core.config_loader import (  # noqa: E402
+from wings_control.core.config_loader import (  # noqa: E402
     _apply_us8_long_ctx_strategy,
     _apply_engine_runtime_flags,
     _detect_explicit_cli_keys,
     _detect_mtp_moe_features,
     load_and_merge_configs,
+    _resolve_engine_choice,
     _set_deepseek_v3_family_ascend_quant_params,
     _set_sequence_length,
     _set_soft_fp8,
@@ -151,7 +153,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             }
 
             with patch.dict(os.environ, {"LMCACHE_OFFLOAD": "true"}, clear=False), \
-                    self.assertLogs("core.config_loader", level="WARNING") as cm:
+                    self.assertLogs("wings_control.core.config_loader", level="WARNING") as cm:
                 merged = load_and_merge_configs(
                     {"device": "nvidia", "count": 1, "details": []},
                     launch_args,
@@ -191,6 +193,32 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertIn("kv_transfer_config", merged["engine_config"])
         self.assertIn("LMCacheConnectorV1", merged["engine_config"]["kv_transfer_config"])
+
+    def test_nvidia_sparse_auto_selects_vllm(self):
+        model_info = _FakeModelInfo(supported=True)
+
+        engine = _resolve_engine_choice(
+            "nvidia",
+            "H100",
+            "full",
+            {"enable_sparse": True},
+            model_info,
+        )
+
+        self.assertEqual(engine, "vllm")
+
+    def test_nvidia_speculative_auto_selects_vllm(self):
+        model_info = _FakeModelInfo(supported=True)
+
+        engine = _resolve_engine_choice(
+            "nvidia",
+            "H100",
+            "full",
+            {"enable_speculative_decode": True},
+            model_info,
+        )
+
+        self.assertEqual(engine, "vllm")
 
     def test_mindie_moe_requires_enable_ep_moe(self):
         params = {"enable_ep_moe": False}

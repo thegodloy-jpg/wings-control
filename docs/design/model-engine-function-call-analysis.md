@@ -1,4 +1,4 @@
-# 模型 × 引擎 × Function Call 支持细粒度分析报告
+﻿# 模型 × 引擎 × Function Call 支持细粒度分析报告
 
 > 编制日期：2026-04-07（修订版）  
 > 需求背景：中原算力客户要求 wings 支持 DeepSeek V3.1/V3.2、Qwen3-235B 等主流模型的 Function Call 功能  
