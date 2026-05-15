@@ -70,9 +70,9 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
             script = vllm_adapter.build_start_script(params)
 
         self.assertIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
-        self.assertIn("export OMP_NUM_THREADS=10", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertNotIn("export VLLM_USE_V1=1", script)
-        self.assertIn("export HCCL_BUFFSIZE=250", script)
+        self.assertIn("export HCCL_BUFFSIZE=200", script)
         self.assertIn("export VLLM_ASCEND_BALANCE_SCHEDULING=1", script)
         self.assertIn("--enable-prefix-caching", script)
         self.assertIn("--additional-config", script)
@@ -106,10 +106,9 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
         with patch.object(vllm_adapter, "ModelIdentifier", _FakeGlmMoeDsaModel):
             script = vllm_adapter.build_start_script(params)
 
-        self.assertIn("export OMP_NUM_THREADS=10", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertNotIn("export VLLM_USE_V1=1", script)
-        self.assertIn("export HCCL_BUFFSIZE=250", script)
-        self.assertNotIn("export HCCL_BUFFSIZE=200", script)
+        self.assertIn("export HCCL_BUFFSIZE=200", script)
 
     def test_glm51_alias_uses_same_glm_moe_dsa_arch_env(self):
         cfg = dict(self._glm_cfg())
@@ -134,10 +133,9 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
         with patch.object(vllm_adapter, "ModelIdentifier", _FakeGlmMoeDsaModel):
             script = vllm_adapter.build_start_script(params)
 
-        self.assertIn("export OMP_NUM_THREADS=10", script)
+        self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertNotIn("export VLLM_USE_V1=1", script)
-        self.assertIn("export HCCL_BUFFSIZE=250", script)
-        self.assertNotIn("export HCCL_BUFFSIZE=200", script)
+        self.assertIn("export HCCL_BUFFSIZE=200", script)
 
 
 if __name__ == "__main__":

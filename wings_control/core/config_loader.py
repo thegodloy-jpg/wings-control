@@ -2060,7 +2060,9 @@ def _handle_vllm_distributed(distributed_config: Dict[str, Any], cmd_params: Dic
     pd_role = get_pd_role_env()
     model_architecture = model_info.model_architecture
     is_ascend = cmd_params.get("engine") == 'vllm_ascend'
-    is_ascend_deepseek = (model_architecture in ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
+    is_ascend_deepseek = (model_architecture in ["DeepseekV3ForCausalLM",
+                                                  "DeepseekV32ForCausalLM",
+                                                  "GlmMoeDsaForCausalLM"]
                           and is_ascend)
 
     if pd_role in ['P', 'D'] and is_ascend:

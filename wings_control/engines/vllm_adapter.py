@@ -145,20 +145,26 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-_DEEPSEEK_ASCEND_DP_ARCHES = {"DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"}
+_DEEPSEEK_ASCEND_DP_ARCHES = {
+    "DeepseekV3ForCausalLM",
+    "DeepseekV32ForCausalLM",
+    "GlmMoeDsaForCausalLM",
+}
 
 
 def _default_deepseek_ascend_dp_tensor_parallel_size(
     model_architecture: str,
     device_count: Optional[int],
 ) -> Optional[int]:
-    """Return the recommended default TP size for DeepSeek Ascend DP."""
+    """Return the recommended default TP size for Ascend DP architectures."""
     if not device_count or device_count <= 0:
         return None
     if model_architecture == "DeepseekV32ForCausalLM" and device_count in (8, 16):
         return device_count
     if model_architecture == "DeepseekV3ForCausalLM":
         return 4 if device_count >= 4 else device_count
+    if model_architecture == "GlmMoeDsaForCausalLM" and device_count in (8, 16):
+        return device_count
     return None
 
 
@@ -780,15 +786,23 @@ def _build_dp_network_env_commands(
             "export NCCL_NET_GDR_LEVEL=SYS",
         ]
     if engine == "vllm_ascend":
-        return _build_ascend_dp_network_env_commands(current_ip, network_interface)
+        return _build_ascend_dp_network_env_commands(params, current_ip, network_interface)
     return []
 
 
-def _build_ascend_dp_network_env_commands(current_ip: str, network_interface: str) -> List[str]:
+def _build_ascend_dp_network_env_commands(
+    params: Dict[str, Any],
+    current_ip: str,
+    network_interface: str,
+) -> List[str]:
     """Build vLLM-Ascend dp_deployment network environment commands."""
-    omp_threads = os.getenv('OMP_NUM_THREADS', '10')
-    hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '1024')
-    return [
+    dp_arch = _get_deepseek_ascend_dp_model_architecture(params)
+    is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
+    omp_default = '1' if is_glm5_dp else '10'
+    hccl_buffsize_default = '200' if is_glm5_dp else '1024'
+    omp_threads = os.getenv('OMP_NUM_THREADS', omp_default)
+    hccl_buffsize = os.getenv('HCCL_BUFFSIZE', hccl_buffsize_default)
+    commands = [
         f"export HCCL_IF_IP={shlex.quote(current_ip)}",
         f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
         f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
@@ -798,11 +812,16 @@ def _build_ascend_dp_network_env_commands(current_ip: str, network_interface: st
         f"export HCCL_BUFFSIZE={hccl_buffsize}",
         'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
-        "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-        "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-        "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-        "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
     ]
+    if dp_arch in ("DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"):
+        # OPP 自定义算子路径是 DeepSeek 系列专属，套到 GLM 等其它架构会加载错算子。
+        commands.extend([
+            "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
+            "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
+            "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
+            "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
+        ])
+    return commands
 
 
 def _build_deepseek_fp8_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
@@ -1053,17 +1072,16 @@ def _build_kimik25_ascend_env(arch: str) -> List[str]:
 def _build_glm5_ascend_env(arch: str) -> List[str]:
     """构建 GLM-5 (GlmMoeDsaForCausalLM) Ascend 环境变量命令。
 
-    注入 GLM-5 在 Ascend 上所需的环境变量：
-    - HCCL_OP_EXPANSION_MODE=AIV: 启用 AIV 通信优化
-    - VLLM_ASCEND_BALANCE_SCHEDULING=1: 启用负载均衡调度
-    - HCCL_BUFFSIZE=250: HCCL 缓冲区大小
+    数值对齐 vllm-ascend 官方 GLM-5 多机部署文档：
+    HCCL_OP_EXPANSION_MODE=AIV / OMP_NUM_THREADS=1 / HCCL_BUFFSIZE=200 /
+    VLLM_ASCEND_BALANCE_SCHEDULING=1。
     """
     logger.info("[GLM-5] Set Ascend environment variables for %s", arch)
     return [
         "export HCCL_OP_EXPANSION_MODE=AIV",
         "export OMP_PROC_BIND=false",
-        "export OMP_NUM_THREADS=10",
-        "export HCCL_BUFFSIZE=250",
+        "export OMP_NUM_THREADS=1",
+        "export HCCL_BUFFSIZE=200",
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
     ]
@@ -2243,10 +2261,16 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
     """返回 dp_deployment 模式的分布式通信环境变量命令。"""
     net_if = os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0"))
     if is_ascend:
+        dp_arch = _get_deepseek_ascend_dp_model_architecture(params)
+        is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
         hccl_connect_timeout = os.getenv('HCCL_CONNECT_TIMEOUT', '1800')
         hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
-        omp_threads = os.getenv('OMP_NUM_THREADS', '100')
-        hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '1024')
+        # GLM-5 官方多机示例：OMP_NUM_THREADS=1, HCCL_BUFFSIZE=200。
+        # 其余 DeepSeek DP 架构沿用历史默认 (100 / 1024)。
+        omp_default = '1' if is_glm5_dp else '100'
+        hccl_buffsize_default = '200' if is_glm5_dp else '1024'
+        omp_threads = os.getenv('OMP_NUM_THREADS', omp_default)
+        hccl_buffsize = os.getenv('HCCL_BUFFSIZE', hccl_buffsize_default)
         env_commands = [
             # 与 Ray 路径保持一致：先建立 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），
             # HCCL_IF_IP 直接复用，避免多网卡场景下与 vLLM 通信走错网卡。
@@ -2264,12 +2288,19 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
             'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
             "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         ]
-        env_commands.extend([
-            "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-            "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-            "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-            "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
-        ])
+        if dp_arch in ("DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"):
+            # OPP 自定义算子路径是 DeepSeek 系列专属，套到 GLM 等其它架构会加载错算子。
+            env_commands.extend([
+                "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
+                "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
+                "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
+                "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
+            ])
+        if is_glm5_dp:
+            env_commands.extend([
+                "export HCCL_OP_EXPANSION_MODE=AIV",
+                "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
+            ])
         if _is_deepseek_ascend_dp_deployment(params):
             engine_ready_timeout = os.getenv("VLLM_ENGINE_READY_TIMEOUT_S", "7200")
             env_commands.append(f"export VLLM_ENGINE_READY_TIMEOUT_S={engine_ready_timeout}")
