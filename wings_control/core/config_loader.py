@@ -271,6 +271,7 @@ def _build_common_context(hardware_env: Dict[str, Any],
         "node_ips": cmd_known_params.get("node_ips", ""),
         "model_type": model_info.identify_model_type(),
         "gpu_usage_mode": cmd_known_params.get("gpu_usage_mode", "full"),
+        "distributed_executor_backend": cmd_known_params.get("distributed_executor_backend"),
     }
 
 
@@ -777,7 +778,17 @@ def _set_task(params, ctx):
 
 def _set_parallelism_params(params, ctx):
     """根据设备数和分布式模式设置张量并行度（tensor_parallel_size）。"""
-    #
+    # Ascend DeepSeek dp_deployment 后端 TP 语义是「节点内」，由 vllm_adapter 的
+    # _default_deepseek_ascend_dp_tensor_parallel_size 按架构兜底；
+    # 此处不能套用 Ray 全局 TP 公式 (device_count × nnodes)，否则
+    # 双机 ×8 卡场景下会被算成 tp=16 触发 DP 拓扑校验失败。
+    # 仅短路 Ascend DeepSeek 路径，避免误伤 NVIDIA PD（同样使用 dp_deployment
+    # 但需要 _adjust_tensor_parallelism 的 PD 分支给 tp=device_count）。
+    if (
+        ctx.get("engine") == "vllm_ascend"
+        and ctx.get("distributed_executor_backend") == "dp_deployment"
+    ):
+        return
     _adjust_tensor_parallelism(
         params,
         ctx["device_count"],
