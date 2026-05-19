@@ -75,7 +75,11 @@ class TestMiniMaxM2AscendStartScript(unittest.TestCase):
             script = vllm_adapter.build_start_script(self._build_params())
 
         # 通用 Ascend 初始化只保留在 set_vllm_ascend_env.sh 内联段中，MiniMax 专属段不再重复注入。
-        export_lines = [line for line in script.splitlines() if line == "export HCCL_OP_EXPANSION_MODE=AIV"]
+        # forced-env 通过 ${VAR:-default} 形式注入，保留用户/模型先前已设置的值。
+        export_lines = [
+            line for line in script.splitlines()
+            if line == "export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}"
+        ]
         self.assertEqual(len(export_lines), 1)
         self.assertIn("export HCCL_BUFFSIZE=1024", script)
         self.assertIn("export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True", script)

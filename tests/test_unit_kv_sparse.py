@@ -124,11 +124,18 @@ class TestBuildKvSparseCmd(unittest.TestCase):
 
     # ── 引擎门控 ─────────────────────────────────────────────────────────────
 
-    def test_vllm_ascend_returns_empty_no_modification(self):
-        """vllm_ascend 引擎 → 返回空字符串，不修改 params（KV Sparse 仅限 NVIDIA vllm）。"""
+    def test_vllm_ascend_non_glm51_returns_empty_no_engine_config_mutation(self):
+        """[GLM5.1-Ascend-Tmp] vllm_ascend + 非 GLM-5.1 架构 → 空字符串。
+
+        注意：name/path 不含 GLM-5.1 标记时，即使架构是 GlmMoeDsaForCausalLM 也只
+        判定为 GLM-5（而非 5.1），ascend 上不进入 IndexCache 分支。
+        """
         params = _make_params("GlmMoeDsaForCausalLM")
-        result = _build_kv_sparse_cmd(params, "vllm_ascend")
+        with patch("engines.vllm_adapter.ModelIdentifier",
+                   side_effect=_fake_model("GlmMoeDsaForCausalLM")):
+            result = _build_kv_sparse_cmd(params, "vllm_ascend")
         self.assertEqual(result, "")
+        # ascend 路径**绝不**走 FP8 分支，engine_config 不应被注入
         self.assertNotIn("engine_config", params)
 
     def test_sglang_returns_empty_no_modification(self):

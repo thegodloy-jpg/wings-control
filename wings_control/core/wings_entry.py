@@ -416,6 +416,11 @@ def _collect_indexcache_patch_features(engine: str, merged: dict) -> list[str]:
     当 ENABLE_SPARSE=true 且模型架构属于 IndexCache 支持列表时，
     需要通过 install.py --features 安装 indexcache 补丁。
     非 IndexCache 架构使用 FP8 KV CACHE，无需 accel 补丁。
+
+    [GLM5.1-Ascend-Tmp] engine 门控只接 "vllm"，因此 vllm_ascend 路径天然不会
+    触发 indexcache 补丁安装；vllm_ascend + GLM-5.1 仅通过 --hf-overrides 启用
+    IndexCache（参见 vllm_adapter._build_kv_sparse_cmd）。当 vllm-ascend 支持
+    补丁安装后，把这里的 engine 集合扩成 ("vllm", "vllm_ascend") 即可。
     """
     if not merged.get("enable_sparse"):
         return []

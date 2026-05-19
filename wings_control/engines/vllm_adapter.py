@@ -29,7 +29,8 @@ from typing import Dict, Any, List, Optional
 import yaml
 
 from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8,
-                               INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51)
+                               INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51,
+                               is_glm51_ascend_kvsparse_tmp_scope)
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env
@@ -2018,10 +2019,12 @@ def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     """构建 KV 稀疏特性的启动命令参数。
 
-    仅 vllm (NVIDIA) 支持 KV 稀疏特性。
+    vllm (NVIDIA) 完整支持；vllm_ascend 仅 GLM-5.1 走 IndexCache（临时白名单）。
     根据模型架构决定策略：
-      - IndexCache 架构（GlmMoeDsa/DeepseekV32）：返回 --hf-overrides CLI 参数
-      - 其他架构：直接修改 engine_config 注入 kv_cache_dtype=fp8，返回空字符串
+      - vllm + IndexCache 架构（GlmMoeDsa/DeepseekV32）：返回 --hf-overrides CLI 参数
+      - vllm + 其他架构：直接修改 engine_config 注入 kv_cache_dtype=fp8，返回空字符串
+      - vllm_ascend + GLM-5.1（单机/双机）：返回 --hf-overrides；其他 ascend 场景返回空串
+        参见 [GLM5.1-Ascend-Tmp]，等 vllm-ascend 支持 indexcache 补丁后合并入 vllm 主分支。
 
     **必须在 _build_vllm_cmd_parts 之前调用**，以便 FP8 参数正确合入基础命令，
     避免与 engine_config 中已有的 kv_cache_dtype 产生重复。
@@ -2033,7 +2036,7 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     Returns:
         str: 额外的 CLI 参数字符串（IndexCache 返回 --hf-overrides，FP8 返回空串）
     """
-    if engine != "vllm":
+    if engine not in ("vllm", "vllm_ascend"):
         return ""
 
     model_info = ModelIdentifier(
@@ -2042,6 +2045,26 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
         params.get("model_type"),
     )
     arch = model_info.model_architecture
+
+    # [GLM5.1-Ascend-Tmp] vllm_ascend 路径：仅 GLM-5.1 走 IndexCache，不写 engine_config，
+    # 不触发 indexcache 补丁安装（补丁仍由 _collect_indexcache_patch_features 的
+    # engine 门控屏蔽于 ascend 之外）。
+    if engine == "vllm_ascend":
+        if is_glm51_ascend_kvsparse_tmp_scope(
+            model_info, engine,
+            model_name=params.get("model_name"),
+            model_path=params.get("model_path"),
+        ):
+            logger.info(
+                "[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 → "
+                "IndexCache via --hf-overrides (no patch install)"
+            )
+            return " --hf-overrides '{\"index_topk_freq\": 4}'"
+        logger.info(
+            "[KV Sparse] engine=vllm_ascend arch=%s not GLM-5.1; "
+            "KV sparse is no-op on ascend", arch,
+        )
+        return ""
 
     if arch in INDEXCACHE_ARCHS:
         logger.info("[KV Sparse] Architecture %s → IndexCache strategy (--hf-overrides)", arch)

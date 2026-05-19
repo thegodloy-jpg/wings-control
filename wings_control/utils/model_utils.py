@@ -98,6 +98,24 @@ def is_glm_moe_dsa_glm51(model_info: Any, model_name: Any = None,
         getattr(model_info, "config", None),
     )
 
+
+# ── [GLM5.1-Ascend-Tmp] TEMPORARY: GLM-5.1 + vllm_ascend KV-Sparse Whitelist ──
+# Scope: engine == "vllm_ascend" AND is_glm_moe_dsa_glm51(...)
+# Behavior gated by this predicate:
+#   1. config_loader: enable_rag_acc → enable_sparse 自动转译（rag 开关等价 kv 稀疏）
+#   2. vllm_adapter._build_kv_sparse_cmd: 走 IndexCache --hf-overrides 分支
+# 范围说明：仅 GLM-5.1（架构 GlmMoeDsaForCausalLM + 名称/路径标记 5.1），
+# GLM-5 (非 5.1)、DeepseekV32 在 ascend 上不进入 IndexCache。
+# 移除时机：vllm-ascend 支持 indexcache 补丁安装时一次性拆除。
+# 移除方法：grep "[GLM5.1-Ascend-Tmp]" 一次性定位所有触点。
+def is_glm51_ascend_kvsparse_tmp_scope(model_info: Any, engine: Any,
+                                       model_name: Any = None,
+                                       model_path: Any = None) -> bool:
+    """[GLM5.1-Ascend-Tmp] Return True for vllm_ascend + GLM-5.1（单机/双机均适用）."""
+    if engine != "vllm_ascend":
+        return False
+    return is_glm_moe_dsa_glm51(model_info, model_name=model_name, model_path=model_path)
+
 #
 _LLM_MODELS = {
     "DeepseekV3ForCausalLM": [

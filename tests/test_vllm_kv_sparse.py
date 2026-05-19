@@ -57,7 +57,8 @@ class TestVllmKvSparse(unittest.TestCase):
         self.assertEqual(params["engine_config"]["kv_cache_dtype"], "fp8")
         self.assertTrue(params["engine_config"]["calculate_kv_scales"])
 
-    def test_non_vllm_engine_skips_sparse_logic_without_model_detection(self):
+    def test_unsupported_engine_skips_sparse_logic_without_model_detection(self):
+        """非 vllm/vllm_ascend 引擎（如 sglang）→ 立即返回空，不调用 ModelIdentifier。"""
         params = {
             "model_name": "deepseek-v32",
             "model_path": "/models/deepseek-v32",
@@ -66,11 +67,35 @@ class TestVllmKvSparse(unittest.TestCase):
         }
 
         with patch.object(vllm_adapter, "ModelIdentifier") as mock_identifier:
-            extra_args = vllm_adapter._build_kv_sparse_cmd(params, "vllm_ascend")
+            extra_args = vllm_adapter._build_kv_sparse_cmd(params, "sglang")
 
         self.assertEqual(extra_args, "")
         self.assertEqual(params["engine_config"], {"kv_cache_dtype": "auto"})
         mock_identifier.assert_not_called()
+
+    def test_ascend_non_glm51_skips_sparse_logic_without_engine_config_mutation(self):
+        """[GLM5.1-Ascend-Tmp] vllm_ascend + 非 GLM-5.1 → 返回空串且不改 engine_config。
+
+        ModelIdentifier 会被调用以判定是否为 GLM-5.1，但只要不是 GLM-5.1 就走 no-op。
+        关键：ascend 路径**绝不**走 FP8 KV CACHE 分支（FP8 在 ascend 上不在范围内）。
+        """
+        params = {
+            "model_name": "deepseek-v32",
+            "model_path": "/models/deepseek-v32",
+            "model_type": "llm",
+            "engine_config": {"kv_cache_dtype": "auto"},
+        }
+
+        with patch.object(
+            vllm_adapter,
+            "ModelIdentifier",
+            return_value=_FakeModelInfo("DeepseekV32ForCausalLM"),
+        ):
+            extra_args = vllm_adapter._build_kv_sparse_cmd(params, "vllm_ascend")
+
+        self.assertEqual(extra_args, "")
+        # engine_config 不被改写：FP8 分支不能在 ascend 触发
+        self.assertEqual(params["engine_config"], {"kv_cache_dtype": "auto"})
 
     def test_speculative_and_indexcache_sparse_are_appended_together(self):
         params = {

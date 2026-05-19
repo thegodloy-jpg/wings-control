@@ -37,7 +37,8 @@ from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
 from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
                                is_deepseek_series_modelslim_quant, is_qwen3_series_fp8,
-                               is_glm_moe_dsa_glm51)
+                               is_glm_moe_dsa_glm51,
+                               is_glm51_ascend_kvsparse_tmp_scope)
 from utils.device_utils import check_pcie_cards
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,58 @@ def _set_rag_acc_config(params):
         logger.info("RAG acceleration is enabled")
     else:
         os.environ.setdefault('RAG_ACC_ENABLED', 'false')
+
+
+def _translate_glm51_ascend_rag_to_sparse(params):
+    """[GLM5.1-Ascend-Tmp] rag→sparse 转译（仅 vllm_ascend + GLM-5.1）。
+
+    临时白名单语义：vllm_ascend 上 GLM-5.1 的 RAG 开关**等价于** KV 稀疏开关，
+    并不真正启用 RAG 加速链路。因此本函数在入口处：
+      1. 设置 enable_sparse=True（启用 IndexCache via --hf-overrides）
+      2. 清零 enable_rag_acc=False（避免 proxy / stream_collector 走 RAG 链路）
+
+    下游所有逻辑（命令拼装、AdvFeature 日志、crash 回退、RAG_ACC_ENABLED env）
+    都按"只开了 sparse、没开 rag"的世界观处理，链路单一、无双开。
+
+    幂等：仅当当前 enable_sparse 未启用时才转译，避免重复日志。
+    Engine 门控：engine != "vllm_ascend" 立即返回。
+    模型门控：非 GLM-5.1（含 GLM-5）立即返回。
+
+    必须在 _set_sparse_config / _set_rag_acc_config 之前调用，
+    否则 enable_sparse / RAG_ACC_ENABLED 环境变量不会被正确设置。
+    移除时机：vllm-ascend 支持 indexcache 补丁安装后即可拆除，届时 rag 与
+    sparse 重新成为两个独立开关。
+    """
+    if params.get("enable_sparse"):
+        return
+    if not params.get("enable_rag_acc"):
+        return
+    engine = params.get("engine")
+    if engine != "vllm_ascend":
+        return
+    try:
+        model_info = ModelIdentifier(
+            params.get("model_name"), params.get("model_path"), params.get("model_type"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "[GLM5.1-Ascend-Tmp] Skip rag→sparse translation, "
+            "ModelIdentifier failed: %s", exc,
+        )
+        return
+    if not is_glm51_ascend_kvsparse_tmp_scope(
+        model_info, engine,
+        model_name=params.get("model_name"),
+        model_path=params.get("model_path"),
+    ):
+        return
+    params["enable_sparse"] = True
+    params["enable_rag_acc"] = False
+    logger.info(
+        "[GLM5.1-Ascend-Tmp] rag→sparse translated: vllm_ascend+GLM-5.1 "
+        "enable_rag_acc=true → enable_sparse=true + enable_rag_acc=false "
+        "(rag 开关等价 kv 稀疏，RAG 加速链路本身不启用)"
+    )
 
 
 def _get_h20_model_hint() -> str:
@@ -1823,6 +1876,9 @@ def _prepare_mindie_model_config(cmd_known_params: Dict[str, Any], device_name: 
 def _apply_engine_runtime_flags(cmd_known_params: Dict[str, Any]) -> None:
     """Set feature environment variables driven by selected engine parameters."""
     _set_spec_decoding_config(cmd_known_params)
+    # [GLM5.1-Ascend-Tmp] 必须在 _set_sparse_config 之前转译，下游一律按
+    # enable_sparse 单一开关处理。
+    _translate_glm51_ascend_rag_to_sparse(cmd_known_params)
     _set_sparse_config(cmd_known_params)
     _set_rag_acc_config(cmd_known_params)
 

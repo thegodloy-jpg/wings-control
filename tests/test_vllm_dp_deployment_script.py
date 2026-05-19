@@ -108,7 +108,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertIn("export HCCL_BUFFSIZE=1024", script)
         self.assertIn("export TASK_QUEUE_ENABLE=1", script)
-        self.assertIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
+        self.assertIn("export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}", script)
         self.assertIn('echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"', script)
         self.assertNotIn("export VLLM_ASCEND_BALANCE_SCHEDULING=1", script)
         self.assertNotIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
@@ -229,7 +229,7 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("export OMP_NUM_THREADS=1", script)
         self.assertIn("export HCCL_BUFFSIZE=1024", script)
         self.assertIn("export TASK_QUEUE_ENABLE=1", script)
-        self.assertIn("export HCCL_OP_EXPANSION_MODE=AIV", script)
+        self.assertIn("export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}", script)
 
     def test_deepseek_dp_deployment_speculative_switch_appends_mtp(self):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
