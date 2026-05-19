@@ -599,6 +599,13 @@ def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = No
         )
         return env_commands
 
+    if params and _is_deepseek_v4_flash_params(params):
+        logger.info(
+            "[KVCache Offload] DeepSeek-V4-Flash uses vllm-ascend CPUOffloadingConnector "
+            "via --kv-transfer-config; skipping LMCache engine-side env exports."
+        )
+        return env_commands
+
     # 跨实例Hash一致
     env_commands.append('export PYTHONHASHSEED=0')
     _append_lmcache_env_export(env_commands, "LMCACHE_OFFLOAD", "true")
@@ -1070,15 +1077,18 @@ def _build_kimik25_ascend_env(arch: str) -> List[str]:
     ]
 
 
-def _build_glm5_ascend_env(arch: str) -> List[str]:
+def _build_glm5_ascend_env(arch: str, platform: str = "") -> List[str]:
     """构建 GLM-5 (GlmMoeDsaForCausalLM) Ascend 环境变量命令。
 
-    数值对齐 vllm-ascend 官方 GLM-5 多机部署文档：
+    数值对齐 vllm-ascend 官方 GLM-5 W8A8 多机部署文档：
     HCCL_OP_EXPANSION_MODE=AIV / OMP_NUM_THREADS=1 / HCCL_BUFFSIZE=200 /
     VLLM_ASCEND_BALANCE_SCHEDULING=1。
+
+    A3（W8A8 官方双机命令）额外追加 ``VLLM_ASCEND_ENABLE_MLAPO=1``；
+    A2 / 未识别保持不变。
     """
-    logger.info("[GLM-5] Set Ascend environment variables for %s", arch)
-    return [
+    logger.info("[GLM-5] Set Ascend environment variables for %s (platform=%s)", arch, platform or "auto")
+    env = [
         "export HCCL_OP_EXPANSION_MODE=AIV",
         "export OMP_PROC_BIND=false",
         "export OMP_NUM_THREADS=1",
@@ -1086,6 +1096,9 @@ def _build_glm5_ascend_env(arch: str) -> List[str]:
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
     ]
+    if platform == "a3":
+        env.append("export VLLM_ASCEND_ENABLE_MLAPO=1")
+    return env
 
 
 _DEEPSEEK_V4_FLASH_ARCHES = {
@@ -1196,6 +1209,7 @@ def _build_deepseek_v4_flash_env(params: Dict[str, Any]) -> List[str]:
         logger.info("[DeepSeek-V4-Flash] Set Ascend A3 environment variables")
         return common + [
             "export ASCEND_A3_ENABLE=1",
+            "export USE_MULTI_GROUPS_KV_CACHE=1",
             "export HCCL_BUFFSIZE=1024",
             "export VLLM_ASCEND_ENABLE_FUSED_MC2=1",
             "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
@@ -1261,7 +1275,13 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
         _arch_env_builders = {}
 
     builder = _arch_env_builders.get(arch)
-    return builder(arch) if builder else []
+    if not builder:
+        return []
+    # GLM-5 (GlmMoeDsaForCausalLM) 在 A3 上需要追加 VLLM_ASCEND_ENABLE_MLAPO=1，
+    # 与 vllm-ascend W8A8 官方双机命令对齐；其它架构构造器签名不变。
+    if engine == "vllm_ascend" and arch == "GlmMoeDsaForCausalLM":
+        return builder(arch, _resolve_deepseek_v4_flash_platform(params))
+    return builder(arch)
 
 
 def _build_env_commands(params: Dict[str, Any], current_ip: str, network_interface: str, root: str) -> List[str]:
@@ -1409,12 +1429,22 @@ def _set_deepseek_v4_flash_additional_config(
     explicit_keys: set,
     platform: str,
 ) -> None:
-    """Set DeepSeek-V4-Flash additional_config defaults with platform-specific override."""
+    """Set DeepSeek-V4-Flash additional_config defaults with platform-specific override.
+
+    A3 长上下文场景额外开启 ascend_compilation_config 与 multistream_dsa_preprocess，
+    对齐 vllm-ascend DeepSeek-V4-Flash 官方 benchmark 启动模板。
+    """
     if "additional_config" in explicit_keys:
         return
     current = _parse_dict_like_config(engine_config.get("additional_config")) or {}
     current.setdefault("enable_cpu_binding", "true")
     current["multistream_overlap_shared_expert"] = platform != "a3"
+    if platform == "a3":
+        current.setdefault("multistream_dsa_preprocess", False)
+        ascend_compile = _parse_dict_like_config(current.get("ascend_compilation_config")) or {}
+        ascend_compile.setdefault("enable_npugraph_ex", True)
+        ascend_compile.setdefault("enable_static_kernel", False)
+        current["ascend_compilation_config"] = ascend_compile
     engine_config["additional_config"] = current
 
 
@@ -1441,6 +1471,8 @@ def _apply_deepseek_v4_flash_engine_defaults(
     _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
     _set_if_not_explicit(engine_config, explicit_keys, "chat_template", "/usr/local/serving/models/chat_template.jinja")
     _set_if_not_explicit(engine_config, explicit_keys, "async_scheduling", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "enable_prefix_caching", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "safetensors_load_strategy", "prefetch")
     _set_if_not_explicit(engine_config, explicit_keys, "tokenizer_mode", "deepseek_v4")
     _set_if_not_explicit(engine_config, explicit_keys, "tool_call_parser", "deepseek_v4")
     _set_if_not_explicit(engine_config, explicit_keys, "enable_auto_tool_choice", True)
@@ -1459,6 +1491,45 @@ def _apply_deepseek_v4_flash_engine_defaults(
         "compilation_config",
         {"cudagraph_mode": "FULL_DECODE_ONLY"},
     )
+    _apply_deepseek_v4_flash_kv_offload(engine_config, explicit_keys)
+
+
+def _apply_deepseek_v4_flash_kv_offload(
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+) -> None:
+    """Inject vllm-ascend CPUOffloadingConnector kv_transfer_config for DeepSeek-V4-Flash.
+
+    触发条件复用 LMCache: ``LMCACHE_OFFLOAD=true`` (由上游 K8s ConfigMap 注入)。
+    cpu_swap_space_gb 直接复用 ``LMCACHE_MAX_LOCAL_CPU_SIZE`` (与页面传入的内存值一致)，
+    缺省 200，与 vllm-ascend benchmark 模板一致。
+
+    与 LMCache 互斥：``_build_cache_env_commands`` 在 V4-Flash 路径已跳过 LMCache env
+    导出与 YAML 生成。两者不会同时生效。
+    """
+    if not get_lmcache_env():
+        return
+    if "kv_transfer_config" in explicit_keys:
+        return
+    raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
+    try:
+        cpu_swap_gb = int(raw_size) if raw_size else 200
+    except ValueError:
+        logger.warning(
+            "[DeepSeek-V4-Flash KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
+            "falling back to 200 GB.", raw_size,
+        )
+        cpu_swap_gb = 200
+    engine_config["kv_transfer_config"] = {
+        "kv_connector": "CPUOffloadingConnector",
+        "kv_connector_module_path":
+            "vllm_ascend.distributed.kv_transfer.kv_pool.cpu_offload.cpu_offload_connector",
+        "kv_role": "kv_both",
+        "kv_connector_extra_config": {
+            "swap_in_threshold": 1,
+            "cpu_swap_space_gb": cpu_swap_gb,
+        },
+    }
 
 
 _GLM5_A2_ADDITIONAL_CONFIG: Dict[str, Any] = {
@@ -1473,19 +1544,13 @@ def _apply_glm5_ascend_engine_defaults(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """[GLM-5/5.1 Ascend] 按 Ascend 平台分支处理 ``additional_config``。
+    """[GLM-5/5.1 Ascend] 注入 ``additional_config`` 三键默认值。
 
-    依据 vllm-ascend 官方文档：
-      * A2（910B）GLM-5/5.1 单机/双机：传 ``--additional-config '{fuse_muls_add,
+    依据 vllm-ascend 官方 W8A8 双机命令（A2/A3 一致）：
+      * 传 ``--additional-config '{fuse_muls_add,
         multistream_overlap_shared_expert, ascend_compilation_config.enable_npugraph_ex}'``
-      * A3（910C）GLM-5/5.1 单机/双机：**不传** ``--additional-config``
 
-    行为：
-      * 平台未识别（``""``）→ 兜底视作 A2，注入默认值（与 ascend_default.json 现状一致）
-      * A2 → 深合并默认三键；用户显式声明的键值保留
-      * A3 + 用户未显式声明 → 从 engine_config 中移除 ``additional_config``
-        （JSON 默认会带，此处显式抹掉以匹配官方 A3 不传的形态）
-      * A3 + 用户显式声明 → 保留用户值，不覆盖
+    行为：A2 / A3 一致；深合并默认三键，用户显式声明的键值保留。
     """
     if params.get("engine") != "vllm_ascend":
         return
@@ -1497,25 +1562,13 @@ def _apply_glm5_ascend_engine_defaults(
         )
     except Exception as exc:
         logger.debug(
-            "[GLM-5/5.1 Ascend] Skip additional_config tier filter; "
+            "[GLM-5/5.1 Ascend] Skip additional_config defaults; "
             "ModelIdentifier failed: %s", exc,
         )
         return
     if model_info.model_architecture != "GlmMoeDsaForCausalLM":
         return
 
-    platform = _resolve_deepseek_v4_flash_platform(params)
-    if platform == "a3":
-        if "additional_config" not in explicit_keys:
-            removed = engine_config.pop("additional_config", None)
-            if removed is not None:
-                logger.info(
-                    "[GLM-5/5.1 Ascend] platform=a3 → drop additional_config "
-                    "(removed=%s)", removed,
-                )
-        return
-
-    # A2（含未识别兜底）注入官方推荐的三键默认值
     _merge_dict_default_if_not_explicit(
         engine_config,
         explicit_keys,
@@ -1523,7 +1576,7 @@ def _apply_glm5_ascend_engine_defaults(
         _GLM5_A2_ADDITIONAL_CONFIG,
     )
     logger.info(
-        "[GLM-5/5.1 Ascend] platform=a2 → ensure additional_config defaults applied",
+        "[GLM-5/5.1 Ascend] ensure additional_config defaults applied",
     )
 
 
@@ -2023,6 +2076,12 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
                 "ignoring LMCACHE_OFFLOAD for speculative strategy selection."
             )
             lmcache_effective = False
+        if lmcache_effective and _is_deepseek_v4_flash_params(params, model_info):
+            logger.info(
+                "[KVCache Offload] DeepSeek-V4-Flash uses CPUOffloadingConnector "
+                "(coexists with MTP); keeping deepseek_mtp speculative strategy."
+            )
+            lmcache_effective = False
         return "suffix" if lmcache_effective else mtp_method
 
     return "suffix"
@@ -2121,6 +2180,19 @@ def _force_kv_sparse_for_glm51_ascend(params: Dict[str, Any], engine: str) -> bo
     )
 
 
+def _force_kv_sparse_for_v4_flash_ascend(params: Dict[str, Any], engine: str) -> bool:
+    """[V4-Flash-Ascend-Tmp] vllm_ascend + DeepSeek-V4-Flash 临时默认启用 IndexCache。
+
+    与 GLM-5.1 同套打法：绕过 enable_sparse 开关，仅在启动命令中追加
+    ``--hf-overrides '{"index_topk_freq": 4}'``，不安装 indexcache 补丁
+    （由 ``_collect_indexcache_patch_features`` 的 engine 门控阻止于 ascend 之外）。
+    待 vllm-ascend 支持补丁安装后拆除本函数。
+    """
+    if engine != "vllm_ascend":
+        return False
+    return _is_deepseek_v4_flash_params(params)
+
+
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     """构建 KV 稀疏特性的启动命令参数。
 
@@ -2151,7 +2223,8 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     )
     arch = model_info.model_architecture
 
-    # [GLM5.1-Ascend-Tmp] vllm_ascend 路径：仅 GLM-5.1 走 IndexCache，不写 engine_config，
+    # [GLM5.1-Ascend-Tmp] / [V4-Flash-Ascend-Tmp] vllm_ascend 路径：
+    # 仅 GLM-5.1 / DeepSeek-V4-Flash 走 IndexCache，不写 engine_config，
     # 不触发 indexcache 补丁安装（补丁仍由 _collect_indexcache_patch_features 的
     # engine 门控屏蔽于 ascend 之外）。
     if engine == "vllm_ascend":
@@ -2165,8 +2238,14 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
                 "IndexCache via --hf-overrides (no patch install)"
             )
             return " --hf-overrides '{\"index_topk_freq\": 4}'"
+        if _is_deepseek_v4_flash_params(params, model_info):
+            logger.info(
+                "[V4-Flash-Ascend-Tmp] vllm_ascend + DeepSeek-V4-Flash → "
+                "IndexCache via --hf-overrides (no patch install)"
+            )
+            return " --hf-overrides '{\"index_topk_freq\": 4}'"
         logger.info(
-            "[KV Sparse] engine=vllm_ascend arch=%s not GLM-5.1; "
+            "[KV Sparse] engine=vllm_ascend arch=%s not GLM-5.1/V4-Flash; "
             "KV sparse is no-op on ascend", arch,
         )
         return ""
@@ -2792,7 +2871,7 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     net_if = os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0"))
     cmds: List[str] = []
     cmds.extend(_build_base_env_commands(params, engine, root_dir))
-    cmds.extend(_build_cache_env_commands(engine))
+    cmds.extend(_build_cache_env_commands(engine, params))
 
     cmds.extend(_build_qat_env_commands(engine))
     cmds.extend(_build_pd_role_env_commands(engine, current_ip, net_if))
@@ -2890,9 +2969,11 @@ def build_start_script(params: Dict[str, Any]) -> str:
     engine = params.get("engine", "vllm")
     # KV 稀疏：必须在 _build_vllm_cmd_parts 之前调用，
     # FP8 路径会就地修改 engine_config，避免 --kv-cache-dtype 重复
-    # [GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 强制开启，绕过 enable_sparse 开关
+    # [GLM5.1-Ascend-Tmp] / [V4-Flash-Ascend-Tmp]
+    # vllm_ascend + GLM-5.1 / DeepSeek-V4-Flash 强制开启，绕过 enable_sparse 开关
     should_emit_sparse = bool(params.get("enable_sparse")) or \
-        _force_kv_sparse_for_glm51_ascend(params, engine)
+        _force_kv_sparse_for_glm51_ascend(params, engine) or \
+        _force_kv_sparse_for_v4_flash_ascend(params, engine)
     sparse_args = _build_kv_sparse_cmd(params, engine) if should_emit_sparse else ""
     # GLM-4.7-W8A8 引擎参数注入（必须在 _build_vllm_cmd_parts 之前，且只动 W8A8 量化变体）
     _inject_glm47_w8a8_engine_config(params)

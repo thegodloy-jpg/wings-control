@@ -578,11 +578,12 @@ _GLM5_A2_AC_KEYS = {"fuse_muls_add", "multistream_overlap_shared_expert", "ascen
 
 
 class TestGlm5AscendAdditionalConfigPlatformBranch(unittest.TestCase):
-    """[GLM-5/5.1 Ascend] _apply_glm5_ascend_engine_defaults 平台分支验证。
+    """[GLM-5/5.1 Ascend] _apply_glm5_ascend_engine_defaults 行为验证。
 
-    官方依据：vllm-ascend GLM-5 文档
-      * A2 单机/双机：传 additional-config 三键
-      * A3 单机/双机：不传 additional-config
+    官方依据：vllm-ascend GLM-5 W8A8 双机命令（A2/A3 一致）
+      * 均传 ``--additional-config '{fuse_muls_add, multistream_overlap_shared_expert,
+        ascend_compilation_config.enable_npugraph_ex}'``
+    用户显式声明 additional_config 时保留用户值，不与默认深合并。
     """
 
     def _params(self, *, model_name="GLM-5.1", model_path="/models/glm-5.1",
@@ -642,9 +643,9 @@ class TestGlm5AscendAdditionalConfigPlatformBranch(unittest.TestCase):
         engine_config = self._run(self._params())
         self.assertEqual(set(engine_config["additional_config"].keys()), _GLM5_A2_AC_KEYS)
 
-    # ── A3 移除 ────────────────────────────────────────────────────────────
-    def test_a3_glm51_drops_additional_config(self):
-        """A3 + JSON 默认带了 additional_config → 必须移除（官方 A3 不传）。"""
+    # ── A3 保留并深合并默认三键（与 A2 行为一致，对齐官方 W8A8 命令）─────
+    def test_a3_glm51_keeps_additional_config(self):
+        """A3 + JSON 默认带了 additional_config → 保留（官方 W8A8 双机命令携带）。"""
         with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a3"}, clear=False):
             engine_config = self._run(self._params(engine_config={
                 "additional_config": {
@@ -652,11 +653,15 @@ class TestGlm5AscendAdditionalConfigPlatformBranch(unittest.TestCase):
                     "multistream_overlap_shared_expert": True,
                 },
             }))
-        self.assertNotIn("additional_config", engine_config)
+        self.assertIn("additional_config", engine_config)
+        # 深合并补齐 ascend_compilation_config
+        self.assertEqual(
+            engine_config["additional_config"]["ascend_compilation_config"],
+            {"enable_npugraph_ex": True},
+        )
 
-    def test_a3_via_engine_version_suffix_drops_additional_config(self):
-        """ENGINE_VERSION='0.13.0rc3-a3' → 识别为 A3 → 移除 additional_config。"""
-        # 不设 WINGS_ASCEND_PLATFORM，确保由 ENGINE_VERSION 触发
+    def test_a3_via_engine_version_suffix_keeps_additional_config(self):
+        """ENGINE_VERSION='0.13.0rc3-a3' → 识别为 A3 → 保留并深合并默认三键。"""
         for var in ("WINGS_ASCEND_PLATFORM", "ASCEND_PLATFORM", "ENGINE_IMAGE_FLAVOR",
                     "ASCEND_A3_ENABLE", "WINGS_DEVICE_NAME"):
             self.addCleanup(lambda v=var, old=os.environ.get(var):
@@ -667,10 +672,10 @@ class TestGlm5AscendAdditionalConfigPlatformBranch(unittest.TestCase):
             engine_config = self._run(self._params(engine_config={
                 "additional_config": {"fuse_muls_add": True},
             }))
-        self.assertNotIn("additional_config", engine_config)
+        self.assertEqual(set(engine_config["additional_config"].keys()), _GLM5_A2_AC_KEYS)
 
     def test_a3_user_explicit_additional_config_preserved(self):
-        """A3 + 用户显式声明 additional_config → 不应被移除（用户优先）。"""
+        """A3 + 用户显式声明 additional_config → 完整保留用户值，不深合并默认。"""
         with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a3"}, clear=False):
             engine_config = self._run(self._params(
                 engine_config={"additional_config": {"fuse_muls_add": False}},
@@ -837,15 +842,12 @@ def _glm51_e2e_params(*, distributed: bool = False, rank: int = 0,
 
 
 class TestEndToEndPlatformAwareScript(unittest.TestCase):
-    """端到端：build_start_script 产出脚本在 A2/A3 上的 --additional-config 差异。
+    """端到端：build_start_script 在 A2/A3 上的 --additional-config 与 env 输出。
 
-    覆盖：
-      * A2 单机：脚本含 --additional-config（三键）
-      * A3 单机（WINGS_ASCEND_PLATFORM）：脚本不含 --additional-config
-      * A3 单机（ENGINE_VERSION=...-a3）：脚本不含 --additional-config
-      * A2 双机（DP backend）：脚本含 --additional-config
-      * A3 双机：脚本不含 --additional-config
-      * 优先级：WINGS_ASCEND_PLATFORM=a2 + ENGINE_VERSION=...-a3 → 显式 a2 赢
+    官方依据：vllm-ascend GLM-5 W8A8 双机命令
+      * A2/A3 单机/双机：均传 ``--additional-config`` 三键
+      * A3 额外环境变量：``VLLM_ASCEND_ENABLE_MLAPO=1``（A2 不带）
+      * 显式 WINGS_ASCEND_PLATFORM 优先级高于 ENGINE_VERSION 后缀
     """
 
     def setUp(self):
@@ -867,24 +869,33 @@ class TestEndToEndPlatformAwareScript(unittest.TestCase):
         self.assertIn("multistream_overlap_shared_expert", script)
         self.assertIn("ascend_compilation_config", script)
         self.assertIn("enable_npugraph_ex", script)
+        # A2 不应注入 MLAPO
+        self.assertNotIn("VLLM_ASCEND_ENABLE_MLAPO", script)
 
     def test_a2_single_node_unspecified_platform_falls_back_to_a2_keeps_additional_config(self):
-        """无任何 platform 信号 → 兜底为 A2 → additional_config 保留。"""
+        """无任何 platform 信号 → 兜底为 A2 → additional_config 保留，无 MLAPO。"""
         # 已由 setUp 清掉 env
         script = self._build(_glm51_e2e_params())
         self.assertIn("--additional-config", script)
         self.assertIn("fuse_muls_add", script)
+        self.assertNotIn("VLLM_ASCEND_ENABLE_MLAPO", script)
 
-    # ── A3 单机 ───────────────────────────────────────────────────────────
-    def test_a3_single_node_via_wings_platform_strips_additional_config(self):
+    # ── A3 单机：保留 additional-config + 追加 MLAPO ─────────────────────
+    def test_a3_single_node_via_wings_platform_keeps_additional_config_and_adds_mlapo(self):
         os.environ["WINGS_ASCEND_PLATFORM"] = "a3"
         script = self._build(_glm51_e2e_params())
-        self.assertNotIn("--additional-config", script)
+        self.assertIn("--additional-config", script)
+        self.assertIn("fuse_muls_add", script)
+        self.assertIn("multistream_overlap_shared_expert", script)
+        self.assertIn("enable_npugraph_ex", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
 
-    def test_a3_single_node_via_engine_version_suffix_strips_additional_config(self):
+    def test_a3_single_node_via_engine_version_suffix_keeps_additional_config_and_adds_mlapo(self):
         os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
         script = self._build(_glm51_e2e_params())
-        self.assertNotIn("--additional-config", script)
+        self.assertIn("--additional-config", script)
+        self.assertIn("fuse_muls_add", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
 
     # ── A2 双机（DP backend）─────────────────────────────────────────────
     def test_a2_dual_node_dp_head_contains_additional_config(self):
@@ -894,6 +905,7 @@ class TestEndToEndPlatformAwareScript(unittest.TestCase):
         self.assertIn("fuse_muls_add", script)
         # 同时验证 DP 后端关键参数到位
         self.assertIn("--data-parallel-size", script)
+        self.assertNotIn("VLLM_ASCEND_ENABLE_MLAPO", script)
 
     def test_a2_dual_node_dp_worker_contains_additional_config(self):
         os.environ["WINGS_ASCEND_PLATFORM"] = "a2"
@@ -901,16 +913,19 @@ class TestEndToEndPlatformAwareScript(unittest.TestCase):
         # worker 节点也含 additional_config（vllm DP 模式 head/worker 命令相同）
         self.assertIn("--additional-config", script)
 
-    # ── A3 双机 ───────────────────────────────────────────────────────────
-    def test_a3_dual_node_strips_additional_config(self):
+    # ── A3 双机：保留 additional-config + 追加 MLAPO ─────────────────────
+    def test_a3_dual_node_keeps_additional_config_and_adds_mlapo(self):
         os.environ["WINGS_ASCEND_PLATFORM"] = "a3"
         script = self._build(_glm51_e2e_params(distributed=True, rank=0))
-        self.assertNotIn("--additional-config", script)
+        self.assertIn("--additional-config", script)
+        self.assertIn("fuse_muls_add", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
 
-    def test_a3_dual_node_via_engine_version_strips_additional_config(self):
+    def test_a3_dual_node_via_engine_version_keeps_additional_config_and_adds_mlapo(self):
         os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
         script = self._build(_glm51_e2e_params(distributed=True, rank=0))
-        self.assertNotIn("--additional-config", script)
+        self.assertIn("--additional-config", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
 
     # ── 优先级 ───────────────────────────────────────────────────────────
     def test_wings_platform_a2_overrides_engine_version_a3(self):
@@ -920,26 +935,28 @@ class TestEndToEndPlatformAwareScript(unittest.TestCase):
         script = self._build(_glm51_e2e_params())
         self.assertIn("--additional-config", script)
         self.assertIn("fuse_muls_add", script)
+        # 显式 a2 → 不应追加 MLAPO
+        self.assertNotIn("VLLM_ASCEND_ENABLE_MLAPO", script)
 
     def test_engine_version_non_a3_keeps_a2_default(self):
-        """ENGINE_VERSION 不带 -a3 后缀 → 视作 A2 → 保留 additional_config。"""
+        """ENGINE_VERSION 不带 -a3 后缀 → 视作 A2 → 保留 additional_config，无 MLAPO。"""
         os.environ["ENGINE_VERSION"] = "0.13.0rc3"
         script = self._build(_glm51_e2e_params())
         self.assertIn("--additional-config", script)
+        self.assertNotIn("VLLM_ASCEND_ENABLE_MLAPO", script)
 
     # ── 非 GLM 架构不受影响 ───────────────────────────────────────────────
-    def test_a3_non_glm_arch_additional_config_not_stripped(self):
-        """vllm_ascend + 非 GlmMoeDsa + A3 → 不进入分支，additional_config 不被移除。"""
+    def test_a3_non_glm_arch_no_mlapo_added(self):
+        """vllm_ascend + 非 GlmMoeDsa + A3 → 不进入 GLM-5 env 分支，不应注入 MLAPO。"""
         os.environ["WINGS_ASCEND_PLATFORM"] = "a3"
         params = _glm51_e2e_params()
-        # 用 Qwen3 替换架构，但 engine_config 仍带 additional_config
         with patch.object(
             vllm_adapter, "ModelIdentifier",
             return_value=_FakeModelInfo("Qwen3ForCausalLM"),
         ):
             script = vllm_adapter.build_start_script(params)
-        # Qwen3 不进入 GLM 分支，原 additional_config 仍在 → 命令含 --additional-config
-        self.assertIn("--additional-config", script)
+        # Qwen3 不进入 GLM 分支，env 不应注入 GLM-5 专属的 MLAPO
+        self.assertNotIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

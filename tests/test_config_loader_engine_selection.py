@@ -345,7 +345,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         ):
             self.assertIn(env_name, script)
 
-    def _build_deepseek_v4_flash_script(self, platform="A2"):
+    def _build_deepseek_v4_flash_script(self, platform="A2", extra_env=None):
         from core.start_args_compat import parse_launch_args  # noqa: E402
         from engines.vllm_adapter import build_start_script  # noqa: E402
 
@@ -367,8 +367,11 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--trust-remote-code",
             ]
 
+            env = {"WINGS_ASCEND_PLATFORM": platform}
+            if extra_env:
+                env.update(extra_env)
             with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
-                with patch.dict(os.environ, {"WINGS_ASCEND_PLATFORM": platform}, clear=True):
+                with patch.dict(os.environ, env, clear=True):
                     launch_args = parse_launch_args(argv)
                     merged = load_and_merge_configs(
                         {"device": "ascend", "count": 8, "details": []},
@@ -398,13 +401,20 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             exec_line,
         )
         self.assertIn("\"multistream_overlap_shared_expert\":true", exec_line)
+        self.assertNotIn("ascend_compilation_config", exec_line)
+        self.assertNotIn("multistream_dsa_preprocess", exec_line)
         self.assertEqual(exec_line.count("--speculative-config"), 1)
         self.assertEqual(exec_line.count("--additional-config"), 1)
         self.assertEqual(exec_line.count("--compilation-config"), 1)
+        self.assertIn("--enable-prefix-caching", exec_line)
+        self.assertIn("--safetensors-load-strategy prefetch", exec_line)
         self.assertNotIn("--use-vllm-serve", exec_line)
         self.assertNotIn("--ascend-platform", exec_line)
         self.assertIn("export OMP_NUM_THREADS=10", script)
         self.assertIn("export TRITON_ALL_BLOCKS_PARALLEL=1", script)
+        self.assertNotIn("export USE_MULTI_GROUPS_KV_CACHE=1", script)
+        self.assertNotIn("--kv-transfer-config", exec_line)
+        self.assertIn("--hf-overrides '{\"index_topk_freq\": 4}'", exec_line)
 
     def test_deepseek_v4_flash_a3_vllm_ascend_script(self):
         script = self._build_deepseek_v4_flash_script("A3")
@@ -413,11 +423,66 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertTrue(exec_line.startswith("exec vllm serve "))
         self.assertIn("--data-parallel-size 2", exec_line)
         self.assertIn("\"multistream_overlap_shared_expert\":false", exec_line)
+        self.assertIn("\"multistream_dsa_preprocess\":false", exec_line)
+        self.assertIn("\"ascend_compilation_config\"", exec_line)
+        self.assertIn("\"enable_npugraph_ex\":true", exec_line)
+        self.assertIn("\"enable_static_kernel\":false", exec_line)
+        self.assertIn("--enable-prefix-caching", exec_line)
+        self.assertIn("--safetensors-load-strategy prefetch", exec_line)
         self.assertIn("export OMP_NUM_THREADS=10", script)
         self.assertIn("export ASCEND_A3_ENABLE=1", script)
+        self.assertIn("export USE_MULTI_GROUPS_KV_CACHE=1", script)
         self.assertIn("export VLLM_ASCEND_ENABLE_FUSED_MC2=1", script)
         self.assertIn("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1", script)
         self.assertNotIn("export TRITON_ALL_BLOCKS_PARALLEL=1", script)
+        self.assertNotIn("--kv-transfer-config", exec_line)
+        self.assertIn("--hf-overrides '{\"index_topk_freq\": 4}'", exec_line)
+
+    def test_deepseek_v4_flash_a3_kv_offload_injects_cpu_offloading_connector(self):
+        script = self._build_deepseek_v4_flash_script(
+            "A3",
+            extra_env={"LMCACHE_OFFLOAD": "true", "LMCACHE_MAX_LOCAL_CPU_SIZE": "100"},
+        )
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+
+        self.assertIn("--kv-transfer-config", exec_line)
+        self.assertIn("\"kv_connector\":\"CPUOffloadingConnector\"", exec_line)
+        self.assertIn(
+            "\"kv_connector_module_path\":\"vllm_ascend.distributed.kv_transfer"
+            ".kv_pool.cpu_offload.cpu_offload_connector\"",
+            exec_line,
+        )
+        self.assertIn("\"kv_role\":\"kv_both\"", exec_line)
+        self.assertIn("\"swap_in_threshold\":1", exec_line)
+        self.assertIn("\"cpu_swap_space_gb\":100", exec_line)
+        # 与 MTP 共存：spec 不应降级
+        self.assertIn(
+            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"deepseek_mtp\"}'",
+            exec_line,
+        )
+        # LMCache env 与 YAML 路径不应再导出
+        self.assertNotIn("export LMCACHE_OFFLOAD=", script)
+        self.assertNotIn("export LMCACHE_CONFIG_FILE=", script)
+        self.assertNotIn("export PYTHONHASHSEED=0", script)
+
+    def test_deepseek_v4_flash_a2_kv_offload_uses_same_connector(self):
+        script = self._build_deepseek_v4_flash_script(
+            "A2",
+            extra_env={"LMCACHE_OFFLOAD": "true", "LMCACHE_MAX_LOCAL_CPU_SIZE": "150"},
+        )
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+
+        self.assertIn("\"kv_connector\":\"CPUOffloadingConnector\"", exec_line)
+        self.assertIn("\"cpu_swap_space_gb\":150", exec_line)
+        self.assertNotIn("export LMCACHE_OFFLOAD=", script)
+
+    def test_deepseek_v4_flash_kv_offload_defaults_cpu_swap_to_200(self):
+        script = self._build_deepseek_v4_flash_script(
+            "A3", extra_env={"LMCACHE_OFFLOAD": "true"},
+        )
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+
+        self.assertIn("\"cpu_swap_space_gb\":200", exec_line)
 
     def test_mindie_deepseek_long_context_2x8_triggers_cpsp_defaults(self):
         params = {}
