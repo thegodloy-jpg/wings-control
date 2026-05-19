@@ -359,13 +359,13 @@ def _build_vllm_ascend_forced_env_commands(params: Dict[str, Any], engine: str) 
         return []
 
     commands = [
-        "export OMP_PROC_BIND=false",
-        "export OMP_NUM_THREADS=1",
-        "export HCCL_BUFFSIZE=1024",
-        "export TASK_QUEUE_ENABLE=1",
+        "export OMP_PROC_BIND=${OMP_PROC_BIND:-false}",
+        "export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}",
+        "export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}",
+        "export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}",
     ]
     if not _is_vllm_ascend_ray_distributed(params, engine):
-        commands.append("export HCCL_OP_EXPANSION_MODE=AIV")
+        commands.append("export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}")
     return commands
 
 
@@ -1087,6 +1087,111 @@ def _build_glm5_ascend_env(arch: str) -> List[str]:
     ]
 
 
+_DEEPSEEK_V4_FLASH_ARCHES = {
+    "DeepseekV4ForCausalLM",
+    "DeepSeekV4ForCausalLM",
+    # 部分 DeepSeek-V4-Flash 权重仍可能沿用 V3 架构名。
+    "DeepseekV3ForCausalLM",
+}
+
+
+def _get_engine_config_platform(params: Dict[str, Any]) -> str:
+    """Return user-declared Ascend platform from engine_config or environment."""
+    engine_config = params.get("engine_config") or {}
+    value = (
+        os.getenv("WINGS_ASCEND_PLATFORM")
+        or os.getenv("ASCEND_PLATFORM")
+        or os.getenv("ENGINE_IMAGE_FLAVOR")
+        or engine_config.get("ascend_platform")
+        or engine_config.get("hardware_platform")
+        or ""
+    )
+    return str(value).strip().lower()
+
+
+def _resolve_deepseek_v4_flash_platform(params: Dict[str, Any]) -> str:
+    """Resolve DeepSeek-V4-Flash vLLM-Ascend package flavor: a2 or a3.
+
+    优先级:
+      1. 显式声明 (WINGS_ASCEND_PLATFORM / engine_config.ascend_platform 等)
+      2. /shared-volume/hardware_info.json 的 details[].name (主路径，由
+         config_loader 注入到 params['device_details'])
+      3. ASCEND_A3_ENABLE 环境变量 (legacy)
+      4. WINGS_DEVICE_NAME 环境变量 (device_utils 回退路径)
+      5. 默认 a2
+    """
+    declared = _get_engine_config_platform(params)
+    if declared in {"a2", "atlas-a2", "atlas_a2", "910b"}:
+        return "a2"
+    if declared in {"a3", "atlas-a3", "atlas_a3", "910c"}:
+        return "a3"
+
+    for detail in params.get("device_details") or []:
+        chip = str(detail.get("name", "")).strip().lower()
+        if not chip:
+            continue
+        if "910c" in chip or "a3" in chip:
+            return "a3"
+        if "910b" in chip or "a2" in chip:
+            return "a2"
+
+    if os.getenv("ASCEND_A3_ENABLE", "").strip().lower() in {"1", "true", "yes"}:
+        return "a3"
+
+    device_name = os.getenv("WINGS_DEVICE_NAME", "").strip().lower()
+    if "a3" in device_name or "910c" in device_name:
+        return "a3"
+    if "a2" in device_name or "910b" in device_name:
+        return "a2"
+    return "a2"
+
+
+def _is_deepseek_v4_flash_params(
+    params: Dict[str, Any],
+    model_info: Optional[ModelIdentifier] = None,
+) -> bool:
+    """Return True for DeepSeek-V4-Flash launch params without affecting other DeepSeek models."""
+    candidates = [
+        params.get("model_name"),
+        params.get("served_model_name"),
+        params.get("model_path"),
+    ]
+    engine_config = params.get("engine_config") or {}
+    candidates.append(engine_config.get("served_model_name"))
+    candidates.append(engine_config.get("model"))
+    text = " ".join(str(item).lower() for item in candidates if item)
+    if "deepseek-v4-flash" in text or "deepseek_v4_flash" in text or "deepseekv4flash" in text:
+        return True
+    if model_info and model_info.model_architecture in _DEEPSEEK_V4_FLASH_ARCHES:
+        return "v4" in text and "flash" in text
+    return False
+
+
+def _build_deepseek_v4_flash_env(params: Dict[str, Any]) -> List[str]:
+    """构建 DeepSeek-V4-Flash A2/A3 vLLM-Ascend 专属环境变量。"""
+    platform = _resolve_deepseek_v4_flash_platform(params)
+    common = [
+        "export USE_MULTI_BLOCK_POOL=1",
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=10",
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export ACL_OP_INIT_MODE=1",
+    ]
+    if platform == "a3":
+        logger.info("[DeepSeek-V4-Flash] Set Ascend A3 environment variables")
+        return common + [
+            "export ASCEND_A3_ENABLE=1",
+            "export HCCL_BUFFSIZE=1024",
+            "export VLLM_ASCEND_ENABLE_FUSED_MC2=1",
+            "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
+        ]
+
+    logger.info("[DeepSeek-V4-Flash] Set Ascend A2 environment variables")
+    return common + [
+        "export TRITON_ALL_BLOCKS_PARALLEL=1",
+    ]
+
+
 def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     """构建模型架构特定的环境变量命令（支持 NVIDIA 和 Ascend）。
 
@@ -1121,6 +1226,9 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
         params.get("model_type")
     )
     arch = model_info.model_architecture
+
+    if engine == "vllm_ascend" and _is_deepseek_v4_flash_params(params, model_info):
+        return _build_deepseek_v4_flash_env(params)
 
     if engine == "vllm_ascend":
         _arch_env_builders = {
@@ -1197,7 +1305,11 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
             )
     engine_config.pop("use_kunlun_atb", None)
     engine_config.pop("enable_sparse", None)  # consumed by _build_kv_sparse_cmd; not a vllm CLI arg
+    engine_config.pop("ascend_platform", None)
+    engine_config.pop("hardware_platform", None)
     explicit_keys = set(params.get("_explicit_cli_keys") or [])
+
+    _apply_deepseek_v4_flash_engine_defaults(params, engine_config, explicit_keys)
 
     if _is_deepseek_ascend_dp_deployment(params):
         model_architecture = _get_deepseek_ascend_dp_model_architecture(params)
@@ -1242,6 +1354,95 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
 
     return engine_config
 
+
+
+def _set_if_not_explicit(
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+    key: str,
+    value: Any,
+) -> None:
+    """Set engine_config[key] unless user explicitly supplied the key."""
+    if key in explicit_keys:
+        return
+    if engine_config.get(key) in (None, "", [], {}):
+        engine_config[key] = value
+
+
+def _merge_dict_default_if_not_explicit(
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+    key: str,
+    default_value: Dict[str, Any],
+) -> None:
+    """Deep-merge a dict default while preserving user-supplied values."""
+    if key in explicit_keys:
+        return
+    current = engine_config.get(key)
+    if current in (None, "", [], {}):
+        engine_config[key] = dict(default_value)
+        return
+    parsed_current = _parse_dict_like_config(current)
+    if parsed_current is None:
+        return
+    engine_config[key] = _deep_merge_user_priority(parsed_current, default_value)
+
+
+def _set_deepseek_v4_flash_additional_config(
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+    platform: str,
+) -> None:
+    """Set DeepSeek-V4-Flash additional_config defaults with platform-specific override."""
+    if "additional_config" in explicit_keys:
+        return
+    current = _parse_dict_like_config(engine_config.get("additional_config")) or {}
+    current.setdefault("enable_cpu_binding", "true")
+    current["multistream_overlap_shared_expert"] = platform != "a3"
+    engine_config["additional_config"] = current
+
+
+def _apply_deepseek_v4_flash_engine_defaults(
+    params: Dict[str, Any],
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+) -> None:
+    """Apply DeepSeek-V4-Flash vLLM-Ascend launch defaults without touching other models."""
+    if params.get("engine") != "vllm_ascend":
+        return
+    if not _is_deepseek_v4_flash_params(params):
+        return
+
+    platform = _resolve_deepseek_v4_flash_platform(params)
+    _set_if_not_explicit(engine_config, explicit_keys, "max_model_len", 65536)
+    _set_if_not_explicit(engine_config, explicit_keys, "max_num_batched_tokens", 8192)
+    _set_if_not_explicit(engine_config, explicit_keys, "max_num_seqs", 16)
+    _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", 8)
+    if "data_parallel_size" not in explicit_keys:
+        engine_config["data_parallel_size"] = 2 if platform == "a3" else 1
+    _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "quantization", "ascend")
+    _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
+    _set_if_not_explicit(engine_config, explicit_keys, "chat_template", "/usr/local/serving/models/chat_template.jinja")
+    _set_if_not_explicit(engine_config, explicit_keys, "async_scheduling", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "tokenizer_mode", "deepseek_v4")
+    _set_if_not_explicit(engine_config, explicit_keys, "tool_call_parser", "deepseek_v4")
+    _set_if_not_explicit(engine_config, explicit_keys, "enable_auto_tool_choice", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "reasoning_parser", "deepseek_v4")
+
+    _set_deepseek_v4_flash_additional_config(engine_config, explicit_keys, platform)
+    _merge_dict_default_if_not_explicit(
+        engine_config,
+        explicit_keys,
+        "speculative_config",
+        {"num_speculative_tokens": 1, "method": "deepseek_mtp"},
+    )
+    _merge_dict_default_if_not_explicit(
+        engine_config,
+        explicit_keys,
+        "compilation_config",
+        {"cudagraph_mode": "FULL_DECODE_ONLY"},
+    )
 
 
 def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
@@ -1585,7 +1786,12 @@ def _build_vllm_cmd_parts(params: Dict[str, Any]) -> str:
         str: 完整的 vLLM 启动命令字符串
     """
     engine_config = _prepare_engine_config(params)
-    cmd_parts = ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+    use_vllm_serve = bool(engine_config.pop("use_vllm_serve", False))
+    if use_vllm_serve:
+        model_value = engine_config.pop("model", params.get("model_path", "/weights"))
+        cmd_parts = ["vllm", "serve", shlex.quote(str(model_value))]
+    else:
+        cmd_parts = ["python3", "-m", "vllm.entrypoints.openai.api_server"]
 
     for arg, value in engine_config.items():
         if value is None:
@@ -1797,6 +2003,8 @@ def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
     if not params.get("enable_speculative_decode"):
         return False
     engine_config = params.get("engine_config") or {}
+    if _is_deepseek_v4_flash_params(params):
+        return False
     return not bool(engine_config.get("speculative_config"))
 
 

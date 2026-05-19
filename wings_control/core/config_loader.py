@@ -1980,6 +1980,7 @@ def _select_ascend_engine(device_name: str, model_info) -> str:
                        "automatically switched to VLLM_Ascend engine")
         return "vllm_ascend"
     elif model_architecture in ["DeepseekV32ForCausalLM", "Qwen3NextForCausalLM",
+                                  "DeepseekV4ForCausalLM",
                                   "Glm4MoeForCausalLM",
                                   "GlmMoeDsaForCausalLM",
                                   "Qwen3_5ForConditionalGeneration",

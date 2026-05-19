@@ -340,6 +340,80 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         ):
             self.assertIn(env_name, script)
 
+    def _build_deepseek_v4_flash_script(self, platform="A2"):
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+        from engines.vllm_adapter import build_start_script  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["DeepseekV3ForCausalLM"],
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "DeepSeek-V4-Flash-w8a8-mtp",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "8",
+                "--trust-remote-code",
+            ]
+
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {"WINGS_ASCEND_PLATFORM": platform}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "ascend", "count": 8, "details": []},
+                        launch_args.to_namespace(),
+                    )
+                    return build_start_script(merged)
+
+    def test_deepseek_v4_flash_a2_vllm_ascend_script(self):
+        script = self._build_deepseek_v4_flash_script("A2")
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+
+        self.assertTrue(exec_line.startswith("exec vllm serve "))
+        self.assertIn("--max-model-len 65536", exec_line)
+        self.assertIn("--max-num-batched-tokens 8192", exec_line)
+        self.assertIn("--tensor-parallel-size 8", exec_line)
+        self.assertIn("--data-parallel-size 1", exec_line)
+        self.assertIn("--enable-expert-parallel", exec_line)
+        self.assertIn("--quantization ascend", exec_line)
+        self.assertIn("--block-size 128", exec_line)
+        self.assertIn("--async-scheduling", exec_line)
+        self.assertIn("--tokenizer-mode deepseek_v4", exec_line)
+        self.assertIn("--tool-call-parser deepseek_v4", exec_line)
+        self.assertIn("--enable-auto-tool-choice", exec_line)
+        self.assertIn("--reasoning-parser deepseek_v4", exec_line)
+        self.assertIn(
+            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"deepseek_mtp\"}'",
+            exec_line,
+        )
+        self.assertIn("\"multistream_overlap_shared_expert\":true", exec_line)
+        self.assertEqual(exec_line.count("--speculative-config"), 1)
+        self.assertEqual(exec_line.count("--additional-config"), 1)
+        self.assertEqual(exec_line.count("--compilation-config"), 1)
+        self.assertNotIn("--use-vllm-serve", exec_line)
+        self.assertNotIn("--ascend-platform", exec_line)
+        self.assertIn("export OMP_NUM_THREADS=10", script)
+        self.assertIn("export TRITON_ALL_BLOCKS_PARALLEL=1", script)
+
+    def test_deepseek_v4_flash_a3_vllm_ascend_script(self):
+        script = self._build_deepseek_v4_flash_script("A3")
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+
+        self.assertTrue(exec_line.startswith("exec vllm serve "))
+        self.assertIn("--data-parallel-size 2", exec_line)
+        self.assertIn("\"multistream_overlap_shared_expert\":false", exec_line)
+        self.assertIn("export OMP_NUM_THREADS=10", script)
+        self.assertIn("export ASCEND_A3_ENABLE=1", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_FUSED_MC2=1", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1", script)
+        self.assertNotIn("export TRITON_ALL_BLOCKS_PARALLEL=1", script)
+
     def test_mindie_deepseek_long_context_2x8_triggers_cpsp_defaults(self):
         params = {}
         ctx = {
