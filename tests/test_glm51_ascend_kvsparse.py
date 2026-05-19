@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -449,6 +450,471 @@ class TestBuildStartScriptAscend(unittest.TestCase):
         ):
             script = vllm_adapter.build_start_script(params)
         self.assertIn("--hf-overrides '{\"index_topk_freq\": 4}'", script)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 7. additional_config A2/A3 平台分支（_apply_glm5_ascend_engine_defaults）
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+_GLM5_A2_AC_KEYS = {"fuse_muls_add", "multistream_overlap_shared_expert", "ascend_compilation_config"}
+
+
+class TestGlm5AscendAdditionalConfigPlatformBranch(unittest.TestCase):
+    """[GLM-5/5.1 Ascend] _apply_glm5_ascend_engine_defaults 平台分支验证。
+
+    官方依据：vllm-ascend GLM-5 文档
+      * A2 单机/双机：传 additional-config 三键
+      * A3 单机/双机：不传 additional-config
+    """
+
+    def _params(self, *, model_name="GLM-5.1", model_path="/models/glm-5.1",
+                engine_config=None, explicit_keys=None):
+        params = {
+            "model_name": model_name,
+            "model_path": model_path,
+            "model_type": "llm",
+            "engine": "vllm_ascend",
+            "engine_config": engine_config if engine_config is not None else {},
+        }
+        if explicit_keys is not None:
+            params["_explicit_cli_keys"] = list(explicit_keys)
+        return params
+
+    def _run(self, params):
+        engine_config = params["engine_config"]
+        explicit_keys = set(params.get("_explicit_cli_keys") or [])
+        with patch.object(
+            vllm_adapter, "ModelIdentifier",
+            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
+        ):
+            vllm_adapter._apply_glm5_ascend_engine_defaults(
+                params, engine_config, explicit_keys,
+            )
+        return engine_config
+
+    # ── A2（含未识别兜底）注入 ─────────────────────────────────────────────
+    def test_a2_glm51_injects_three_keys(self):
+        with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a2"}, clear=False):
+            engine_config = self._run(self._params())
+        self.assertIn("additional_config", engine_config)
+        self.assertEqual(set(engine_config["additional_config"].keys()), _GLM5_A2_AC_KEYS)
+        self.assertTrue(engine_config["additional_config"]["fuse_muls_add"])
+        self.assertTrue(engine_config["additional_config"]["multistream_overlap_shared_expert"])
+        self.assertEqual(
+            engine_config["additional_config"]["ascend_compilation_config"],
+            {"enable_npugraph_ex": True},
+        )
+
+    def test_a2_glm5_non_51_also_injects(self):
+        """GLM-5（非 5.1）同样属于 GlmMoeDsaForCausalLM 架构 → A2 同样注入。"""
+        with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a2"}, clear=False):
+            engine_config = self._run(
+                self._params(model_name="GLM-5", model_path="/models/glm-5")
+            )
+        self.assertEqual(set(engine_config["additional_config"].keys()), _GLM5_A2_AC_KEYS)
+
+    def test_platform_unspecified_falls_back_to_a2(self):
+        """无任何平台声明、无 ENGINE_VERSION → 视作 A2 注入（与 JSON 默认一致）。"""
+        for var in ("WINGS_ASCEND_PLATFORM", "ASCEND_PLATFORM", "ENGINE_IMAGE_FLAVOR",
+                    "ENGINE_VERSION", "ASCEND_A3_ENABLE", "WINGS_DEVICE_NAME"):
+            self.addCleanup(lambda v=var, old=os.environ.get(var):
+                            os.environ.__setitem__(v, old) if old is not None
+                            else os.environ.pop(v, None))
+            os.environ.pop(var, None)
+        engine_config = self._run(self._params())
+        self.assertEqual(set(engine_config["additional_config"].keys()), _GLM5_A2_AC_KEYS)
+
+    # ── A3 移除 ────────────────────────────────────────────────────────────
+    def test_a3_glm51_drops_additional_config(self):
+        """A3 + JSON 默认带了 additional_config → 必须移除（官方 A3 不传）。"""
+        with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a3"}, clear=False):
+            engine_config = self._run(self._params(engine_config={
+                "additional_config": {
+                    "fuse_muls_add": True,
+                    "multistream_overlap_shared_expert": True,
+                },
+            }))
+        self.assertNotIn("additional_config", engine_config)
+
+    def test_a3_via_engine_version_suffix_drops_additional_config(self):
+        """ENGINE_VERSION='0.13.0rc3-a3' → 识别为 A3 → 移除 additional_config。"""
+        # 不设 WINGS_ASCEND_PLATFORM，确保由 ENGINE_VERSION 触发
+        for var in ("WINGS_ASCEND_PLATFORM", "ASCEND_PLATFORM", "ENGINE_IMAGE_FLAVOR",
+                    "ASCEND_A3_ENABLE", "WINGS_DEVICE_NAME"):
+            self.addCleanup(lambda v=var, old=os.environ.get(var):
+                            os.environ.__setitem__(v, old) if old is not None
+                            else os.environ.pop(v, None))
+            os.environ.pop(var, None)
+        with patch.dict("os.environ", {"ENGINE_VERSION": "0.13.0rc3-a3"}, clear=False):
+            engine_config = self._run(self._params(engine_config={
+                "additional_config": {"fuse_muls_add": True},
+            }))
+        self.assertNotIn("additional_config", engine_config)
+
+    def test_a3_user_explicit_additional_config_preserved(self):
+        """A3 + 用户显式声明 additional_config → 不应被移除（用户优先）。"""
+        with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a3"}, clear=False):
+            engine_config = self._run(self._params(
+                engine_config={"additional_config": {"fuse_muls_add": False}},
+                explicit_keys=["additional_config"],
+            ))
+        self.assertEqual(engine_config["additional_config"], {"fuse_muls_add": False})
+
+    # ── 用户显式键值与默认深合并 ──────────────────────────────────────────
+    def test_a2_user_explicit_overrides_specific_key_via_deep_merge(self):
+        """A2 + engine_config 已有 additional_config 但未在 explicit_keys → 深合并。
+
+        ascend_default.json 的 JSON 默认值会进入 engine_config 但不在 explicit_keys
+        里。深合并应让默认值与已存在键值共存，已存在键值优先。
+        """
+        with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a2"}, clear=False):
+            engine_config = self._run(self._params(engine_config={
+                "additional_config": {"fuse_muls_add": False},  # 模拟用户覆写
+            }))
+        # 用户值赢
+        self.assertFalse(engine_config["additional_config"]["fuse_muls_add"])
+        # 默认值兜底
+        self.assertTrue(engine_config["additional_config"]["multistream_overlap_shared_expert"])
+        self.assertEqual(
+            engine_config["additional_config"]["ascend_compilation_config"],
+            {"enable_npugraph_ex": True},
+        )
+
+    def test_a2_fully_explicit_additional_config_preserved(self):
+        """A2 + 用户显式声明 additional_config → 不深合并默认值。"""
+        with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a2"}, clear=False):
+            engine_config = self._run(self._params(
+                engine_config={"additional_config": {"my_custom_key": 1}},
+                explicit_keys=["additional_config"],
+            ))
+        self.assertEqual(engine_config["additional_config"], {"my_custom_key": 1})
+
+    # ── 引擎 / 架构门控 ────────────────────────────────────────────────────
+    def test_non_ascend_engine_no_op(self):
+        """engine=vllm (NVIDIA) → 不进入分支，engine_config 不被改写。"""
+        params = self._params()
+        params["engine"] = "vllm"
+        engine_config = params["engine_config"]
+        explicit_keys = set()
+        with patch.object(
+            vllm_adapter, "ModelIdentifier",
+            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
+        ):
+            vllm_adapter._apply_glm5_ascend_engine_defaults(
+                params, engine_config, explicit_keys,
+            )
+        self.assertNotIn("additional_config", engine_config)
+
+    def test_non_glm_arch_no_op(self):
+        """vllm_ascend + 非 GlmMoeDsa 架构（如 Qwen3）→ 不被改写。"""
+        params = self._params()
+        engine_config = params["engine_config"]
+        explicit_keys = set()
+        with patch.dict("os.environ", {"WINGS_ASCEND_PLATFORM": "a2"}, clear=False), \
+             patch.object(
+                 vllm_adapter, "ModelIdentifier",
+                 return_value=_FakeModelInfo("Qwen3ForCausalLM"),
+             ):
+            vllm_adapter._apply_glm5_ascend_engine_defaults(
+                params, engine_config, explicit_keys,
+            )
+        self.assertNotIn("additional_config", engine_config)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 8. _get_engine_config_platform —— ENGINE_VERSION 后缀检测
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestGetEngineConfigPlatform(unittest.TestCase):
+    """ENGINE_VERSION 后缀 '-a3' 应作次级信号被识别。"""
+
+    def setUp(self):
+        for var in ("WINGS_ASCEND_PLATFORM", "ASCEND_PLATFORM", "ENGINE_IMAGE_FLAVOR",
+                    "ENGINE_VERSION"):
+            self.addCleanup(lambda v=var, old=os.environ.get(var):
+                            os.environ.__setitem__(v, old) if old is not None
+                            else os.environ.pop(v, None))
+            os.environ.pop(var, None)
+
+    def test_engine_version_a3_suffix_returns_a3(self):
+        with patch.dict("os.environ", {"ENGINE_VERSION": "0.13.0rc3-a3"}, clear=False):
+            self.assertEqual(vllm_adapter._get_engine_config_platform({}), "a3")
+
+    def test_engine_version_uppercase_a3_suffix_returns_a3(self):
+        with patch.dict("os.environ", {"ENGINE_VERSION": "0.13.0rc3-A3"}, clear=False):
+            self.assertEqual(vllm_adapter._get_engine_config_platform({}), "a3")
+
+    def test_engine_version_without_a3_suffix_returns_empty(self):
+        """没有 -a3 后缀 → 不强推 a2，让下游 _resolve_*_platform 兜底。"""
+        with patch.dict("os.environ", {"ENGINE_VERSION": "0.13.0rc3"}, clear=False):
+            self.assertEqual(vllm_adapter._get_engine_config_platform({}), "")
+
+    def test_explicit_declaration_overrides_engine_version(self):
+        """显式声明优先级 > ENGINE_VERSION。"""
+        with patch.dict("os.environ", {
+            "WINGS_ASCEND_PLATFORM": "a2",
+            "ENGINE_VERSION": "0.13.0rc3-a3",
+        }, clear=False):
+            self.assertEqual(vllm_adapter._get_engine_config_platform({}), "a2")
+
+    def test_no_signal_returns_empty(self):
+        self.assertEqual(vllm_adapter._get_engine_config_platform({}), "")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 9. 端到端：build_start_script 在 A2/A3 × 单机/双机下命令产出
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _clear_platform_env(test_case):
+    """清掉所有可能影响 platform 检测的 env，确保测试独立。"""
+    for var in ("WINGS_ASCEND_PLATFORM", "ASCEND_PLATFORM", "ENGINE_IMAGE_FLAVOR",
+                "ENGINE_VERSION", "ASCEND_A3_ENABLE", "WINGS_DEVICE_NAME"):
+        test_case.addCleanup(
+            lambda v=var, old=os.environ.get(var):
+            os.environ.__setitem__(v, old) if old is not None
+            else os.environ.pop(v, None)
+        )
+        os.environ.pop(var, None)
+
+
+def _ascend_default_additional_config() -> dict:
+    """模拟 ascend_default.json 中 GlmMoeDsaForCausalLM 默认带的 additional_config。"""
+    return {
+        "fuse_muls_add": True,
+        "multistream_overlap_shared_expert": True,
+        "ascend_compilation_config": {"enable_npugraph_ex": True},
+    }
+
+
+def _glm51_e2e_params(*, distributed: bool = False, rank: int = 0,
+                       with_default_additional_config: bool = True) -> dict:
+    """构造端到端 GLM-5.1 ascend 启动参数（模拟 JSON 默认已经合并进 engine_config）。"""
+    engine_config = {
+        "model": "/models/glm-5.1",
+        "max_model_len": 131072 if distributed else 4096,
+        "max_num_seqs": 2 if distributed else 8,
+    }
+    if with_default_additional_config:
+        engine_config["additional_config"] = _ascend_default_additional_config()
+    params = {
+        "model_name": "GLM-5.1",
+        "model_path": "/models/glm-5.1",
+        "model_type": "llm",
+        "engine": "vllm_ascend",
+        "engine_config": engine_config,
+    }
+    if distributed:
+        params.update({
+            "distributed": True,
+            "nnodes": 2,
+            "node_rank": rank,
+            "distributed_executor_backend": "dp_deployment",
+            "master_ip": "192.168.1.1",
+            "node_ips": "192.168.1.1,192.168.1.2",
+            "device_count": 8,
+        })
+    return params
+
+
+class TestEndToEndPlatformAwareScript(unittest.TestCase):
+    """端到端：build_start_script 产出脚本在 A2/A3 上的 --additional-config 差异。
+
+    覆盖：
+      * A2 单机：脚本含 --additional-config（三键）
+      * A3 单机（WINGS_ASCEND_PLATFORM）：脚本不含 --additional-config
+      * A3 单机（ENGINE_VERSION=...-a3）：脚本不含 --additional-config
+      * A2 双机（DP backend）：脚本含 --additional-config
+      * A3 双机：脚本不含 --additional-config
+      * 优先级：WINGS_ASCEND_PLATFORM=a2 + ENGINE_VERSION=...-a3 → 显式 a2 赢
+    """
+
+    def setUp(self):
+        _clear_platform_env(self)
+
+    def _build(self, params):
+        with patch.object(
+            vllm_adapter, "ModelIdentifier",
+            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
+        ):
+            return vllm_adapter.build_start_script(params)
+
+    # ── A2 单机 ───────────────────────────────────────────────────────────
+    def test_a2_single_node_script_contains_additional_config_three_keys(self):
+        os.environ["WINGS_ASCEND_PLATFORM"] = "a2"
+        script = self._build(_glm51_e2e_params())
+        self.assertIn("--additional-config", script)
+        self.assertIn("fuse_muls_add", script)
+        self.assertIn("multistream_overlap_shared_expert", script)
+        self.assertIn("ascend_compilation_config", script)
+        self.assertIn("enable_npugraph_ex", script)
+
+    def test_a2_single_node_unspecified_platform_falls_back_to_a2_keeps_additional_config(self):
+        """无任何 platform 信号 → 兜底为 A2 → additional_config 保留。"""
+        # 已由 setUp 清掉 env
+        script = self._build(_glm51_e2e_params())
+        self.assertIn("--additional-config", script)
+        self.assertIn("fuse_muls_add", script)
+
+    # ── A3 单机 ───────────────────────────────────────────────────────────
+    def test_a3_single_node_via_wings_platform_strips_additional_config(self):
+        os.environ["WINGS_ASCEND_PLATFORM"] = "a3"
+        script = self._build(_glm51_e2e_params())
+        self.assertNotIn("--additional-config", script)
+
+    def test_a3_single_node_via_engine_version_suffix_strips_additional_config(self):
+        os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
+        script = self._build(_glm51_e2e_params())
+        self.assertNotIn("--additional-config", script)
+
+    # ── A2 双机（DP backend）─────────────────────────────────────────────
+    def test_a2_dual_node_dp_head_contains_additional_config(self):
+        os.environ["WINGS_ASCEND_PLATFORM"] = "a2"
+        script = self._build(_glm51_e2e_params(distributed=True, rank=0))
+        self.assertIn("--additional-config", script)
+        self.assertIn("fuse_muls_add", script)
+        # 同时验证 DP 后端关键参数到位
+        self.assertIn("--data-parallel-size", script)
+
+    def test_a2_dual_node_dp_worker_contains_additional_config(self):
+        os.environ["WINGS_ASCEND_PLATFORM"] = "a2"
+        script = self._build(_glm51_e2e_params(distributed=True, rank=1))
+        # worker 节点也含 additional_config（vllm DP 模式 head/worker 命令相同）
+        self.assertIn("--additional-config", script)
+
+    # ── A3 双机 ───────────────────────────────────────────────────────────
+    def test_a3_dual_node_strips_additional_config(self):
+        os.environ["WINGS_ASCEND_PLATFORM"] = "a3"
+        script = self._build(_glm51_e2e_params(distributed=True, rank=0))
+        self.assertNotIn("--additional-config", script)
+
+    def test_a3_dual_node_via_engine_version_strips_additional_config(self):
+        os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
+        script = self._build(_glm51_e2e_params(distributed=True, rank=0))
+        self.assertNotIn("--additional-config", script)
+
+    # ── 优先级 ───────────────────────────────────────────────────────────
+    def test_wings_platform_a2_overrides_engine_version_a3(self):
+        """显式 WINGS_ASCEND_PLATFORM=a2 应覆盖 ENGINE_VERSION=...-a3。"""
+        os.environ["WINGS_ASCEND_PLATFORM"] = "a2"
+        os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
+        script = self._build(_glm51_e2e_params())
+        self.assertIn("--additional-config", script)
+        self.assertIn("fuse_muls_add", script)
+
+    def test_engine_version_non_a3_keeps_a2_default(self):
+        """ENGINE_VERSION 不带 -a3 后缀 → 视作 A2 → 保留 additional_config。"""
+        os.environ["ENGINE_VERSION"] = "0.13.0rc3"
+        script = self._build(_glm51_e2e_params())
+        self.assertIn("--additional-config", script)
+
+    # ── 非 GLM 架构不受影响 ───────────────────────────────────────────────
+    def test_a3_non_glm_arch_additional_config_not_stripped(self):
+        """vllm_ascend + 非 GlmMoeDsa + A3 → 不进入分支，additional_config 不被移除。"""
+        os.environ["WINGS_ASCEND_PLATFORM"] = "a3"
+        params = _glm51_e2e_params()
+        # 用 Qwen3 替换架构，但 engine_config 仍带 additional_config
+        with patch.object(
+            vllm_adapter, "ModelIdentifier",
+            return_value=_FakeModelInfo("Qwen3ForCausalLM"),
+        ):
+            script = vllm_adapter.build_start_script(params)
+        # Qwen3 不进入 GLM 分支，原 additional_config 仍在 → 命令含 --additional-config
+        self.assertIn("--additional-config", script)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 10. DSv4-Flash 回归：ENGINE_VERSION 信号扩展不破坏 DSv4-Flash 路径
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestDeepseekV4FlashRegression(unittest.TestCase):
+    """ENGINE_VERSION 接入 _get_engine_config_platform 后，DSv4-Flash 路径行为不变。
+
+    关键不变量：
+      * `_resolve_deepseek_v4_flash_platform` 现在能感知 ENGINE_VERSION 后缀
+      * 无任何信号时 → 仍兜底 a2（不破坏既有默认）
+      * ENGINE_VERSION=...-a3 → 解析为 a3（这是 desired 扩展能力）
+      * 显式 WINGS_ASCEND_PLATFORM 仍是最高优先级
+    """
+
+    def setUp(self):
+        _clear_platform_env(self)
+
+    def _params(self, **extra):
+        params = {
+            "model_name": "DeepSeek-V4-Flash-w8a8-mtp",
+            "model_path": "/models/deepseek-v4-flash-w8a8-mtp",
+            "model_type": "llm",
+            "engine": "vllm_ascend",
+            "engine_config": {},
+        }
+        params.update(extra)
+        return params
+
+    def test_no_signal_resolves_to_a2(self):
+        self.assertEqual(
+            vllm_adapter._resolve_deepseek_v4_flash_platform(self._params()),
+            "a2",
+        )
+
+    def test_explicit_wings_platform_a3_resolves_to_a3(self):
+        os.environ["WINGS_ASCEND_PLATFORM"] = "a3"
+        self.assertEqual(
+            vllm_adapter._resolve_deepseek_v4_flash_platform(self._params()),
+            "a3",
+        )
+
+    def test_engine_version_a3_suffix_resolves_to_a3(self):
+        """新能力：DSv4-Flash 现在也能感知 ENGINE_VERSION 后缀。"""
+        os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
+        self.assertEqual(
+            vllm_adapter._resolve_deepseek_v4_flash_platform(self._params()),
+            "a3",
+        )
+
+    def test_engine_version_no_suffix_falls_back_to_a2(self):
+        os.environ["ENGINE_VERSION"] = "0.13.0rc3"
+        self.assertEqual(
+            vllm_adapter._resolve_deepseek_v4_flash_platform(self._params()),
+            "a2",
+        )
+
+    def test_legacy_ascend_a3_enable_still_works(self):
+        """legacy ASCEND_A3_ENABLE=1 信号仍生效（不破坏既有部署）。"""
+        os.environ["ASCEND_A3_ENABLE"] = "1"
+        self.assertEqual(
+            vllm_adapter._resolve_deepseek_v4_flash_platform(self._params()),
+            "a3",
+        )
+
+    def test_device_details_a3_still_works(self):
+        """device_details 注入信号仍生效。"""
+        params = self._params()
+        params["device_details"] = [{"name": "Atlas-910C-A3"}]
+        self.assertEqual(
+            vllm_adapter._resolve_deepseek_v4_flash_platform(params),
+            "a3",
+        )
+
+    def test_engine_version_a3_triggers_dsv4_flash_a3_defaults(self):
+        """端到端：ENGINE_VERSION=...-a3 触发 DSv4-Flash 应用 A3 默认值（DP=2）。"""
+        os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
+        params = self._params()
+        engine_config = params["engine_config"]
+        explicit_keys = set()
+        with patch.object(
+            vllm_adapter, "_is_deepseek_v4_flash_params",
+            return_value=True,
+        ):
+            vllm_adapter._apply_deepseek_v4_flash_engine_defaults(
+                params, engine_config, explicit_keys,
+            )
+        # A3 → data_parallel_size=2, multistream_overlap_shared_expert=False
+        self.assertEqual(engine_config["data_parallel_size"], 2)
+        self.assertFalse(engine_config["additional_config"]["multistream_overlap_shared_expert"])
 
 
 if __name__ == "__main__":

@@ -1097,7 +1097,14 @@ _DEEPSEEK_V4_FLASH_ARCHES = {
 
 
 def _get_engine_config_platform(params: Dict[str, Any]) -> str:
-    """Return user-declared Ascend platform from engine_config or environment."""
+    """Return user-declared Ascend platform from engine_config or environment.
+
+    优先级：
+      1. 显式声明（WINGS_ASCEND_PLATFORM / ASCEND_PLATFORM / ENGINE_IMAGE_FLAVOR /
+         engine_config.ascend_platform / engine_config.hardware_platform）
+      2. ENGINE_VERSION 后缀（如 "0.13.0rc3-a3" → a3，否则不强推；缺省由下游
+         _resolve_*_platform 兜底为 a2）
+    """
     engine_config = params.get("engine_config") or {}
     value = (
         os.getenv("WINGS_ASCEND_PLATFORM")
@@ -1107,7 +1114,14 @@ def _get_engine_config_platform(params: Dict[str, Any]) -> str:
         or engine_config.get("hardware_platform")
         or ""
     )
-    return str(value).strip().lower()
+    declared = str(value).strip().lower()
+    if declared:
+        return declared
+    # ENGINE_VERSION 后缀作次级信号（来自镜像构建版本号，如 "0.13.0rc3-a3"）
+    version = os.getenv("ENGINE_VERSION", "").strip().lower()
+    if version.endswith("-a3"):
+        return "a3"
+    return ""
 
 
 def _resolve_deepseek_v4_flash_platform(params: Dict[str, Any]) -> str:
@@ -1311,6 +1325,7 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     explicit_keys = set(params.get("_explicit_cli_keys") or [])
 
     _apply_deepseek_v4_flash_engine_defaults(params, engine_config, explicit_keys)
+    _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
 
     if _is_deepseek_ascend_dp_deployment(params):
         model_architecture = _get_deepseek_ascend_dp_model_architecture(params)
@@ -1443,6 +1458,72 @@ def _apply_deepseek_v4_flash_engine_defaults(
         explicit_keys,
         "compilation_config",
         {"cudagraph_mode": "FULL_DECODE_ONLY"},
+    )
+
+
+_GLM5_A2_ADDITIONAL_CONFIG: Dict[str, Any] = {
+    "fuse_muls_add": True,
+    "multistream_overlap_shared_expert": True,
+    "ascend_compilation_config": {"enable_npugraph_ex": True},
+}
+
+
+def _apply_glm5_ascend_engine_defaults(
+    params: Dict[str, Any],
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+) -> None:
+    """[GLM-5/5.1 Ascend] 按 Ascend 平台分支处理 ``additional_config``。
+
+    依据 vllm-ascend 官方文档：
+      * A2（910B）GLM-5/5.1 单机/双机：传 ``--additional-config '{fuse_muls_add,
+        multistream_overlap_shared_expert, ascend_compilation_config.enable_npugraph_ex}'``
+      * A3（910C）GLM-5/5.1 单机/双机：**不传** ``--additional-config``
+
+    行为：
+      * 平台未识别（``""``）→ 兜底视作 A2，注入默认值（与 ascend_default.json 现状一致）
+      * A2 → 深合并默认三键；用户显式声明的键值保留
+      * A3 + 用户未显式声明 → 从 engine_config 中移除 ``additional_config``
+        （JSON 默认会带，此处显式抹掉以匹配官方 A3 不传的形态）
+      * A3 + 用户显式声明 → 保留用户值，不覆盖
+    """
+    if params.get("engine") != "vllm_ascend":
+        return
+    try:
+        model_info = ModelIdentifier(
+            params.get("model_name"),
+            params.get("model_path"),
+            params.get("model_type"),
+        )
+    except Exception as exc:
+        logger.debug(
+            "[GLM-5/5.1 Ascend] Skip additional_config tier filter; "
+            "ModelIdentifier failed: %s", exc,
+        )
+        return
+    if model_info.model_architecture != "GlmMoeDsaForCausalLM":
+        return
+
+    platform = _resolve_deepseek_v4_flash_platform(params)
+    if platform == "a3":
+        if "additional_config" not in explicit_keys:
+            removed = engine_config.pop("additional_config", None)
+            if removed is not None:
+                logger.info(
+                    "[GLM-5/5.1 Ascend] platform=a3 → drop additional_config "
+                    "(removed=%s)", removed,
+                )
+        return
+
+    # A2（含未识别兜底）注入官方推荐的三键默认值
+    _merge_dict_default_if_not_explicit(
+        engine_config,
+        explicit_keys,
+        "additional_config",
+        _GLM5_A2_ADDITIONAL_CONFIG,
+    )
+    logger.info(
+        "[GLM-5/5.1 Ascend] platform=a2 → ensure additional_config defaults applied",
     )
 
 

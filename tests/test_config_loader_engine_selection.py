@@ -322,7 +322,12 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
         self.assertIn("--async-scheduling", exec_line)
-        self.assertIn("--additional-config '{\"fuse_muls_add\":true}'", exec_line)
+        # GLM-5/5.1 on vllm_ascend A2（默认 platform）会深合并 additional_config 默认值：
+        # 用户传入的 fuse_muls_add=true 被保留，multistream_overlap_shared_expert 与
+        # ascend_compilation_config.enable_npugraph_ex 由 _apply_glm5_ascend_engine_defaults 补齐。
+        self.assertIn("--additional-config '{\"fuse_muls_add\":true", exec_line)
+        self.assertIn("\"multistream_overlap_shared_expert\":true", exec_line)
+        self.assertIn("\"ascend_compilation_config\":{\"enable_npugraph_ex\":true}", exec_line)
         self.assertIn(
             "--speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\"}'",
             exec_line,
