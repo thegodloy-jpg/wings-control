@@ -2097,6 +2097,30 @@ def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
 #   - 其他架构 → FP8 KV CACHE 量化
 
 
+def _force_kv_sparse_for_glm51_ascend(params: Dict[str, Any], engine: str) -> bool:
+    """[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 临时无条件启用 KV 稀疏。
+
+    绕过 enable_sparse 开关，使得 ascend 上 GLM-5.1 即便用户未显式开启
+    enable_sparse 也强制走 IndexCache --hf-overrides 路径；待 vllm-ascend
+    支持 indexcache 补丁安装后，把本函数连同其调用一并拆除即可恢复独立开关。
+    """
+    if engine != "vllm_ascend":
+        return False
+    try:
+        model_info = ModelIdentifier(
+            params.get("model_name"),
+            params.get("model_path"),
+            params.get("model_type"),
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return is_glm51_ascend_kvsparse_tmp_scope(
+        model_info, engine,
+        model_name=params.get("model_name"),
+        model_path=params.get("model_path"),
+    )
+
+
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     """构建 KV 稀疏特性的启动命令参数。
 
@@ -2866,7 +2890,10 @@ def build_start_script(params: Dict[str, Any]) -> str:
     engine = params.get("engine", "vllm")
     # KV 稀疏：必须在 _build_vllm_cmd_parts 之前调用，
     # FP8 路径会就地修改 engine_config，避免 --kv-cache-dtype 重复
-    sparse_args = _build_kv_sparse_cmd(params, engine) if params.get("enable_sparse") else ""
+    # [GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 强制开启，绕过 enable_sparse 开关
+    should_emit_sparse = bool(params.get("enable_sparse")) or \
+        _force_kv_sparse_for_glm51_ascend(params, engine)
+    sparse_args = _build_kv_sparse_cmd(params, engine) if should_emit_sparse else ""
     # GLM-4.7-W8A8 引擎参数注入（必须在 _build_vllm_cmd_parts 之前，且只动 W8A8 量化变体）
     _inject_glm47_w8a8_engine_config(params)
     cmd = _build_vllm_cmd_parts(params)
