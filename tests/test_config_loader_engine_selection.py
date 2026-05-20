@@ -651,6 +651,23 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertFalse(_is_deepseek_v4_pro_params(params))
         self.assertTrue(_is_deepseek_v4_flash_params(params))
 
+    def test_deepseek_v4_pro_non_ascend_does_not_enter_adapted_scope(self):
+        """V4-Pro scope 仅限 vllm_ascend，普通 vllm 即使 A3 双机也不进入专属适配。"""
+        from engines.vllm_adapter import _is_deepseek_v4_pro_adapted_scope
+
+        params = {
+            "model_name": "DeepSeek-V4-Pro-w4a8-mtp",
+            "engine": "vllm",
+            "distributed": True,
+            "nnodes": 2,
+            "device_count": 16,
+            "engine_config": {
+                "served_model_name": "DeepSeek-V4-Pro-w4a8-mtp",
+                "ascend_platform": "a3",
+            },
+        }
+        self.assertFalse(_is_deepseek_v4_pro_adapted_scope(params))
+
     def test_deepseek_v4_pro_single_node_does_not_apply_defaults(self):
         """V4-Pro 单机场景（不在适配范围）：不触发 V4-Pro 专属默认，HCCL 不应被改成 2048。"""
         from core.start_args_compat import parse_launch_args  # noqa: E402

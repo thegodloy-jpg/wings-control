@@ -1203,6 +1203,8 @@ def _is_deepseek_v4_pro_adapted_scope(
 
     单机/A2/Ray 单机等场景一律不进入 V4-Pro 路径，避免覆盖通用 DeepSeek 默认。
     """
+    if params.get("engine") != "vllm_ascend":
+        return False
     if not _is_deepseek_v4_pro_params(params, model_info):
         return False
     if _resolve_deepseek_v4_flash_platform(params) != "a3":
