@@ -345,7 +345,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         ):
             self.assertIn(env_name, script)
 
-    def _build_deepseek_v4_flash_script(self, platform="A2", extra_env=None, extra_argv=None):
+    def _build_deepseek_v4_flash_script(self, platform="A2", extra_env=None, extra_argv=None, device_count=8):
         from core.start_args_compat import parse_launch_args  # noqa: E402
         from engines.vllm_adapter import build_start_script  # noqa: E402
 
@@ -363,7 +363,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--model-path", model_dir,
                 "--host", "0.0.0.0",
                 "--port", "18000",
-                "--device-count", "8",
+                "--device-count", str(device_count),
                 "--trust-remote-code",
             ]
             if extra_argv:
@@ -376,7 +376,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 with patch.dict(os.environ, env, clear=True):
                     launch_args = parse_launch_args(argv)
                     merged = load_and_merge_configs(
-                        {"device": "ascend", "count": 8, "details": []},
+                        {"device": "ascend", "count": device_count, "details": []},
                         launch_args.to_namespace(),
                     )
                     return build_start_script(merged)
@@ -416,14 +416,17 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("export TRITON_ALL_BLOCKS_PARALLEL=1", script)
         self.assertNotIn("export USE_MULTI_GROUPS_KV_CACHE=1", script)
         self.assertNotIn("--kv-transfer-config", exec_line)
-        self.assertIn("--hf-overrides '{\"index_topk_freq\": 4}'", exec_line)
+        # V4-Flash 不再默认强开 IndexCache：未带 --enable-sparse 时不应出现 --hf-overrides
+        self.assertNotIn("--hf-overrides", exec_line)
 
     def test_deepseek_v4_flash_a3_vllm_ascend_script(self):
         script = self._build_deepseek_v4_flash_script("A3")
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
 
         self.assertTrue(exec_line.startswith("exec vllm serve "))
-        # 单节点 A3：TP 已被拉满到 device_count，DP=1 才能匹配物理卡数
+        # V4-Flash 始终锁 TP=8（避免 MTP/sparse 小层被切到 0 维）
+        self.assertIn("--tensor-parallel-size 8", exec_line)
+        # 测试用 device_count=8，TP=8 → DP=1
         self.assertIn("--data-parallel-size 1", exec_line)
         self.assertIn("\"multistream_overlap_shared_expert\":false", exec_line)
         self.assertIn("\"multistream_dsa_preprocess\":false", exec_line)
@@ -439,19 +442,29 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1", script)
         self.assertNotIn("export TRITON_ALL_BLOCKS_PARALLEL=1", script)
         self.assertNotIn("--kv-transfer-config", exec_line)
-        self.assertIn("--hf-overrides '{\"index_topk_freq\": 4}'", exec_line)
+        # V4-Flash 不再默认强开 IndexCache：未带 --enable-sparse 时不应出现 --hf-overrides
+        self.assertNotIn("--hf-overrides", exec_line)
 
-    def test_deepseek_v4_flash_a3_single_node_dp_is_one(self):
-        """A3 单节点（无 --distributed）→ DP=1，TP 由 device_count 决定（这里 8）。"""
-        script = self._build_deepseek_v4_flash_script("A3")
+    def test_deepseek_v4_flash_a3_16cards_tp_locked_to_8(self):
+        """真实 A3 单机 16 卡 → TP 不再被拉满到 16，强制 TP=8；DP=16/8=2 把卡用满。"""
+        script = self._build_deepseek_v4_flash_script("A3", device_count=16)
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
-        self.assertIn("--data-parallel-size 1", exec_line)
-        self.assertNotIn("--data-parallel-size 2", exec_line)
+        self.assertIn("--tensor-parallel-size 8", exec_line)
+        self.assertNotIn("--tensor-parallel-size 16", exec_line)
+        self.assertIn("--data-parallel-size 2", exec_line)
 
-    def test_deepseek_v4_flash_a3_distributed_dp_is_two(self):
-        """A3 双机分布式（--distributed）→ DP=2，跨节点数据并行。"""
+    def test_deepseek_v4_flash_a2_8cards_tp_locked_to_8(self):
+        """A2 单机 8 卡 → TP=8、DP=1。"""
+        script = self._build_deepseek_v4_flash_script("A2", device_count=8)
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--tensor-parallel-size 8", exec_line)
+        self.assertIn("--data-parallel-size 1", exec_line)
+
+    def test_deepseek_v4_flash_a3_distributed_two_nodes_dp_is_four(self):
+        """A3 双机 × 16 卡 = 32 卡，TP=8 → DP=32/8=4。"""
         script = self._build_deepseek_v4_flash_script(
             "A3",
+            device_count=16,
             extra_argv=[
                 "--distributed", "--nnodes", "2",
                 "--node-ips", "10.0.0.1,10.0.0.2",
@@ -460,21 +473,26 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             extra_env={"RANK_IP": "10.0.0.1"},
         )
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
-        self.assertIn("--data-parallel-size 2", exec_line)
+        self.assertIn("--tensor-parallel-size 8", exec_line)
+        self.assertIn("--data-parallel-size 4", exec_line)
 
-    def test_deepseek_v4_flash_a3_user_overrides_dp_respected(self):
-        """A3 + 用户显式 DP=4 → 完全尊重用户值，无论是否分布式。"""
+    def test_deepseek_v4_flash_user_explicit_tp_respected(self):
+        """用户显式 --tensor-parallel-size 16 → 完全尊重，不被强制覆盖到 8。"""
+        script = self._build_deepseek_v4_flash_script(
+            "A3",
+            device_count=16,
+            extra_env={"TENSOR_PARALLEL_SIZE": "16"},
+        )
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--tensor-parallel-size 16", exec_line)
+
+    def test_deepseek_v4_flash_user_explicit_dp_respected(self):
+        """用户显式 DP=4 → 完全尊重，不被自动 DP 推导覆盖。"""
         script = self._build_deepseek_v4_flash_script(
             "A3", extra_env={"DATA_PARALLEL_SIZE": "4"},
         )
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
         self.assertIn("--data-parallel-size 4", exec_line)
-
-    def test_deepseek_v4_flash_a2_single_node_dp_is_one(self):
-        """A2 单节点 → DP=1（A2 默认就是 DP=1）。"""
-        script = self._build_deepseek_v4_flash_script("A2")
-        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
-        self.assertIn("--data-parallel-size 1", exec_line)
 
     def test_deepseek_v4_flash_a3_kv_offload_injects_cpu_offloading_connector(self):
         script = self._build_deepseek_v4_flash_script(

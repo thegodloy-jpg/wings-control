@@ -1351,7 +1351,13 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         model_architecture = _get_deepseek_ascend_dp_model_architecture(params)
         device_count = _safe_int(params.get("device_count"))
         default_tp = _default_deepseek_ascend_dp_tensor_parallel_size(model_architecture or "", device_count)
-        if default_tp and "tensor_parallel_size" not in explicit_keys:
+        # V4-Flash 由 _apply_deepseek_v4_flash_engine_defaults 锁定 TP=8（避免 MTP 小层被切到 0 维）。
+        # 这里的 DeepseekV3 通用 TP=4 默认会把 V4-Flash 覆盖掉，需跳过。
+        if (
+            default_tp
+            and "tensor_parallel_size" not in explicit_keys
+            and not _is_deepseek_v4_flash_params(params)
+        ):
             engine_config["tensor_parallel_size"] = default_tp
 
         prefix_cache_explicit = bool(
@@ -1463,16 +1469,20 @@ def _apply_deepseek_v4_flash_engine_defaults(
     _set_if_not_explicit(engine_config, explicit_keys, "max_model_len", 65536)
     _set_if_not_explicit(engine_config, explicit_keys, "max_num_batched_tokens", 8192)
     _set_if_not_explicit(engine_config, explicit_keys, "max_num_seqs", 16)
-    _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", 8)
+    # V4-Flash 在 A2(8卡)/A3(16卡) 上 TP 一律锁定为 8：
+    # TP=16 会把 MTP/sparse 小层切到 0 维（shape '[0, 1024, -1]' 崩溃）。
+    # _adjust_tensor_parallelism 已先按 device_count*nnodes 写过 engine_config，
+    # 这里必须显式覆盖；params 同步以免下游读到旧值。
+    if "tensor_parallel_size" not in explicit_keys:
+        engine_config["tensor_parallel_size"] = 8
+        params["tensor_parallel_size"] = 8
     if "data_parallel_size" not in explicit_keys:
-        # 单节点：TP 已被 _adjust_tensor_parallelism 拉满到 device_count，
-        # 整机一组数据并行（DP=1）即可，DP>1 会让 TP×DP 超过物理卡数。
-        # 双机分布式：上层会显式传 distributed=True，A3 才允许 DP=2 跨节点。
+        # TP=8 后按整集群剩余卡拉满 DP（A2 单机 → 1，A3 单机 → 2，A3 双机 → 4）。
+        device_count = _safe_int(params.get("device_count")) or 8
         is_distributed = bool(params.get("distributed"))
-        if platform == "a3" and is_distributed:
-            engine_config["data_parallel_size"] = 2
-        else:
-            engine_config["data_parallel_size"] = 1
+        nnodes = _safe_int(params.get("nnodes")) or (2 if is_distributed else 1)
+        total_cards = device_count * (nnodes if is_distributed else 1)
+        engine_config["data_parallel_size"] = max(1, total_cards // 8)
     _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
     _set_if_not_explicit(engine_config, explicit_keys, "quantization", "ascend")
     _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
@@ -2176,19 +2186,6 @@ def _force_kv_sparse_for_glm51_ascend(params: Dict[str, Any], engine: str) -> bo
     return False
 
 
-def _force_kv_sparse_for_v4_flash_ascend(params: Dict[str, Any], engine: str) -> bool:
-    """[V4-Flash-Ascend-Tmp] vllm_ascend + DeepSeek-V4-Flash 临时默认启用 IndexCache。
-
-    与 GLM-5.1 同套打法：绕过 enable_sparse 开关，仅在启动命令中追加
-    ``--hf-overrides '{"index_topk_freq": 4}'``，不安装 indexcache 补丁
-    （由 ``_collect_indexcache_patch_features`` 的 engine 门控阻止于 ascend 之外）。
-    待 vllm-ascend 支持补丁安装后拆除本函数。
-    """
-    if engine != "vllm_ascend":
-        return False
-    return _is_deepseek_v4_flash_params(params)
-
-
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     """构建 KV 稀疏特性的启动命令参数。
 
@@ -2219,8 +2216,8 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     )
     arch = model_info.model_architecture
 
-    # [GLM5.1-Ascend-Tmp] / [V4-Flash-Ascend-Tmp] vllm_ascend 路径：
-    # 仅 GLM-5.1 / DeepSeek-V4-Flash 走 IndexCache，不写 engine_config，
+    # [GLM5.1-Ascend-Tmp] vllm_ascend 路径：
+    # 仅 GLM-5.1 走 IndexCache，不写 engine_config，
     # 不触发 indexcache 补丁安装（补丁仍由 _collect_indexcache_patch_features 的
     # engine 门控屏蔽于 ascend 之外）。
     if engine == "vllm_ascend":
@@ -2234,14 +2231,8 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
                 "IndexCache via --hf-overrides (no patch install)"
             )
             return " --hf-overrides '{\"index_topk_freq\": 4}'"
-        if _is_deepseek_v4_flash_params(params, model_info):
-            logger.info(
-                "[V4-Flash-Ascend-Tmp] vllm_ascend + DeepSeek-V4-Flash → "
-                "IndexCache via --hf-overrides (no patch install)"
-            )
-            return " --hf-overrides '{\"index_topk_freq\": 4}'"
         logger.info(
-            "[KV Sparse] engine=vllm_ascend arch=%s not GLM-5.1/V4-Flash; "
+            "[KV Sparse] engine=vllm_ascend arch=%s not GLM-5.1; "
             "KV sparse is no-op on ascend", arch,
         )
         return ""
@@ -2965,11 +2956,9 @@ def build_start_script(params: Dict[str, Any]) -> str:
     engine = params.get("engine", "vllm")
     # KV 稀疏：必须在 _build_vllm_cmd_parts 之前调用，
     # FP8 路径会就地修改 engine_config，避免 --kv-cache-dtype 重复
-    # [GLM5.1-Ascend-Tmp] / [V4-Flash-Ascend-Tmp]
-    # vllm_ascend + GLM-5.1 / DeepSeek-V4-Flash 强制开启，绕过 enable_sparse 开关
+    # [GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 强制开启，绕过 enable_sparse 开关
     should_emit_sparse = bool(params.get("enable_sparse")) or \
-        _force_kv_sparse_for_glm51_ascend(params, engine) or \
-        _force_kv_sparse_for_v4_flash_ascend(params, engine)
+        _force_kv_sparse_for_glm51_ascend(params, engine)
     sparse_args = _build_kv_sparse_cmd(params, engine) if should_emit_sparse else ""
     # GLM-4.7-W8A8 引擎参数注入（必须在 _build_vllm_cmd_parts 之前，且只动 W8A8 量化变体）
     _inject_glm47_w8a8_engine_config(params)
