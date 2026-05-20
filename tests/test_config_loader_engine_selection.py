@@ -236,7 +236,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertEqual(kv_config["kv_connector_extra_config"]["swap_in_threshold"], 1)
         self.assertEqual(kv_config["kv_connector_extra_config"]["cpu_swap_space_gb"], 100)
 
-    def test_deepseek_v4_flash_name_with_v3_arch_keeps_lmcache_path(self):
+    def test_deepseek_v4_flash_name_with_v3_arch_script_uses_cpu_offload_path(self):
         from core.start_args_compat import parse_launch_args  # noqa: E402
         from core.wings_entry import _build_lmcache_install_snippet  # noqa: E402
         from engines.vllm_adapter import build_start_script  # noqa: E402
@@ -274,10 +274,10 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         kv_config = json.loads(merged["engine_config"]["kv_transfer_config"])
         self.assertEqual(kv_config["kv_connector"], "LMCacheConnectorV1")
-        self.assertNotIn("CPUOffloadingConnector", script)
-        self.assertIn("LMCacheConnectorV1", script)
-        self.assertIn("export LMCACHE_OFFLOAD=true", script)
-        self.assertIn("--lmcache-target ascend-arm", lmcache_patch)
+        self.assertIn("CPUOffloadingConnector", script)
+        self.assertNotIn("LMCacheConnectorV1", script)
+        self.assertNotIn("export LMCACHE_OFFLOAD=true", script)
+        self.assertEqual(lmcache_patch, "")
 
     def test_nvidia_sparse_auto_selects_vllm(self):
         model_info = _FakeModelInfo(supported=True)
