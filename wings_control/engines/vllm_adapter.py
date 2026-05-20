@@ -603,9 +603,9 @@ def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = No
         )
         return env_commands
 
-    if params and _is_deepseek_v4_flash_params(params):
+    if params and _is_deepseek_v4_cpu_offload_params(params, engine=engine):
         logger.info(
-            "[KVCache Offload] DeepSeek-V4-Flash uses vllm-ascend CPUOffloadingConnector "
+            "[KVCache Offload] DeepSeek-V4 Flash/Pro uses vllm-ascend CPUOffloadingConnector "
             "via --kv-transfer-config; skipping LMCache engine-side env exports."
         )
         return env_commands
@@ -1113,6 +1113,14 @@ _DEEPSEEK_V4_FLASH_ARCHES = {
 }
 
 
+_DEEPSEEK_V4_CPU_OFFLOAD_ARCHES = {
+    "DeepseekV4ForCausalLM",
+    "DeepSeekV4ForCausalLM",
+    # Some V4-Flash weights still use the V3 architecture string.
+    "DeepseekV3ForCausalLM",
+}
+
+
 def _get_engine_config_platform(params: Dict[str, Any]) -> str:
     """Return user-declared Ascend platform from engine_config or environment.
 
@@ -1241,6 +1249,41 @@ def _is_deepseek_v4_pro_params(
     if model_info and model_info.model_architecture in _DEEPSEEK_V4_FLASH_ARCHES:
         return "v4" in text and "pro" in text
     return False
+
+
+def _is_deepseek_v4_cpu_offload_params(
+    params: Dict[str, Any],
+    model_info: Optional[ModelIdentifier] = None,
+    engine: Optional[str] = None,
+) -> bool:
+    """Return True when KV offload should use vllm-ascend CPUOffloadingConnector.
+
+    DeepSeek-V4 Flash/Pro on vLLM-Ascend does not use LMCache for KV offload:
+    the legacy ``LMCACHE_OFFLOAD=true`` switch maps to a direct
+    ``kv_transfer_config`` injection instead.
+    """
+    effective_engine = engine or params.get("engine")
+    if effective_engine != "vllm_ascend":
+        return False
+    if model_info is None:
+        try:
+            model_info = ModelIdentifier(
+                params.get("model_name"),
+                params.get("model_path"),
+                params.get("model_type"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[DeepSeek-V4 KV Offload] Skip arch detection: %s", exc)
+            return False
+    if (
+        model_info.model_architecture
+        and model_info.model_architecture not in _DEEPSEEK_V4_CPU_OFFLOAD_ARCHES
+    ):
+        return False
+    return (
+        _is_deepseek_v4_flash_params(params, model_info)
+        or _is_deepseek_v4_pro_params(params, model_info)
+    )
 
 
 def _build_deepseek_v4_flash_env(params: Dict[str, Any]) -> List[str]:
@@ -1425,6 +1468,8 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
 
     _apply_deepseek_v4_flash_engine_defaults(params, engine_config, explicit_keys)
     _apply_deepseek_v4_pro_engine_defaults(params, engine_config, explicit_keys)
+    if _is_deepseek_v4_cpu_offload_params(params):
+        _apply_deepseek_v4_cpu_offload(engine_config, explicit_keys)
     _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
 
     # V4-Flash / V4-Pro 各自有完整 applier（直接覆写 EP、prefix_caching、
@@ -1614,7 +1659,6 @@ def _apply_deepseek_v4_flash_engine_defaults(
         "compilation_config",
         {"cudagraph_mode": "FULL_DECODE_ONLY"},
     )
-    _apply_deepseek_v4_flash_kv_offload(engine_config, explicit_keys)
 
 
 def _apply_deepseek_v4_pro_engine_defaults(
@@ -1698,17 +1742,17 @@ def _apply_deepseek_v4_pro_engine_defaults(
     )
 
 
-def _apply_deepseek_v4_flash_kv_offload(
+def _apply_deepseek_v4_cpu_offload(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """Inject vllm-ascend CPUOffloadingConnector kv_transfer_config for DeepSeek-V4-Flash.
+    """Inject vllm-ascend CPUOffloadingConnector kv_transfer_config for DeepSeek-V4.
 
     触发条件复用 LMCache: ``LMCACHE_OFFLOAD=true`` (由上游 K8s ConfigMap 注入)。
     cpu_swap_space_gb 直接复用 ``LMCACHE_MAX_LOCAL_CPU_SIZE`` (与页面传入的内存值一致)，
     缺省 200，与 vllm-ascend benchmark 模板一致。
 
-    与 LMCache 互斥：``_build_cache_env_commands`` 在 V4-Flash 路径已跳过 LMCache env
+    与 LMCache 互斥：``_build_cache_env_commands`` 在 V4 Flash/Pro 路径已跳过 LMCache env
     导出与 YAML 生成。两者不会同时生效。
     """
     if not get_lmcache_env():
@@ -1720,7 +1764,7 @@ def _apply_deepseek_v4_flash_kv_offload(
         cpu_swap_gb = int(raw_size) if raw_size else 200
     except ValueError:
         logger.warning(
-            "[DeepSeek-V4-Flash KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
+            "[DeepSeek-V4 KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
             "falling back to 200 GB.", raw_size,
         )
         cpu_swap_gb = 200
@@ -2310,9 +2354,9 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
                 "ignoring LMCACHE_OFFLOAD for speculative strategy selection."
             )
             lmcache_effective = False
-        if lmcache_effective and _is_deepseek_v4_flash_params(params, model_info):
+        if lmcache_effective and _is_deepseek_v4_cpu_offload_params(params, model_info, engine):
             logger.info(
-                "[KVCache Offload] DeepSeek-V4-Flash uses CPUOffloadingConnector "
+                "[KVCache Offload] DeepSeek-V4 Flash/Pro uses CPUOffloadingConnector "
                 "(coexists with MTP); keeping deepseek_mtp speculative strategy."
             )
             lmcache_effective = False

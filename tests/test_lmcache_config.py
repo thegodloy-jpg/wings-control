@@ -111,6 +111,32 @@ class TestLMCacheConfig(unittest.TestCase):
         self.assertNotIn("LMCacheConnectorV1", script)
         self.assertIn("Forced disabled for GLM-5.1 on NVIDIA/vLLM", "\n".join(cm.output))
 
+    def test_deepseek_v4_cpu_offload_models_skip_lmcache_patch_install(self):
+        from core import wings_entry  # noqa: E402
+
+        for model_name in (
+            "DeepSeek-V4-Flash-w8a8-mtp",
+            "DeepSeek-V4-Pro-w4a8-mtp",
+        ):
+            with tempfile.TemporaryDirectory() as model_dir:
+                Path(model_dir, "config.json").write_text(
+                    json.dumps({"architectures": ["DeepseekV4ForCausalLM"]}),
+                    encoding="utf-8",
+                )
+                merged = {
+                    "engine": "vllm_ascend",
+                    "model_name": model_name,
+                    "model_path": model_dir,
+                    "model_type": "llm",
+                    "engine_config": {"served_model_name": model_name},
+                }
+                with self.subTest(model_name=model_name), patch.dict(
+                    "os.environ", {"LMCACHE_OFFLOAD": "true"}, clear=True
+                ):
+                    snippet = wings_entry._build_lmcache_install_snippet("vllm_ascend", merged)
+
+            self.assertEqual(snippet, "")
+
     def test_cpu_size_implies_engine_side_local_cpu_enable(self):
         env = {
             "LMCACHE_OFFLOAD": "true",

@@ -20,7 +20,17 @@ SNAPSHOTS_DIR = Path(__file__).resolve().parent / "snapshots"
 
 
 def _bash_available() -> bool:
-    return shutil.which("bash") is not None
+    bash_exe = shutil.which("bash")
+    if bash_exe is None:
+        return False
+    result = subprocess.run(
+        [bash_exe, "-c", "true"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.returncode == 0
 
 
 @unittest.skipUnless(_bash_available(), "bash 不可用（跳过语法验证）")
@@ -32,10 +42,13 @@ class TestSnapshotBashSyntax(unittest.TestCase):
         cls.snapshot_files = sorted(SNAPSHOTS_DIR.glob("*.sh"))
 
     def _check_syntax(self, path: Path):
+        bash_exe = shutil.which("bash")
         result = subprocess.run(
-            ["bash", "-n", str(path)],
+            [bash_exe, "-n", str(path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         self.assertEqual(
             result.returncode, 0,

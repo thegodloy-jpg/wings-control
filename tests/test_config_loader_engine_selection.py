@@ -194,6 +194,91 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("kv_transfer_config", merged["engine_config"])
         self.assertIn("LMCacheConnectorV1", merged["engine_config"]["kv_transfer_config"])
 
+    def test_deepseek_v4_flash_a2_lmcache_switch_merges_cpu_offload_config(self):
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["DeepseekV4ForCausalLM"],
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "DeepSeek-V4-Flash-w8a8-mtp",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "8",
+                "--trust-remote-code",
+            ]
+
+            launch_args = parse_launch_args(argv).to_namespace()
+            with patch.dict(os.environ, {
+                "LMCACHE_OFFLOAD": "true",
+                "LMCACHE_MAX_LOCAL_CPU_SIZE": "100",
+                "WINGS_ASCEND_PLATFORM": "A2",
+            }, clear=False):
+                merged = load_and_merge_configs(
+                    {"device": "ascend", "count": 8, "details": []},
+                    launch_args,
+                )
+
+        kv_config = json.loads(merged["engine_config"]["kv_transfer_config"])
+        self.assertEqual(kv_config["kv_connector"], "CPUOffloadingConnector")
+        self.assertEqual(
+            kv_config["kv_connector_module_path"],
+            "vllm_ascend.distributed.kv_transfer.kv_pool.cpu_offload.cpu_offload_connector",
+        )
+        self.assertEqual(kv_config["kv_role"], "kv_both")
+        self.assertEqual(kv_config["kv_connector_extra_config"]["swap_in_threshold"], 1)
+        self.assertEqual(kv_config["kv_connector_extra_config"]["cpu_swap_space_gb"], 100)
+
+    def test_deepseek_v4_flash_name_with_v3_arch_keeps_lmcache_path(self):
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+        from core.wings_entry import _build_lmcache_install_snippet  # noqa: E402
+        from engines.vllm_adapter import build_start_script  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["DeepseekV3ForCausalLM"],
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "DeepSeek-V4-Flash-w8a8-mtp",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "8",
+                "--trust-remote-code",
+            ]
+
+            launch_args = parse_launch_args(argv).to_namespace()
+            with patch.dict(os.environ, {
+                "LMCACHE_OFFLOAD": "true",
+                "LMCACHE_MAX_LOCAL_CPU_SIZE": "100",
+                "WINGS_ASCEND_PLATFORM": "A2",
+            }, clear=False):
+                merged = load_and_merge_configs(
+                    {"device": "ascend", "count": 8, "details": []},
+                    launch_args,
+                )
+                script = build_start_script(merged)
+                lmcache_patch = _build_lmcache_install_snippet("vllm_ascend", merged)
+
+        kv_config = json.loads(merged["engine_config"]["kv_transfer_config"])
+        self.assertEqual(kv_config["kv_connector"], "LMCacheConnectorV1")
+        self.assertNotIn("CPUOffloadingConnector", script)
+        self.assertIn("LMCacheConnectorV1", script)
+        self.assertIn("export LMCACHE_OFFLOAD=true", script)
+        self.assertIn("--lmcache-target ascend-arm", lmcache_patch)
+
     def test_nvidia_sparse_auto_selects_vllm(self):
         model_info = _FakeModelInfo(supported=True)
 
@@ -522,10 +607,12 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"mtp\"}'",
             exec_line,
         )
-        # LMCache env 与 YAML 路径不应再导出
+        # LMCache env / YAML / 补丁安装均不应出现
         self.assertNotIn("export LMCACHE_OFFLOAD=", script)
         self.assertNotIn("export LMCACHE_CONFIG_FILE=", script)
         self.assertNotIn("export PYTHONHASHSEED=0", script)
+        self.assertNotIn("--lmcache-target", script)
+        self.assertNotIn("Installing LMCache patches", script)
 
     def test_deepseek_v4_flash_a2_kv_offload_uses_same_connector(self):
         script = self._build_deepseek_v4_flash_script(
@@ -536,7 +623,12 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertIn("\"kv_connector\":\"CPUOffloadingConnector\"", exec_line)
         self.assertIn("\"cpu_swap_space_gb\":150", exec_line)
+        # A2 路径与 A3 保持一致：完全不应走 LMCache（env / YAML / 补丁安装均跳过）
         self.assertNotIn("export LMCACHE_OFFLOAD=", script)
+        self.assertNotIn("export LMCACHE_CONFIG_FILE=", script)
+        self.assertNotIn("export PYTHONHASHSEED=0", script)
+        self.assertNotIn("--lmcache-target", script)
+        self.assertNotIn("Installing LMCache patches", script)
 
     def test_deepseek_v4_flash_kv_offload_defaults_cpu_swap_to_200(self):
         script = self._build_deepseek_v4_flash_script(
@@ -641,6 +733,30 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--data-parallel-size-local 1", exec_line)
         self.assertIn("--headless", exec_line)
         self.assertIn("--data-parallel-start-rank 1", exec_line)
+
+    def test_deepseek_v4_pro_kv_offload_injects_cpu_offloading_connector(self):
+        """V4-Pro KV 卸载走 vllm-ascend CPUOffloadingConnector，不走 LMCache。"""
+        script = self._build_deepseek_v4_pro_script(
+            extra_env={"LMCACHE_OFFLOAD": "true", "LMCACHE_MAX_LOCAL_CPU_SIZE": "120"},
+        )
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+
+        self.assertIn("--kv-transfer-config", exec_line)
+        self.assertIn("\"kv_connector\":\"CPUOffloadingConnector\"", exec_line)
+        self.assertIn(
+            "\"kv_connector_module_path\":\"vllm_ascend.distributed.kv_transfer"
+            ".kv_pool.cpu_offload.cpu_offload_connector\"",
+            exec_line,
+        )
+        self.assertIn("\"kv_role\":\"kv_both\"", exec_line)
+        self.assertIn("\"swap_in_threshold\":1", exec_line)
+        self.assertIn("\"cpu_swap_space_gb\":120", exec_line)
+        self.assertNotIn("LMCacheConnectorV1", script)
+        self.assertNotIn("export LMCACHE_OFFLOAD=", script)
+        self.assertNotIn("export LMCACHE_CONFIG_FILE=", script)
+        self.assertNotIn("export PYTHONHASHSEED=0", script)
+        self.assertNotIn("--lmcache-target", script)
+        self.assertNotIn("Installing LMCache patches", script)
 
     def test_deepseek_v4_pro_user_explicit_tp_respected(self):
         """V4-Pro：用户显式 TP=8 应被尊重，不被强制覆盖到 16。"""

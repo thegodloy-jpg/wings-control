@@ -887,6 +887,54 @@ def _is_glm51_nvidia_vllm(ctx, model_info) -> bool:
     )
 
 
+_DEEPSEEK_V4_CPU_OFFLOAD_ARCHES = {
+    "DeepseekV4ForCausalLM",
+    "DeepSeekV4ForCausalLM",
+}
+
+
+def _is_deepseek_v4_cpu_offload(ctx, model_info) -> bool:
+    """Return True when V4 KV offload should bypass LMCache in config merge."""
+    if ctx.get("engine") != "vllm_ascend":
+        return False
+
+    candidates = [
+        getattr(model_info, "model_name", ""),
+        getattr(model_info, "model_path", ""),
+        ctx.get("model_name", ""),
+        ctx.get("model_path", ""),
+    ]
+    text = " ".join(str(item).lower() for item in candidates if item)
+    is_v4_flash_or_pro = "v4" in text and ("flash" in text or "pro" in text)
+    if not is_v4_flash_or_pro:
+        return False
+
+    arch = getattr(model_info, "model_architecture", "")
+    return arch in _DEEPSEEK_V4_CPU_OFFLOAD_ARCHES
+
+
+def _build_deepseek_v4_cpu_offload_config() -> Dict[str, Any]:
+    raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
+    try:
+        cpu_swap_gb = int(raw_size) if raw_size else 200
+    except ValueError:
+        logger.warning(
+            "[DeepSeek-V4 KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
+            "falling back to 200 GB.", raw_size,
+        )
+        cpu_swap_gb = 200
+    return {
+        "kv_connector": "CPUOffloadingConnector",
+        "kv_connector_module_path":
+            "vllm_ascend.distributed.kv_transfer.kv_pool.cpu_offload.cpu_offload_connector",
+        "kv_role": "kv_both",
+        "kv_connector_extra_config": {
+            "swap_in_threshold": 1,
+            "cpu_swap_space_gb": cpu_swap_gb,
+        },
+    }
+
+
 def _set_kv_cache_config(params, ctx, model_info=None):
     """根据 LMCache Offload 和 PD 分离角色，生成 vllm kv_transfer_config 配置。
 
@@ -899,6 +947,14 @@ def _set_kv_cache_config(params, ctx, model_info=None):
     lmcache_offload = get_lmcache_env()
     pd_role = get_pd_role_env()
     device = ctx.get('device', '')
+
+    if lmcache_offload and model_info is not None and _is_deepseek_v4_cpu_offload(ctx, model_info):
+        params["kv_transfer_config"] = json.dumps(_build_deepseek_v4_cpu_offload_config())
+        logger.info(
+            "[KVCache Offload] DeepSeek-V4 Flash/Pro on vllm_ascend uses "
+            "CPUOffloadingConnector; not injecting LMCacheConnectorV1."
+        )
+        return
 
     if lmcache_offload and model_info is not None and _is_glm51_nvidia_vllm(ctx, model_info):
         logger.warning(

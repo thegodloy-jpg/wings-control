@@ -40,8 +40,9 @@ class TestParseEnvFileBasic(unittest.TestCase):
         """标准 KEY=VALUE 解析：key 和 value 正确映射。"""
         p = _write_env("MY_VAR=hello\nOTHER=world\n")
         result = _parse_env_file(p)
-        self.assertIn("export MY_VAR='hello'", result)
-        self.assertIn("export OTHER='world'", result)
+        # shlex.quote 对 shell-safe 字符串不加引号（POSIX 标准）
+        self.assertIn("export MY_VAR=hello", result)
+        self.assertIn("export OTHER=world", result)
 
     # UT-EV-02
     def test_ev02_double_quoted_value_unquoted(self):
@@ -65,7 +66,7 @@ class TestParseEnvFileBasic(unittest.TestCase):
         p = _write_env("# comment\n\nVALID=ok\n")
         result = _parse_env_file(p)
         self.assertEqual(len(result), 1)
-        self.assertIn("export VALID='ok'", result)
+        self.assertIn("export VALID=ok", result)
 
     # UT-EV-05
     def test_ev05_line_without_equals_skipped(self):
@@ -73,7 +74,7 @@ class TestParseEnvFileBasic(unittest.TestCase):
         p = _write_env("NOEQUALS\nVALID=yes\n")
         result = _parse_env_file(p)
         self.assertEqual(len(result), 1)
-        self.assertIn("export VALID='yes'", result)
+        self.assertIn("export VALID=yes", result)
 
 
 class TestParseEnvFileInjectionBlocking(unittest.TestCase):
@@ -160,9 +161,9 @@ class TestParseEnvFileBom(unittest.TestCase):
         result = _parse_env_file(p)
         # BOM 会附到 FIRST 的 key 上 → 验证失败 → 被跳过
         # SECOND 不受影响
-        self.assertNotIn("export FIRST='one'", result,
+        self.assertNotIn("export FIRST=one", result,
                          "BOM 前缀使 FIRST 的 key 验证失败，应被跳过")
-        self.assertIn("export SECOND='two'", result)
+        self.assertIn("export SECOND=two", result)
 
 
 class TestIsEnvOverrideFile(unittest.TestCase):

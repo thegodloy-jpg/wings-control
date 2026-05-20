@@ -31,6 +31,7 @@ from engines.vllm_adapter import (
     build_modelslim_quarot_patch_preamble,
     build_triton_patch_preamble,
     resolve_speculative_strategy,
+    _is_deepseek_v4_cpu_offload_params,
     _inject_env_echo,
 )
 from utils.env_utils import get_local_ip, get_master_ip, validate_ip
@@ -48,8 +49,9 @@ logger = logging.getLogger(__name__)
 #   ENABLE_SPECULATIVE_DECODE → adaptive_draft_model（已改为 --install-runtime-deps 独立安装）
 #   ENABLE_SPARSE             → indexcache（仅 IndexCache 架构，通过独立安装片段处理）
 #
-# 注意：LMCACHE_OFFLOAD（KV 卸载）通过 --lmcache-target 独立安装，
-# 不走 --features 路径，而是使用专用的 install.py --lmcache-target 参数。
+# 注意：LMCACHE_OFFLOAD（KV 卸载）通常通过 --lmcache-target 独立安装，
+# DeepSeek-V4 Flash/Pro on vllm_ascend 例外：直接追加 CPUOffloadingConnector
+# kv_transfer_config，不安装 LMCache 补丁。
 #
 # 可通过 WINGS_ENGINE_PATCH_OPTIONS 环境变量直接覆盖（JSON 字符串），
 # 此时直接使用用户提供的值，不再按特性开关自动生成。
@@ -76,7 +78,8 @@ _PATCH_FEATURE_STATUS_KEYS: dict[str, str] = {
 }
 
 # 引擎到 LMCache 安装目标的映射
-# 当 LMCACHE_OFFLOAD=true 时，通过 install.py --lmcache-target <target> 安装 LMCache 补丁
+# 当 LMCACHE_OFFLOAD=true 时，通过 install.py --lmcache-target <target> 安装 LMCache 补丁；
+# DeepSeek-V4 Flash/Pro on vllm_ascend 不走此路径。
 _ENGINE_LMCACHE_TARGET_MAP = {
     "vllm": "nvidia-x86",
     "vllm_ascend": "ascend-arm",
@@ -364,11 +367,20 @@ def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> s
     LMCache 补丁依赖，目标平台由引擎类型决定：
       - vllm        → nvidia-x86
       - vllm_ascend  → ascend-arm
+    DeepSeek-V4 Flash/Pro on vllm_ascend 不使用 LMCache，跳过该补丁安装。
 
     Returns:
         str: shell 脚本片段；LMCache 未启用时返回空字符串。
     """
     if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() != "true":
+        return ""
+
+    if merged and _is_deepseek_v4_cpu_offload_params(merged, engine=engine):
+        logger.info(
+            "[KVCache Offload] DeepSeek-V4 Flash/Pro uses vllm-ascend "
+            "CPUOffloadingConnector; skipping LMCache patch install despite "
+            "LMCACHE_OFFLOAD=true."
+        )
         return ""
 
     if _is_glm51_nvidia_vllm_merged(engine, merged):
@@ -533,6 +545,7 @@ def _build_accel_preamble(engine: str, merged: dict) -> str:
     安装策略（容错）：
       1. 投机推理（ENABLE_SPECULATIVE_DECODE）使用 --install-runtime-deps 独立安装
       2. LMCache KV 卸载（LMCACHE_OFFLOAD）使用 --lmcache-target 独立安装
+         （DeepSeek-V4 Flash/Pro on vllm_ascend 例外，直接注入 CPUOffloadingConnector）
       3. IndexCache（KV 稀疏 + IndexCache 架构）使用 --features indexcache 安装
       4. 其他高级特性继续走 --features 路径
       5. 先尝试批量安装所有特性
@@ -1043,10 +1056,9 @@ fi
 
     if not fallback_cmd and retry_cmd:
         # ── 默认模式重试版：崩溃后用相同参数重试一次 ──
-        indented_retry = "\n".join(
-            "    " + line if line.strip() else line
-            for line in retry_cmd.rstrip("\n").split("\n")
-        )
+        # 不要为 retry_cmd 行加缩进：内嵌 heredoc 的关闭标记必须位于列 0，
+        # 否则 'bash -n' 报 'here-document delimited by end-of-file'。
+        indented_retry = retry_cmd.rstrip("\n")
         cleanup_4 = cleanup_analyzer.replace("  ", "      ")
         write_progress_4 = write_progress.replace("  ", "      ")
 
@@ -1101,11 +1113,9 @@ fi
 """
 
     # ── 增强版：高级特性快速失败回退 ──
-    # 缩进 fallback_cmd 以匹配 if 块内的层级
-    indented_fallback = "\n".join(
-        "    " + line if line.strip() else line
-        for line in fallback_cmd.rstrip("\n").split("\n")
-    )
+    # 不要为 fallback_cmd 行加缩进：内嵌 heredoc 的关闭标记必须位于列 0，
+    # 否则 'bash -n' 报 'here-document delimited by end-of-file'。
+    indented_fallback = fallback_cmd.rstrip("\n")
     # 缩进 cleanup 和 progress 到回退 if/else 内部
     cleanup_4 = cleanup_analyzer.replace("  ", "    ")  # 4-space indent (回退逻辑减少了一层if嵌套)
     write_progress_4 = write_progress.replace("  ", "    ")
