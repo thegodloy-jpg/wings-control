@@ -317,28 +317,28 @@ class TestRagAndSparseAreIndependent(unittest.TestCase):
 
 
 class TestForceKvSparseForGlm51Ascend(unittest.TestCase):
-    """[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 强制开启 KV 稀疏（绕过 enable_sparse 开关）。"""
+    """[GLM5.1-Ascend-Tmp] 已禁用强制开启 KV 稀疏，恢复 enable_sparse 手动触发。"""
 
-    def test_ascend_glm51_force_on_when_sparse_false(self):
-        """vllm_ascend + GLM-5.1 + enable_sparse=False → force-on 返回 True。"""
+    def test_ascend_glm51_force_off_when_sparse_false(self):
+        """vllm_ascend + GLM-5.1 + enable_sparse=False → force-on 返回 False。"""
         params = _glm51_params("vllm_ascend")
         with patch.object(
             vllm_adapter, "ModelIdentifier",
             return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
         ):
-            self.assertTrue(
+            self.assertFalse(
                 vllm_adapter._force_kv_sparse_for_glm51_ascend(params, "vllm_ascend")
             )
 
-    def test_ascend_glm51_force_on_when_sparse_missing(self):
-        """vllm_ascend + GLM-5.1 + 未传 enable_sparse → force-on 仍返回 True。"""
+    def test_ascend_glm51_force_off_when_sparse_missing(self):
+        """vllm_ascend + GLM-5.1 + 未传 enable_sparse → force-on 返回 False。"""
         params = _glm51_params("vllm_ascend")
         params.pop("enable_sparse", None)
         with patch.object(
             vllm_adapter, "ModelIdentifier",
             return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
         ):
-            self.assertTrue(
+            self.assertFalse(
                 vllm_adapter._force_kv_sparse_for_glm51_ascend(params, "vllm_ascend")
             )
 
@@ -393,7 +393,7 @@ class TestForceKvSparseForGlm51Ascend(unittest.TestCase):
 
 
 class TestBuildStartScriptAscendForceKvSparse(unittest.TestCase):
-    """端到端：vllm_ascend + GLM-5.1 + enable_sparse=False/未传 → 脚本仍含 --hf-overrides。"""
+    """端到端：vllm_ascend + GLM-5.1 不再绕过 enable_sparse 强制注入 --hf-overrides。"""
 
     def _params(self, *, distributed: bool = False, with_sparse: bool = False,
                 with_rag: bool = False, rank: int = 0) -> dict:
@@ -432,35 +432,35 @@ class TestBuildStartScriptAscendForceKvSparse(unittest.TestCase):
         ):
             return vllm_adapter.build_start_script(params)
 
-    def test_single_node_sparse_false_still_emits_hf_overrides(self):
-        """单机 vllm_ascend + GLM-5.1 + enable_sparse=False → 脚本仍含 --hf-overrides。"""
+    def test_single_node_sparse_false_does_not_emit_hf_overrides(self):
+        """单机 vllm_ascend + GLM-5.1 + enable_sparse=False → 脚本不含 --hf-overrides。"""
         script = self._build(self._params(with_sparse=False))
-        self.assertIn("--hf-overrides", script)
-        self.assertIn('"index_topk_freq": 4', script)
+        self.assertNotIn("--hf-overrides", script)
+        self.assertNotIn('"index_topk_freq": 4', script)
 
-    def test_single_node_sparse_missing_still_emits_hf_overrides(self):
-        """单机 vllm_ascend + GLM-5.1 + 未传 enable_sparse → 脚本仍含 --hf-overrides。"""
+    def test_single_node_sparse_missing_does_not_emit_hf_overrides(self):
+        """单机 vllm_ascend + GLM-5.1 + 未传 enable_sparse → 脚本不含 --hf-overrides。"""
         params = self._params(with_sparse=False)
         params.pop("enable_sparse", None)
         script = self._build(params)
-        self.assertIn("--hf-overrides", script)
+        self.assertNotIn("--hf-overrides", script)
 
-    def test_dual_node_dp_head_sparse_false_still_emits_hf_overrides(self):
-        """双机 DP head + GLM-5.1 + enable_sparse=False → 脚本仍含 --hf-overrides。"""
+    def test_dual_node_dp_head_sparse_false_does_not_emit_hf_overrides(self):
+        """双机 DP head + GLM-5.1 + enable_sparse=False → 脚本不含 --hf-overrides。"""
         script = self._build(self._params(distributed=True, with_sparse=False, rank=0))
-        self.assertIn("--hf-overrides", script)
+        self.assertNotIn("--hf-overrides", script)
 
-    def test_dual_node_dp_worker_sparse_false_still_emits_hf_overrides(self):
-        """双机 DP worker + GLM-5.1 + enable_sparse=False → 脚本仍含 --hf-overrides。"""
+    def test_dual_node_dp_worker_sparse_false_does_not_emit_hf_overrides(self):
+        """双机 DP worker + GLM-5.1 + enable_sparse=False → 脚本不含 --hf-overrides。"""
         script = self._build(self._params(distributed=True, with_sparse=False, rank=1))
-        self.assertIn("--hf-overrides", script)
+        self.assertNotIn("--hf-overrides", script)
 
-    def test_dual_node_dp_head_rag_only_emits_hf_overrides_and_keeps_rag(self):
-        """双机 DP head + GLM-5.1 + 仅 rag → 脚本仍含 --hf-overrides（force-on 不依赖 sparse 开关）。"""
+    def test_dual_node_dp_head_rag_only_does_not_emit_hf_overrides_and_keeps_rag(self):
+        """双机 DP head + GLM-5.1 + 仅 rag → 脚本不含 --hf-overrides。"""
         script = self._build(
             self._params(distributed=True, with_sparse=False, with_rag=True, rank=0)
         )
-        self.assertIn("--hf-overrides", script)
+        self.assertNotIn("--hf-overrides", script)
 
     def test_ascend_glm5_not_51_sparse_false_no_hf_overrides(self):
         """vllm_ascend + GLM-5（非 5.1） + enable_sparse=False → 脚本不含 --hf-overrides。"""
@@ -1034,7 +1034,11 @@ class TestDeepseekV4FlashRegression(unittest.TestCase):
         )
 
     def test_engine_version_a3_triggers_dsv4_flash_a3_defaults(self):
-        """端到端：ENGINE_VERSION=...-a3 触发 DSv4-Flash 应用 A3 默认值（DP=2）。"""
+        """端到端：ENGINE_VERSION=...-a3 触发 DSv4-Flash 应用 A3 平台默认值。
+
+        DP 由 distributed 标志决定：单节点 DP=1，双机 DP=2。这里覆盖单节点路径，
+        只校验 A3 平台特有字段（additional_config）落地。
+        """
         os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
         params = self._params()
         engine_config = params["engine_config"]
@@ -1046,9 +1050,25 @@ class TestDeepseekV4FlashRegression(unittest.TestCase):
             vllm_adapter._apply_deepseek_v4_flash_engine_defaults(
                 params, engine_config, explicit_keys,
             )
-        # A3 → data_parallel_size=2, multistream_overlap_shared_expert=False
-        self.assertEqual(engine_config["data_parallel_size"], 2)
+        # 单节点 A3 → DP=1（TP 已被拉满到 device_count，再 DP=2 会越过物理卡数）
+        self.assertEqual(engine_config["data_parallel_size"], 1)
         self.assertFalse(engine_config["additional_config"]["multistream_overlap_shared_expert"])
+
+    def test_engine_version_a3_distributed_triggers_dp_two(self):
+        """双机分布式 + A3 → DP=2（跨节点数据并行）。"""
+        os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
+        params = self._params()
+        params["distributed"] = True
+        engine_config = params["engine_config"]
+        explicit_keys = set()
+        with patch.object(
+            vllm_adapter, "_is_deepseek_v4_flash_params",
+            return_value=True,
+        ):
+            vllm_adapter._apply_deepseek_v4_flash_engine_defaults(
+                params, engine_config, explicit_keys,
+            )
+        self.assertEqual(engine_config["data_parallel_size"], 2)
 
 
 if __name__ == "__main__":

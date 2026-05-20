@@ -345,7 +345,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         ):
             self.assertIn(env_name, script)
 
-    def _build_deepseek_v4_flash_script(self, platform="A2", extra_env=None):
+    def _build_deepseek_v4_flash_script(self, platform="A2", extra_env=None, extra_argv=None):
         from core.start_args_compat import parse_launch_args  # noqa: E402
         from engines.vllm_adapter import build_start_script  # noqa: E402
 
@@ -366,6 +366,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--device-count", "8",
                 "--trust-remote-code",
             ]
+            if extra_argv:
+                argv.extend(extra_argv)
 
             env = {"WINGS_ASCEND_PLATFORM": platform}
             if extra_env:
@@ -421,7 +423,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
 
         self.assertTrue(exec_line.startswith("exec vllm serve "))
-        self.assertIn("--data-parallel-size 2", exec_line)
+        # 单节点 A3：TP 已被拉满到 device_count，DP=1 才能匹配物理卡数
+        self.assertIn("--data-parallel-size 1", exec_line)
         self.assertIn("\"multistream_overlap_shared_expert\":false", exec_line)
         self.assertIn("\"multistream_dsa_preprocess\":false", exec_line)
         self.assertIn("\"ascend_compilation_config\"", exec_line)
@@ -437,6 +440,41 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertNotIn("export TRITON_ALL_BLOCKS_PARALLEL=1", script)
         self.assertNotIn("--kv-transfer-config", exec_line)
         self.assertIn("--hf-overrides '{\"index_topk_freq\": 4}'", exec_line)
+
+    def test_deepseek_v4_flash_a3_single_node_dp_is_one(self):
+        """A3 单节点（无 --distributed）→ DP=1，TP 由 device_count 决定（这里 8）。"""
+        script = self._build_deepseek_v4_flash_script("A3")
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--data-parallel-size 1", exec_line)
+        self.assertNotIn("--data-parallel-size 2", exec_line)
+
+    def test_deepseek_v4_flash_a3_distributed_dp_is_two(self):
+        """A3 双机分布式（--distributed）→ DP=2，跨节点数据并行。"""
+        script = self._build_deepseek_v4_flash_script(
+            "A3",
+            extra_argv=[
+                "--distributed", "--nnodes", "2",
+                "--node-ips", "10.0.0.1,10.0.0.2",
+                "--master-ip", "10.0.0.1",
+            ],
+            extra_env={"RANK_IP": "10.0.0.1"},
+        )
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--data-parallel-size 2", exec_line)
+
+    def test_deepseek_v4_flash_a3_user_overrides_dp_respected(self):
+        """A3 + 用户显式 DP=4 → 完全尊重用户值，无论是否分布式。"""
+        script = self._build_deepseek_v4_flash_script(
+            "A3", extra_env={"DATA_PARALLEL_SIZE": "4"},
+        )
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--data-parallel-size 4", exec_line)
+
+    def test_deepseek_v4_flash_a2_single_node_dp_is_one(self):
+        """A2 单节点 → DP=1（A2 默认就是 DP=1）。"""
+        script = self._build_deepseek_v4_flash_script("A2")
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--data-parallel-size 1", exec_line)
 
     def test_deepseek_v4_flash_a3_kv_offload_injects_cpu_offloading_connector(self):
         script = self._build_deepseek_v4_flash_script(

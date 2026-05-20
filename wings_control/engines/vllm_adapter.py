@@ -1465,7 +1465,14 @@ def _apply_deepseek_v4_flash_engine_defaults(
     _set_if_not_explicit(engine_config, explicit_keys, "max_num_seqs", 16)
     _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", 8)
     if "data_parallel_size" not in explicit_keys:
-        engine_config["data_parallel_size"] = 2 if platform == "a3" else 1
+        # 单节点：TP 已被 _adjust_tensor_parallelism 拉满到 device_count，
+        # 整机一组数据并行（DP=1）即可，DP>1 会让 TP×DP 超过物理卡数。
+        # 双机分布式：上层会显式传 distributed=True，A3 才允许 DP=2 跨节点。
+        is_distributed = bool(params.get("distributed"))
+        if platform == "a3" and is_distributed:
+            engine_config["data_parallel_size"] = 2
+        else:
+            engine_config["data_parallel_size"] = 1
     _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
     _set_if_not_explicit(engine_config, explicit_keys, "quantization", "ascend")
     _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
@@ -2157,27 +2164,16 @@ def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
 
 
 def _force_kv_sparse_for_glm51_ascend(params: Dict[str, Any], engine: str) -> bool:
-    """[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 临时无条件启用 KV 稀疏。
+    """[GLM5.1-Ascend-Tmp] 已禁用强制启用，恢复 enable_sparse 手动触发。
 
-    绕过 enable_sparse 开关，使得 ascend 上 GLM-5.1 即便用户未显式开启
-    enable_sparse 也强制走 IndexCache --hf-overrides 路径；待 vllm-ascend
-    支持 indexcache 补丁安装后，把本函数连同其调用一并拆除即可恢复独立开关。
+    Why: 生产 vllm_ascend image 尚未集成 IndexCache patch，强制注入
+    ``--hf-overrides '{"index_topk_freq": 4}'`` 会让模型加载稀疏注意力配置，
+    但 runtime 缺补丁 → ACL Graph capture 下 MTE DDR 越界（NPU error 507011）。
+    How to apply: 用户需显式 ``enable_sparse=true`` 才走 IndexCache --hf-overrides
+    路径；待 vllm-ascend 真正支持后再决定是否恢复 force-on。
     """
-    if engine != "vllm_ascend":
-        return False
-    try:
-        model_info = ModelIdentifier(
-            params.get("model_name"),
-            params.get("model_path"),
-            params.get("model_type"),
-        )
-    except Exception:  # noqa: BLE001
-        return False
-    return is_glm51_ascend_kvsparse_tmp_scope(
-        model_info, engine,
-        model_name=params.get("model_name"),
-        model_path=params.get("model_path"),
-    )
+    del params, engine  # noqa: F841
+    return False
 
 
 def _force_kv_sparse_for_v4_flash_ascend(params: Dict[str, Any], engine: str) -> bool:
