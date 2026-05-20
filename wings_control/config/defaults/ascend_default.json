@@ -156,6 +156,36 @@
             "reasoning_parser": "deepseek_v4",
             "use_vllm_serve": true
           }
+        },
+        "DeepSeek-V4-Pro-w4a8-mtp": {
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 135000,
+            "max_num_batched_tokens": 4096,
+            "gpu_memory_utilization": 0.9,
+            "max_num_seqs": 16,
+            "tensor_parallel_size": 16,
+            "data_parallel_size": 2,
+            "enable_expert_parallel": true,
+            "quantization": "ascend",
+            "block_size": 128,
+            "async_scheduling": true,
+            "safetensors_load_strategy": "prefetch",
+            "speculative_config": {"num_speculative_tokens": 1, "method": "deepseek_mtp"},
+            "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "additional_config": {
+              "enable_cpu_binding": "true",
+              "ascend_compilation_config": {
+                "enable_npugraph_ex": true,
+                "enable_static_kernel": false
+              }
+            },
+            "tokenizer_mode": "deepseek_v4",
+            "tool_call_parser": "deepseek_v4",
+            "enable_auto_tool_choice": true,
+            "reasoning_parser": "deepseek_v4",
+            "use_vllm_serve": true
+          }
         }
       },
       "Qwen3MoeForCausalLM": {
@@ -315,7 +345,6 @@
             "tool_call_parser": "glm47",
             "reasoning_parser": "glm45",
             "quantization": "ascend",
-            "enable_expert_parallel": true,
             "seed": 1024,
             "max_num_seqs": 8,
             "max_num_batched_tokens": 4096,
@@ -340,7 +369,6 @@
             "tool_call_parser": "glm47",
             "reasoning_parser": "glm45",
             "quantization": "ascend",
-            "enable_expert_parallel": true,
             "seed": 1024,
             "max_num_seqs": 2,
             "max_num_batched_tokens": 4096,

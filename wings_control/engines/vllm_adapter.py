@@ -1195,6 +1195,48 @@ def _is_deepseek_v4_flash_params(
     return False
 
 
+def _is_deepseek_v4_pro_adapted_scope(
+    params: Dict[str, Any],
+    model_info: Optional[ModelIdentifier] = None,
+) -> bool:
+    """V4-Pro 适配范围闸门：仅 A3 双机分布式，落在此范围才注入 Pro 专属默认与环境。
+
+    单机/A2/Ray 单机等场景一律不进入 V4-Pro 路径，避免覆盖通用 DeepSeek 默认。
+    """
+    if not _is_deepseek_v4_pro_params(params, model_info):
+        return False
+    if _resolve_deepseek_v4_flash_platform(params) != "a3":
+        return False
+    if not bool(params.get("distributed")):
+        return False
+    nnodes = _safe_int(params.get("nnodes")) or 0
+    return nnodes == 2
+
+
+def _is_deepseek_v4_pro_params(
+    params: Dict[str, Any],
+    model_info: Optional[ModelIdentifier] = None,
+) -> bool:
+    """Return True for DeepSeek-V4-Pro (w4a8-mtp) launch params; strictly exclusive with V4-Flash."""
+    candidates = [
+        params.get("model_name"),
+        params.get("served_model_name"),
+        params.get("model_path"),
+    ]
+    engine_config = params.get("engine_config") or {}
+    candidates.append(engine_config.get("served_model_name"))
+    candidates.append(engine_config.get("model"))
+    text = " ".join(str(item).lower() for item in candidates if item)
+    # V4-Flash 与 V4-Pro 必须互斥：名字中带 flash 一律视为 V4-Flash，由专用路径处理。
+    if "flash" in text:
+        return False
+    if "deepseek-v4-pro" in text or "deepseek_v4_pro" in text or "deepseekv4pro" in text:
+        return True
+    if model_info and model_info.model_architecture in _DEEPSEEK_V4_FLASH_ARCHES:
+        return "v4" in text and "pro" in text
+    return False
+
+
 def _build_deepseek_v4_flash_env(params: Dict[str, Any]) -> List[str]:
     """构建 DeepSeek-V4-Flash A2/A3 vLLM-Ascend 专属环境变量。"""
     platform = _resolve_deepseek_v4_flash_platform(params)
@@ -1218,6 +1260,27 @@ def _build_deepseek_v4_flash_env(params: Dict[str, Any]) -> List[str]:
     logger.info("[DeepSeek-V4-Flash] Set Ascend A2 environment variables")
     return common + [
         "export TRITON_ALL_BLOCKS_PARALLEL=1",
+    ]
+
+
+def _build_deepseek_v4_pro_env(params: Dict[str, Any]) -> List[str]:
+    """构建 DeepSeek-V4-Pro A3 双机 vLLM-Ascend 专属环境变量。
+
+    与 V4-Flash A3 共用绝大多数变量，差异点：``HCCL_BUFFSIZE=2048``
+    （Pro 长上下文/MoE 通信量更大，沿用 1024 会触发 HCCL OOM 风险）。
+    """
+    logger.info("[DeepSeek-V4-Pro] Set Ascend A3 environment variables")
+    return [
+        "export USE_MULTI_BLOCK_POOL=1",
+        "export OMP_PROC_BIND=false",
+        "export OMP_NUM_THREADS=10",
+        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export ACL_OP_INIT_MODE=1",
+        "export ASCEND_A3_ENABLE=1",
+        "export USE_MULTI_GROUPS_KV_CACHE=1",
+        "export HCCL_BUFFSIZE=2048",
+        "export VLLM_ASCEND_ENABLE_FUSED_MC2=1",
+        "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
     ]
 
 
@@ -1258,6 +1321,8 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
 
     if engine == "vllm_ascend" and _is_deepseek_v4_flash_params(params, model_info):
         return _build_deepseek_v4_flash_env(params)
+    if engine == "vllm_ascend" and _is_deepseek_v4_pro_adapted_scope(params, model_info):
+        return _build_deepseek_v4_pro_env(params)
 
     if engine == "vllm_ascend":
         _arch_env_builders = {
@@ -1345,9 +1410,10 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     explicit_keys = set(params.get("_explicit_cli_keys") or [])
 
     _apply_deepseek_v4_flash_engine_defaults(params, engine_config, explicit_keys)
+    _apply_deepseek_v4_pro_engine_defaults(params, engine_config, explicit_keys)
     _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
 
-    if _is_deepseek_ascend_dp_deployment(params):
+    if _is_deepseek_ascend_dp_deployment(params) and not _is_deepseek_v4_pro_params(params):
         model_architecture = _get_deepseek_ascend_dp_model_architecture(params)
         device_count = _safe_int(params.get("device_count"))
         default_tp = _default_deepseek_ascend_dp_tensor_parallel_size(model_architecture or "", device_count)
@@ -1511,6 +1577,86 @@ def _apply_deepseek_v4_flash_engine_defaults(
     _apply_deepseek_v4_flash_kv_offload(engine_config, explicit_keys)
 
 
+def _apply_deepseek_v4_pro_engine_defaults(
+    params: Dict[str, Any],
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+) -> None:
+    """Apply DeepSeek-V4-Pro (w4a8-mtp) vLLM-Ascend launch defaults.
+
+    适配范围（设计阶段约束）：仅 A3 双机（nnodes==2、distributed==True）。
+    其它部署形态不进入此分支，避免影响 V4-Flash / V3.2 / 通用 DeepSeek 路径。
+
+    V4-Pro 与 V4-Flash 的核心差异：
+      * 模型为 w4a8 量化、长上下文（max_model_len=135000）；
+      * 双机 DP 拓扑：``data_parallel_size=2`` + ``data_parallel_size_local=1``，
+        ``data_parallel_start_rank`` 跟随 node_rank（每机一个 DP rank）；
+      * 不再使用 ``_is_deepseek_ascend_dp_deployment`` 的通用 DP 推导路径，
+        因为通用路径会把 dp_size_local 推到 device_count/tp，与 Pro 官方 1 卡/DP 不符。
+      * 显式锁定 TP=16，单机内整张 NPU 资源走 EP+TP，长上下文需要更大 HCCL_BUFFSIZE=2048
+        （由 ``_build_deepseek_v4_pro_env_commands`` 注入）。
+    """
+    if params.get("engine") != "vllm_ascend":
+        return
+    if not _is_deepseek_v4_pro_adapted_scope(params):
+        return
+
+    _set_if_not_explicit(engine_config, explicit_keys, "max_model_len", 135000)
+    _set_if_not_explicit(engine_config, explicit_keys, "max_num_batched_tokens", 4096)
+    _set_if_not_explicit(engine_config, explicit_keys, "max_num_seqs", 16)
+    _set_if_not_explicit(engine_config, explicit_keys, "gpu_memory_utilization", 0.9)
+
+    # _adjust_tensor_parallelism 已先按 device_count*nnodes 写过 engine_config，
+    # 这里必须显式覆盖；params 同步以免下游 dp_deployment 推导读到旧值。
+    if "tensor_parallel_size" not in explicit_keys:
+        engine_config["tensor_parallel_size"] = 16
+        params["tensor_parallel_size"] = 16
+
+    # V4-Pro 双机 DP=2，每机 1 个 DP rank。
+    if "data_parallel_size" not in explicit_keys:
+        engine_config["data_parallel_size"] = 2
+    if "data_parallel_size_local" not in explicit_keys:
+        engine_config["data_parallel_size_local"] = 1
+    if "data_parallel_start_rank" not in explicit_keys:
+        node_rank = _safe_int(params.get("node_rank")) or 0
+        engine_config["data_parallel_start_rank"] = node_rank
+
+    _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "quantization", "ascend")
+    _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
+    _set_if_not_explicit(engine_config, explicit_keys, "async_scheduling", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "safetensors_load_strategy", "prefetch")
+    _set_if_not_explicit(engine_config, explicit_keys, "tokenizer_mode", "deepseek_v4")
+    _set_if_not_explicit(engine_config, explicit_keys, "tool_call_parser", "deepseek_v4")
+    _set_if_not_explicit(engine_config, explicit_keys, "enable_auto_tool_choice", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "reasoning_parser", "deepseek_v4")
+
+    _merge_dict_default_if_not_explicit(
+        engine_config,
+        explicit_keys,
+        "speculative_config",
+        {"num_speculative_tokens": 1, "method": "deepseek_mtp"},
+    )
+    _merge_dict_default_if_not_explicit(
+        engine_config,
+        explicit_keys,
+        "compilation_config",
+        {"cudagraph_mode": "FULL_DECODE_ONLY"},
+    )
+    _merge_dict_default_if_not_explicit(
+        engine_config,
+        explicit_keys,
+        "additional_config",
+        {
+            "enable_cpu_binding": "true",
+            "ascend_compilation_config": {
+                "enable_npugraph_ex": True,
+                "enable_static_kernel": False,
+            },
+        },
+    )
+
+
 def _apply_deepseek_v4_flash_kv_offload(
     engine_config: Dict[str, Any],
     explicit_keys: set,
@@ -1561,13 +1707,18 @@ def _apply_glm5_ascend_engine_defaults(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """[GLM-5/5.1 Ascend] 注入 ``additional_config`` 三键默认值。
+    """[GLM-5/5.1 Ascend] 注入 ``additional_config`` 三键默认值，并强制关闭 EP。
 
     依据 vllm-ascend 官方 W8A8 双机命令（A2/A3 一致）：
       * 传 ``--additional-config '{fuse_muls_add,
         multistream_overlap_shared_expert, ascend_compilation_config.enable_npugraph_ex}'``
 
     行为：A2 / A3 一致；深合并默认三键，用户显式声明的键值保留。
+
+    EP 强制关闭：GLM-5.1 ascend 路径无论用户/上层配置是否开 ``enable_expert_parallel``，
+    一律强制关闭。原因：参考社区 W8A8 单机/双机启动命令均无 ``--enable-expert-parallel``，
+    实际生产中开启 EP 会改变路由 / 通信路径，与当前 vllm-ascend image 的 ACL graph 路径
+    存在已知不稳定（参见 vllm-ascend#8015 类问题）。
     """
     if params.get("engine") != "vllm_ascend":
         return
@@ -1595,6 +1746,29 @@ def _apply_glm5_ascend_engine_defaults(
     logger.info(
         "[GLM-5/5.1 Ascend] ensure additional_config defaults applied",
     )
+
+    # EP 强制关闭：范围与 KV 稀疏 force-on 严格一致（仅 GLM-5.1，覆盖
+    # 910B/910C × 单机/双机 四象限）。GLM-5.0（非 5.1）的 GlmMoeDsa 走
+    # 上面的 additional_config 注入但不强制 EP/sparse，保留用户原始配置。
+    if not is_glm51_ascend_kvsparse_tmp_scope(
+        model_info, params.get("engine"),
+        model_name=params.get("model_name"),
+        model_path=params.get("model_path"),
+    ):
+        return
+    prev_ep = engine_config.get("enable_expert_parallel")
+    engine_config["enable_expert_parallel"] = False
+    if prev_ep is True:
+        if "enable_expert_parallel" in explicit_keys:
+            logger.warning(
+                "[GLM5.1-Ascend-Tmp] --enable-expert-parallel forcibly disabled; "
+                "GLM-5.1 ascend path requires EP off (overriding user request).",
+            )
+        else:
+            logger.info(
+                "[GLM5.1-Ascend-Tmp] enable_expert_parallel forcibly disabled "
+                "(was True from defaults).",
+            )
 
 
 def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
@@ -2174,16 +2348,30 @@ def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
 
 
 def _force_kv_sparse_for_glm51_ascend(params: Dict[str, Any], engine: str) -> bool:
-    """[GLM5.1-Ascend-Tmp] 已禁用强制启用，恢复 enable_sparse 手动触发。
+    """[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 默认启用 KV 稀疏。
 
-    Why: 生产 vllm_ascend image 尚未集成 IndexCache patch，强制注入
-    ``--hf-overrides '{"index_topk_freq": 4}'`` 会让模型加载稀疏注意力配置，
-    但 runtime 缺补丁 → ACL Graph capture 下 MTE DDR 越界（NPU error 507011）。
-    How to apply: 用户需显式 ``enable_sparse=true`` 才走 IndexCache --hf-overrides
-    路径；待 vllm-ascend 真正支持后再决定是否恢复 force-on。
+    范围（与 EP 强制关闭同范围）：
+      * engine == ``vllm_ascend``
+      * 架构 ``GlmMoeDsaForCausalLM`` + 名称/路径标识为 GLM-5.1
+      * 910B(A2) / 910C(A3) × 单机 / 双机 四象限均生效
+
+    行为：绕过 ``enable_sparse`` 开关，强制走 IndexCache ``--hf-overrides`` 路径。
     """
-    del params, engine  # noqa: F841
-    return False
+    if engine != "vllm_ascend":
+        return False
+    try:
+        model_info = ModelIdentifier(
+            params.get("model_name"),
+            params.get("model_path"),
+            params.get("model_type"),
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return is_glm51_ascend_kvsparse_tmp_scope(
+        model_info, engine,
+        model_name=params.get("model_name"),
+        model_path=params.get("model_path"),
+    )
 
 
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:

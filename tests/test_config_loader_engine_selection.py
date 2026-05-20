@@ -540,6 +540,149 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertIn("\"cpu_swap_space_gb\":200", exec_line)
 
+    def _build_deepseek_v4_pro_script(
+        self,
+        device_count=16,
+        nnodes=2,
+        node_rank=0,
+        extra_env=None,
+        extra_argv=None,
+        model_name="DeepSeek-V4-Pro-w4a8-mtp",
+    ):
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+        from engines.vllm_adapter import build_start_script  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["DeepseekV3ForCausalLM"],
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", model_name,
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", str(device_count),
+                "--trust-remote-code",
+                "--distributed",
+                "--nnodes", str(nnodes),
+                "--node-rank", str(node_rank),
+                "--node-ips", "10.0.0.1,10.0.0.2",
+                "--master-ip", "10.0.0.1",
+            ]
+            if extra_argv:
+                argv.extend(extra_argv)
+
+            env = {"WINGS_ASCEND_PLATFORM": "A3", "RANK_IP": "10.0.0.1"}
+            if extra_env:
+                env.update(extra_env)
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, env, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "ascend", "count": device_count, "details": []},
+                        launch_args.to_namespace(),
+                    )
+                    return build_start_script(merged)
+
+    def test_deepseek_v4_pro_a3_two_nodes_tp16_dp2_rank0(self):
+        """V4-Pro A3 双机 16 卡：rank0 → TP=16、DP=2、dp_size_local=1、start_rank=0。"""
+        script = self._build_deepseek_v4_pro_script(node_rank=0)
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertTrue(exec_line.startswith("exec vllm serve "))
+        self.assertIn("--tensor-parallel-size 16", exec_line)
+        self.assertIn("--data-parallel-size 2", exec_line)
+        self.assertIn("--data-parallel-size-local 1", exec_line)
+        # rank0 走 head 入口，没有 --headless / --data-parallel-start-rank
+        self.assertNotIn("--headless", exec_line)
+        self.assertNotIn("--data-parallel-start-rank", exec_line)
+        self.assertIn("--max-model-len 135000", exec_line)
+        self.assertIn("--max-num-batched-tokens 4096", exec_line)
+        self.assertIn("--enable-expert-parallel", exec_line)
+        self.assertIn("--quantization ascend", exec_line)
+        self.assertIn("--block-size 128", exec_line)
+        self.assertIn("--async-scheduling", exec_line)
+        self.assertIn("--tokenizer-mode deepseek_v4", exec_line)
+        self.assertIn("--tool-call-parser deepseek_v4", exec_line)
+        self.assertIn("--enable-auto-tool-choice", exec_line)
+        self.assertIn("--reasoning-parser deepseek_v4", exec_line)
+        self.assertIn("--safetensors-load-strategy prefetch", exec_line)
+        self.assertIn(
+            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"deepseek_mtp\"}'",
+            exec_line,
+        )
+        self.assertIn("\"enable_cpu_binding\":\"true\"", exec_line)
+        self.assertIn("\"enable_npugraph_ex\":true", exec_line)
+        self.assertIn("\"enable_static_kernel\":false", exec_line)
+        self.assertIn("export HCCL_BUFFSIZE=2048", script)
+        self.assertIn("export ASCEND_A3_ENABLE=1", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_FUSED_MC2=1", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1", script)
+
+    def test_deepseek_v4_pro_a3_two_nodes_rank1_headless_start_rank_1(self):
+        """V4-Pro A3 双机 rank1 → --headless + --data-parallel-start-rank 1。"""
+        script = self._build_deepseek_v4_pro_script(node_rank=1)
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--tensor-parallel-size 16", exec_line)
+        self.assertIn("--data-parallel-size 2", exec_line)
+        self.assertIn("--data-parallel-size-local 1", exec_line)
+        self.assertIn("--headless", exec_line)
+        self.assertIn("--data-parallel-start-rank 1", exec_line)
+
+    def test_deepseek_v4_pro_user_explicit_tp_respected(self):
+        """V4-Pro：用户显式 TP=8 应被尊重，不被强制覆盖到 16。"""
+        script = self._build_deepseek_v4_pro_script(
+            extra_env={"TENSOR_PARALLEL_SIZE": "8"},
+        )
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        self.assertIn("--tensor-parallel-size 8", exec_line)
+
+    def test_deepseek_v4_pro_flash_name_does_not_match_pro(self):
+        """名称含 flash 严格视为 V4-Flash，不应进入 V4-Pro 分支。"""
+        from engines.vllm_adapter import (
+            _is_deepseek_v4_pro_params,
+            _is_deepseek_v4_flash_params,
+        )
+        params = {"model_name": "DeepSeek-V4-Flash-w8a8-mtp"}
+        self.assertFalse(_is_deepseek_v4_pro_params(params))
+        self.assertTrue(_is_deepseek_v4_flash_params(params))
+
+    def test_deepseek_v4_pro_single_node_does_not_apply_defaults(self):
+        """V4-Pro 单机场景（不在适配范围）：不触发 V4-Pro 专属默认，HCCL 不应被改成 2048。"""
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+        from engines.vllm_adapter import build_start_script  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "DeepSeek-V4-Pro-w4a8-mtp",
+                "--model-path", model_dir,
+                "--host", "0.0.0.0",
+                "--port", "18000",
+                "--device-count", "16",
+                "--trust-remote-code",
+            ]
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {"WINGS_ASCEND_PLATFORM": "A3"}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "ascend", "count": 16, "details": []},
+                        launch_args.to_namespace(),
+                    )
+                    script = build_start_script(merged)
+        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
+        # 单机不在 V4-Pro 适配范围 → 不应注入 135000 / HCCL_BUFFSIZE=2048
+        self.assertNotIn("--max-model-len 135000", exec_line)
+        self.assertNotIn("export HCCL_BUFFSIZE=2048", script)
+
     def test_mindie_deepseek_long_context_2x8_triggers_cpsp_defaults(self):
         params = {}
         ctx = {
