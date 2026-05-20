@@ -352,7 +352,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as model_dir:
             Path(model_dir, "config.json").write_text(
                 json.dumps({
-                    "architectures": ["DeepseekV3ForCausalLM"],
+                    "architectures": ["DeepseekV4ForCausalLM"],
                     "torch_dtype": "bfloat16",
                 }),
                 encoding="utf-8",
@@ -399,22 +399,28 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--enable-auto-tool-choice", exec_line)
         self.assertIn("--reasoning-parser deepseek_v4", exec_line)
         self.assertIn(
-            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"deepseek_mtp\"}'",
+            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"mtp\"}'",
             exec_line,
         )
-        self.assertIn("\"multistream_overlap_shared_expert\":true", exec_line)
+        # 官方 A2 启动模板：multistream_overlap_shared_expert 必须为 false。
+        self.assertIn("\"multistream_overlap_shared_expert\":false", exec_line)
         self.assertNotIn("ascend_compilation_config", exec_line)
         self.assertNotIn("multistream_dsa_preprocess", exec_line)
         self.assertEqual(exec_line.count("--speculative-config"), 1)
         self.assertEqual(exec_line.count("--additional-config"), 1)
         self.assertEqual(exec_line.count("--compilation-config"), 1)
         self.assertIn("--enable-prefix-caching", exec_line)
+        self.assertIn("--enable-chunked-prefill", exec_line)
         self.assertIn("--safetensors-load-strategy prefetch", exec_line)
         self.assertNotIn("--use-vllm-serve", exec_line)
         self.assertNotIn("--ascend-platform", exec_line)
-        self.assertIn("export OMP_NUM_THREADS=10", script)
+        # A2 与 A3 共用关键 env：USE_MULTI_GROUPS_KV_CACHE / FLASHCOMM1 是 MoE+MTP
+        # KV cache spec 统一前提，缺失会触发 ``'list' object has no attribute 'merge'``。
+        self.assertIn("export OMP_NUM_THREADS=8", script)
+        self.assertIn("export HCCL_BUFFSIZE=512", script)
         self.assertIn("export TRITON_ALL_BLOCKS_PARALLEL=1", script)
-        self.assertNotIn("export USE_MULTI_GROUPS_KV_CACHE=1", script)
+        self.assertIn("export USE_MULTI_GROUPS_KV_CACHE=1", script)
+        self.assertIn("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1", script)
         self.assertNotIn("--kv-transfer-config", exec_line)
         # V4-Flash 不再默认强开 IndexCache：未带 --enable-sparse 时不应出现 --hf-overrides
         self.assertNotIn("--hf-overrides", exec_line)
@@ -511,9 +517,9 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("\"kv_role\":\"kv_both\"", exec_line)
         self.assertIn("\"swap_in_threshold\":1", exec_line)
         self.assertIn("\"cpu_swap_space_gb\":100", exec_line)
-        # 与 MTP 共存：spec 不应降级
+        # 与 MTP 共存：spec 不应降级（vLLM 0.18 推测解码 method 名 ``mtp``）
         self.assertIn(
-            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"deepseek_mtp\"}'",
+            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"mtp\"}'",
             exec_line,
         )
         # LMCache env 与 YAML 路径不应再导出
@@ -555,7 +561,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as model_dir:
             Path(model_dir, "config.json").write_text(
                 json.dumps({
-                    "architectures": ["DeepseekV3ForCausalLM"],
+                    "architectures": ["DeepseekV4ForCausalLM"],
                     "torch_dtype": "bfloat16",
                 }),
                 encoding="utf-8",
@@ -611,11 +617,14 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--enable-auto-tool-choice", exec_line)
         self.assertIn("--reasoning-parser deepseek_v4", exec_line)
         self.assertIn("--safetensors-load-strategy prefetch", exec_line)
+        # vLLM 0.18 推测解码 method 名 ``mtp``，``deepseek_mtp`` 会被静默忽略。
         self.assertIn(
-            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"deepseek_mtp\"}'",
+            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"mtp\"}'",
             exec_line,
         )
-        self.assertIn("\"enable_cpu_binding\":\"true\"", exec_line)
+        # ``enable_cpu_binding`` 必须是 bool（字符串 "true" 会被 _format_cli_arg
+        # 当成普通字符串发出 'true'，与 vLLM 0.18 期望的 bool 不符）。
+        self.assertIn("\"enable_cpu_binding\":true", exec_line)
         self.assertIn("\"enable_npugraph_ex\":true", exec_line)
         self.assertIn("\"enable_static_kernel\":false", exec_line)
         self.assertIn("export HCCL_BUFFSIZE=2048", script)

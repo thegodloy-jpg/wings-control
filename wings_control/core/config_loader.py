@@ -2072,8 +2072,11 @@ def _handle_vllm_distributed(distributed_config: Dict[str, Any], cmd_params: Dic
     pd_role = get_pd_role_env()
     model_architecture = model_info.model_architecture
     is_ascend = cmd_params.get("engine") == 'vllm_ascend'
+    # V4 (Flash/Pro) 与 V3/V32 走同一条 Ascend DeepSeek dp_deployment 路径；
+    # 缺失 V4 会导致分布式启动回退到 Ray，与 V4-Pro 双机 NIXL 拓扑不兼容。
     is_ascend_deepseek = (model_architecture in ["DeepseekV3ForCausalLM",
                                                   "DeepseekV32ForCausalLM",
+                                                  "DeepseekV4ForCausalLM",
                                                   "GlmMoeDsaForCausalLM"]
                           and is_ascend)
 

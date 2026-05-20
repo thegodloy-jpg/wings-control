@@ -106,6 +106,38 @@
             "mindie_model_type": "deepseekv2",
             "mindie_tool_call_parser": "deepseek_v31"
           }
+        }
+      },
+      "DeepseekV4ForCausalLM": {
+        "default": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tokenizer_mode": "deepseek_v4",
+            "tool_call_parser": "deepseek_v4",
+            "reasoning_parser": "deepseek_v4"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tokenizer_mode": "deepseek_v4",
+            "tool_call_parser": "deepseek_v4",
+            "reasoning_parser": "deepseek_v4"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseek_v4"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseek_v4"
+          }
         },
         "DeepSeek-V4-Flash-w8a8-mtp": {
           "vllm_ascend": {
@@ -122,10 +154,11 @@
             "chat_template": "/usr/local/serving/models/chat_template.jinja",
             "async_scheduling": true,
             "enable_prefix_caching": true,
+            "enable_chunked_prefill": true,
             "safetensors_load_strategy": "prefetch",
-            "speculative_config": {"num_speculative_tokens": 1, "method": "deepseek_mtp"},
+            "speculative_config": {"num_speculative_tokens": 1, "method": "mtp"},
             "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
-            "additional_config": {"enable_cpu_binding": "true", "multistream_overlap_shared_expert": true},
+            "additional_config": {"enable_cpu_binding": true, "multistream_overlap_shared_expert": false},
             "tokenizer_mode": "deepseek_v4",
             "tool_call_parser": "deepseek_v4",
             "enable_auto_tool_choice": true,
@@ -146,10 +179,11 @@
             "chat_template": "/usr/local/serving/models/chat_template.jinja",
             "async_scheduling": true,
             "enable_prefix_caching": true,
+            "enable_chunked_prefill": true,
             "safetensors_load_strategy": "prefetch",
-            "speculative_config": {"num_speculative_tokens": 1, "method": "deepseek_mtp"},
+            "speculative_config": {"num_speculative_tokens": 1, "method": "mtp"},
             "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
-            "additional_config": {"enable_cpu_binding": "true", "multistream_overlap_shared_expert": true},
+            "additional_config": {"enable_cpu_binding": true, "multistream_overlap_shared_expert": false},
             "tokenizer_mode": "deepseek_v4",
             "tool_call_parser": "deepseek_v4",
             "enable_auto_tool_choice": true,
@@ -171,10 +205,10 @@
             "block_size": 128,
             "async_scheduling": true,
             "safetensors_load_strategy": "prefetch",
-            "speculative_config": {"num_speculative_tokens": 1, "method": "deepseek_mtp"},
+            "speculative_config": {"num_speculative_tokens": 1, "method": "mtp"},
             "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
             "additional_config": {
-              "enable_cpu_binding": "true",
+              "enable_cpu_binding": true,
               "ascend_compilation_config": {
                 "enable_npugraph_ex": true,
                 "enable_static_kernel": false

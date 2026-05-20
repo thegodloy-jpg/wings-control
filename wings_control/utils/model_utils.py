@@ -126,15 +126,25 @@ _LLM_MODELS = {
         "DeepSeek-V3",
         "DeepSeek-V3-0324",
         "DeepSeek-V3.1",
-        "DeepSeek-V4",
         "DeepSeek-Coder-V2-Instruct",
         "DeepSeek-R1-w8a8",
         "DeepSeek-R1-0528-w8a8",
         "DeepSeek-V3-w8a8",
         "DeepSeek-V3-0324-w8a8",
         "DeepSeek-V3.1-w8a8",
-        "DeepSeek-V4-w8a8",
         "DeepSeek-Coder-V2-Instruct-w8a8"
+        ],
+    # DeepSeek-V4 系列权重的 ``config.json -> architectures[0]`` 为
+    # ``DeepseekV4ForCausalLM``。独立架构键保证 ascend_default.json 下的
+    # V4-Flash / V4-Pro 默认值（``method: mtp``、``enable_cpu_binding: bool true``、
+    # ``multistream_overlap_shared_expert: false`` 等）能够命中。
+    "DeepseekV4ForCausalLM": [
+        "DeepSeek-V4",
+        "DeepSeek-V4-w8a8",
+        "DeepSeek-V4-Flash",
+        "DeepSeek-V4-Flash-w8a8-mtp",
+        "DeepSeek-V4-Pro",
+        "DeepSeek-V4-Pro-w4a8-mtp",
         ],
     "KimiK25ForConditionalGeneration": [
         "Kimi-K2.5",

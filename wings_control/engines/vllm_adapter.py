@@ -149,6 +149,10 @@ def _safe_int(value: Any) -> Optional[int]:
 _DEEPSEEK_ASCEND_DP_ARCHES = {
     "DeepseekV3ForCausalLM",
     "DeepseekV32ForCausalLM",
+    # V4 (Flash/Pro) 也走 dp_deployment：``_resolve_dp_deployment_topology``
+    # 据此识别需要按 ``device_count/tp`` 计算 dp_size_local，否则会落到
+    # ``(nnodes, 1, node_rank)`` 默认分支，与 V4-Flash 双机 DP=4 / V4-Pro DP=2 不符。
+    "DeepseekV4ForCausalLM",
     "GlmMoeDsaForCausalLM",
 }
 
@@ -1240,27 +1244,35 @@ def _is_deepseek_v4_pro_params(
 
 
 def _build_deepseek_v4_flash_env(params: Dict[str, Any]) -> List[str]:
-    """构建 DeepSeek-V4-Flash A2/A3 vLLM-Ascend 专属环境变量。"""
+    """构建 DeepSeek-V4-Flash A2/A3 vLLM-Ascend 专属环境变量。
+
+    A2 (910B) 关键开关 ``USE_MULTI_GROUPS_KV_CACHE=1`` 与
+    ``VLLM_ASCEND_ENABLE_FLASHCOMM1=1`` 与 A3 一致，缺一会触发 MTP + MoE
+    场景的 ``is_kv_cache_spec_uniform`` ``'list' object has no attribute 'merge'``
+    崩溃（KV cache spec 跨层非均匀）。
+    """
     platform = _resolve_deepseek_v4_flash_platform(params)
     common = [
         "export USE_MULTI_BLOCK_POOL=1",
         "export OMP_PROC_BIND=false",
-        "export OMP_NUM_THREADS=10",
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         "export ACL_OP_INIT_MODE=1",
+        "export USE_MULTI_GROUPS_KV_CACHE=1",
+        "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
     ]
     if platform == "a3":
         logger.info("[DeepSeek-V4-Flash] Set Ascend A3 environment variables")
         return common + [
+            "export OMP_NUM_THREADS=10",
             "export ASCEND_A3_ENABLE=1",
-            "export USE_MULTI_GROUPS_KV_CACHE=1",
             "export HCCL_BUFFSIZE=1024",
             "export VLLM_ASCEND_ENABLE_FUSED_MC2=1",
-            "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
         ]
 
     logger.info("[DeepSeek-V4-Flash] Set Ascend A2 environment variables")
     return common + [
+        "export OMP_NUM_THREADS=8",
+        "export HCCL_BUFFSIZE=512",
         "export TRITON_ALL_BLOCKS_PARALLEL=1",
     ]
 
@@ -1415,17 +1427,19 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     _apply_deepseek_v4_pro_engine_defaults(params, engine_config, explicit_keys)
     _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
 
-    if _is_deepseek_ascend_dp_deployment(params) and not _is_deepseek_v4_pro_params(params):
+    # V4-Flash / V4-Pro 各自有完整 applier（直接覆写 EP、prefix_caching、
+    # chunked_prefill、async_scheduling、DP 拓扑等），无需也不应被通用
+    # DeepSeek Ascend DP 块强制改写——典型例子：通用块会把 V4-Flash 期望的
+    # ``enable_prefix_caching=True`` 强制关掉。
+    if (
+        _is_deepseek_ascend_dp_deployment(params)
+        and not _is_deepseek_v4_pro_params(params)
+        and not _is_deepseek_v4_flash_params(params)
+    ):
         model_architecture = _get_deepseek_ascend_dp_model_architecture(params)
         device_count = _safe_int(params.get("device_count"))
         default_tp = _default_deepseek_ascend_dp_tensor_parallel_size(model_architecture or "", device_count)
-        # V4-Flash 由 _apply_deepseek_v4_flash_engine_defaults 锁定 TP=8（避免 MTP 小层被切到 0 维）。
-        # 这里的 DeepseekV3 通用 TP=4 默认会把 V4-Flash 覆盖掉，需跳过。
-        if (
-            default_tp
-            and "tensor_parallel_size" not in explicit_keys
-            and not _is_deepseek_v4_flash_params(params)
-        ):
+        if default_tp and "tensor_parallel_size" not in explicit_keys:
             engine_config["tensor_parallel_size"] = default_tp
 
         prefix_cache_explicit = bool(
@@ -1511,8 +1525,12 @@ def _set_deepseek_v4_flash_additional_config(
     if "additional_config" in explicit_keys:
         return
     current = _parse_dict_like_config(engine_config.get("additional_config")) or {}
-    current.setdefault("enable_cpu_binding", "true")
-    current["multistream_overlap_shared_expert"] = platform != "a3"
+    # ``enable_cpu_binding`` 必须是 bool（``_format_cli_arg`` 对字符串 "true"
+    # 会作为普通字符串发出 ``--... 'true'``，与 vLLM 0.18 期望的 bool 不符）。
+    current.setdefault("enable_cpu_binding", True)
+    # 官方 A2/A3 启动模板均显式关闭 ``multistream_overlap_shared_expert``：
+    # 该项在 V4-Flash MoE+MTP 路径会与 KV cache spec 合并步骤冲突。
+    current["multistream_overlap_shared_expert"] = False
     if platform == "a3":
         current.setdefault("multistream_dsa_preprocess", False)
         ascend_compile = _parse_dict_like_config(current.get("ascend_compilation_config")) or {}
@@ -1534,9 +1552,20 @@ def _apply_deepseek_v4_flash_engine_defaults(
         return
 
     platform = _resolve_deepseek_v4_flash_platform(params)
-    _set_if_not_explicit(engine_config, explicit_keys, "max_model_len", 65536)
-    _set_if_not_explicit(engine_config, explicit_keys, "max_num_batched_tokens", 8192)
-    _set_if_not_explicit(engine_config, explicit_keys, "max_num_seqs", 16)
+    # V4-Flash 推荐默认：当用户未在 explicit_keys 中指定时一律强制覆盖到
+    # 官方 W8A8 启动脚本的取值。使用直接覆盖而非 ``_set_if_not_explicit``
+    # 是因为后者跳过已经被通用默认 (vllm_default.json / 默认 fallback) 写入
+    # 的非空值（典型：``enable_expert_parallel=False`` 被吞 → 触发 MTP+MoE
+    # 的 ``is_kv_cache_spec_uniform`` 崩溃；``max_model_len=4096`` 被吞 →
+    # 上下文长度被截短）。
+    if "max_model_len" not in explicit_keys:
+        engine_config["max_model_len"] = 65536
+    if "max_num_batched_tokens" not in explicit_keys:
+        engine_config["max_num_batched_tokens"] = 8192
+    if "max_num_seqs" not in explicit_keys:
+        engine_config["max_num_seqs"] = 16
+    if "gpu_memory_utilization" not in explicit_keys:
+        engine_config["gpu_memory_utilization"] = 0.9
     # V4-Flash 在 A2(8卡)/A3(16卡) 上 TP 一律锁定为 8：
     # TP=16 会把 MTP/sparse 小层切到 0 维（shape '[0, 1024, -1]' 崩溃）。
     # _adjust_tensor_parallelism 已先按 device_count*nnodes 写过 engine_config，
@@ -1551,24 +1580,33 @@ def _apply_deepseek_v4_flash_engine_defaults(
         nnodes = _safe_int(params.get("nnodes")) or (2 if is_distributed else 1)
         total_cards = device_count * (nnodes if is_distributed else 1)
         engine_config["data_parallel_size"] = max(1, total_cards // 8)
-    _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
+    if "enable_expert_parallel" not in explicit_keys:
+        # MoE 模型必须开 EP，否则不同专家路由生成的 KV cache spec 形状不一致，
+        # 配合 MTP 推测解码会触发 ``'list' object has no attribute 'merge'``。
+        engine_config["enable_expert_parallel"] = True
     _set_if_not_explicit(engine_config, explicit_keys, "quantization", "ascend")
     _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
     _set_if_not_explicit(engine_config, explicit_keys, "chat_template", "/usr/local/serving/models/chat_template.jinja")
     _set_if_not_explicit(engine_config, explicit_keys, "async_scheduling", True)
-    _set_if_not_explicit(engine_config, explicit_keys, "enable_prefix_caching", True)
+    if "enable_prefix_caching" not in explicit_keys:
+        engine_config["enable_prefix_caching"] = True
+    if "enable_chunked_prefill" not in explicit_keys:
+        engine_config["enable_chunked_prefill"] = True
     _set_if_not_explicit(engine_config, explicit_keys, "safetensors_load_strategy", "prefetch")
     _set_if_not_explicit(engine_config, explicit_keys, "tokenizer_mode", "deepseek_v4")
     _set_if_not_explicit(engine_config, explicit_keys, "tool_call_parser", "deepseek_v4")
-    _set_if_not_explicit(engine_config, explicit_keys, "enable_auto_tool_choice", True)
+    if "enable_auto_tool_choice" not in explicit_keys:
+        engine_config["enable_auto_tool_choice"] = True
     _set_if_not_explicit(engine_config, explicit_keys, "reasoning_parser", "deepseek_v4")
 
     _set_deepseek_v4_flash_additional_config(engine_config, explicit_keys, platform)
+    # vLLM 0.18.0 推测解码 method 取值为 ``mtp``（非 ``deepseek_mtp``，后者会被
+    # 静默忽略导致推测解码失效）。
     _merge_dict_default_if_not_explicit(
         engine_config,
         explicit_keys,
         "speculative_config",
-        {"num_speculative_tokens": 1, "method": "deepseek_mtp"},
+        {"num_speculative_tokens": 1, "method": "mtp"},
     )
     _merge_dict_default_if_not_explicit(
         engine_config,
@@ -1633,11 +1671,12 @@ def _apply_deepseek_v4_pro_engine_defaults(
     _set_if_not_explicit(engine_config, explicit_keys, "enable_auto_tool_choice", True)
     _set_if_not_explicit(engine_config, explicit_keys, "reasoning_parser", "deepseek_v4")
 
+    # vLLM 0.18.0 推测解码 method 取值为 ``mtp``，``deepseek_mtp`` 会被静默忽略。
     _merge_dict_default_if_not_explicit(
         engine_config,
         explicit_keys,
         "speculative_config",
-        {"num_speculative_tokens": 1, "method": "deepseek_mtp"},
+        {"num_speculative_tokens": 1, "method": "mtp"},
     )
     _merge_dict_default_if_not_explicit(
         engine_config,
@@ -1650,7 +1689,7 @@ def _apply_deepseek_v4_pro_engine_defaults(
         explicit_keys,
         "additional_config",
         {
-            "enable_cpu_binding": "true",
+            "enable_cpu_binding": True,
             "ascend_compilation_config": {
                 "enable_npugraph_ex": True,
                 "enable_static_kernel": False,
@@ -2232,6 +2271,8 @@ def _resolve_mtp_method(model_architecture: str) -> str:
     mtp_methods_by_arch = {
         "DeepseekV3ForCausalLM": "mtp",
         "DeepseekV32ForCausalLM": "mtp",
+        # DeepSeek-V4 (Flash/Pro) 在 vLLM 0.18 沿用 ``mtp`` 推测解码方法名。
+        "DeepseekV4ForCausalLM": "mtp",
         "GlmMoeDsaForCausalLM": "deepseek_mtp",
         "Qwen3NextForCausalLM": "qwen3_next_mtp",
         "Glm4MoeForCausalLM": "glm4_moe_mtp",
