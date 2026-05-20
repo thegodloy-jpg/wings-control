@@ -1,22 +1,55 @@
-# wings_control 设计文档
+# Wings-Control 文档
 
-本目录存放 `wings_control` 的设计文档与方案分析。当前推荐以“模型级文件化配置”系列为准；`design-engine-version-defaults-analysis.md` 保留为前置分析和设计背景，不作为最终落地口径。
+本文档目录按使用者路径组织。部署形态只包含 Docker Compose 和 K8s；单机多卡、多机分布式、PD 分离、LMCache、Sparse KV 等归入特性专题。
 
-## 推荐入口
+## 产品文档
 
 | 文档 | 说明 |
 |------|------|
-| [design-model-file-config-readme.md](design-model-file-config-readme.md) | 系列导读，包含本轮评审后的关键决策与阅读顺序 |
-| [design-model-file-config.md](design-model-file-config.md) | 主设计文档，定义目录结构、分层继承、迁移边界和 env 处理原则 |
-| [design-model-file-config-schema.md](design-model-file-config-schema.md) | Schema、命名规则、校验规则和配置示例 |
-| [design-model-file-config-integration.md](design-model-file-config-integration.md) | 集成方案，说明如何接入 `config_loader.py` 和 `wings_entry.py` |
-| [design-model-file-config-mindie.md](design-model-file-config-mindie.md) | MindIE 专项说明，解释扁平参数到嵌套 `config.json` 的映射 |
-| [design-engine-version-defaults-analysis.md](design-engine-version-defaults-analysis.md) | 背景分析文档，记录版本默认配置方案的评审与演进路径 |
-| [vllm-advanced-start-command.md](vllm-advanced-start-command.md) | vLLM / vLLM-Ascend 高级特性开启后 `start_command.sh` 关键片段验证 |
+| [product-overview.md](product-overview.md) | 产品定位、运行链路、镜像职责、端口和共享卷 |
+| [compatibility.md](compatibility.md) | 芯片、引擎、模型、特性的支持矩阵和状态口径 |
 
-## 本轮评审后的统一结论
+## 部署形态
 
-1. 文件查找不再采用“命中即停”的独占模式，而是采用“低层默认 + 高层覆盖”的分层继承。
-2. 模型配置解析结果需要与 `merged` 参数分离，避免通过私有键做 side-channel 传递。
-3. `env_scripts` 不纳入首版模型配置能力，首版只支持声明式 `env_vars`，脚本型注入继续走现有 `env_overrides` 机制。
-4. 目录名保持精确匹配，模型文件名允许大小写不敏感查找，以兼容当前 `MODEL_NAME` 使用习惯并减少迁移摩擦。
+| 文档 | 说明 |
+|------|------|
+| [deployment/docker-compose.md](deployment/docker-compose.md) | Docker Compose 三容器部署方式 |
+| [deployment/k8s.md](deployment/k8s.md) | K8s initContainer + 同 Pod Sidecar/Engine 部署方式 |
+
+## 特性专题
+
+| 文档 | 说明 |
+|------|------|
+| [features/index.md](features/index.md) | 特性总览、支持边界和推荐阅读顺序 |
+| [features/pd-disaggregation.md](features/pd-disaggregation.md) | Ascend PD 分离能力说明 |
+
+## 示例
+
+| 文档 | 说明 |
+|------|------|
+| [examples/qwen35-27b/README.md](examples/qwen35-27b/README.md) | Qwen3.5-27B Compose / K8s 示例文件 |
+| [examples/glm51-16x64g/README.md](examples/glm51-16x64g/README.md) | GLM-5.1-FP8 16×64GB Compose / K8s 示例文件 |
+| [examples/pd-mooncake-vllm-ascend/README.md](examples/pd-mooncake-vllm-ascend/README.md) | PD + Mooncake 生成脚本示例 |
+
+## 研发参考
+
+设计分析、实现数据流、历史专项部署记录放在 [design/](design/) 和 [reference/](reference/) 下。它们用于研发追溯，不作为新用户的第一阅读入口。
+
+| 目录 | 说明 |
+|------|------|
+| [design/](design/) | 设计方案、配置合并、参数映射、高级特性数据流 |
+| [reference/](reference/) | 历史场景文档、安装记录、测试说明和环境记录 |
+
+重点研发文档：
+
+| 文档 | 说明 |
+|------|------|
+| [design/official-start-command-sync.md](design/official-start-command-sync.md) | 官方启动命令来源、定时同步边界、与本项目启动字段拼接链路的联动规则 |
+
+## 统一写法
+
+1. 示例优先使用 `wings_control/wings_start.sh` 的 CLI 字段。
+2. 只有脚本没有 CLI 字段的运行时变量才保留为环境变量。
+3. 部署文档只描述 Compose 和 K8s 编排。
+4. PD、分布式、LMCache、Sparse KV、Function Call、RAG 等按特性专题描述。
+5. 兼容性必须标明状态：已验证、实验性、理论支持、不支持、待验证。

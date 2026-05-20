@@ -1,0 +1,115 @@
+version: "3.8"
+
+x-images:
+  wings-control: &wings-control-image "wings-control:26.0.0"
+  wings-accel: &wings-accel-image "wings-accel:26.0.0"
+  engine: &engine-image "vllm-ascend:latest"
+
+x-model:
+  model-name: &model-name "GLM-5.1-FP8"
+  model-path: &model-path "/models/GLM-5.1-FP8"
+  model-volume: &model-volume "/data/models/GLM-5.1-FP8:/models/GLM-5.1-FP8:ro"
+
+services:
+  accel-init:
+    image: *wings-accel-image
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /accel-volume
+        cp -r /opt/packages/. /accel-volume/ 2>/dev/null || true
+        echo "[accel-init] accel packages prepared"
+    volumes:
+      - accel-vol:/accel-volume
+
+  wings-control:
+    image: *wings-control-image
+    depends_on:
+      accel-init:
+        condition: service_completed_successfully
+    network_mode: "host"
+    restart: unless-stopped
+    environment:
+      WINGS_DEVICE: ascend
+      WINGS_DEVICE_COUNT: "16"
+      ENGINE_PORT: "17000"
+      HEALTH_PORT: "19000"
+      MONITOR_PROXY_PORT: "19100"
+      ENABLE_REASON_PROXY: "true"
+      # 16x64GB + 764GB 权重建议先按约 19 万在途 token 起步压测。
+      # 如需 32K 上下文，可把 --input-length/--output-length 改为 24576/8192，并把 --max-num-seqs 降到 6。
+    command:
+      - bash
+      - /opt/wings-control/wings_start.sh
+      - --model-name
+      - *model-name
+      - --model-path
+      - *model-path
+      - --engine
+      - vllm_ascend
+      - --chip
+      - 910b-64
+      - --port
+      - "18000"
+      - --input-length
+      - "12288"
+      - --output-length
+      - "4096"
+      - --device-count
+      - "16"
+      - --model-type
+      - llm
+      - --trust-remote-code
+      - --gpu-memory-utilization
+      - "0.95"
+      - --max-num-seqs
+      - "12"
+      - --max-num-batched-tokens
+      - "8192"
+      - --enable-chunked-prefill
+    volumes:
+      - shared-vol:/shared-volume
+      - accel-vol:/accel-volume:ro
+      - *model-volume
+
+  engine:
+    image: *engine-image
+    depends_on:
+      - wings-control
+    network_mode: "host"
+    shm_size: "64g"
+    restart: unless-stopped
+    privileged: true
+    environment:
+      ASCEND_RT_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        timeout=3600
+        elapsed=0
+        echo "[engine] waiting for /shared-volume/start_command.sh"
+        while [ ! -f /shared-volume/start_command.sh ]; do
+          sleep 2
+          elapsed=$$((elapsed + 2))
+          if [ $$elapsed -ge $$timeout ]; then
+            echo "[engine] ERROR: timeout waiting for /shared-volume/start_command.sh"
+            exit 1
+          fi
+        done
+        cat /shared-volume/start_command.sh
+        exec bash /shared-volume/start_command.sh
+    volumes:
+      - shared-vol:/shared-volume
+      - accel-vol:/accel-volume:ro
+      - *model-volume
+      # Ascend 设备、驱动和 CANN 路径需按宿主机实际环境补充，例如：
+      # - /dev/davinci_manager:/dev/davinci_manager
+      # - /dev/hisi_hdc:/dev/hisi_hdc
+      # - /usr/local/Ascend:/usr/local/Ascend:ro
+
+volumes:
+  shared-vol:
+  accel-vol:

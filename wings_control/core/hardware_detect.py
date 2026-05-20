@@ -53,6 +53,127 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
+CHIP_ALIASES = {
+    "910b-32g": "910b-32",
+    "910b_32g": "910b-32",
+    "910b_32": "910b-32",
+    "910b-64g": "910b-64",
+    "910b_64g": "910b-64",
+    "910b_64": "910b-64",
+    "rtx_pro_5000": "rtx-pro-5000",
+    "rtx-pro5000": "rtx-pro-5000",
+    "h20_96": "h20-96",
+    "h20_141": "h20-141",
+}
+
+KNOWN_CHIP_IDS = {
+    "h20-96",
+    "h20-141",
+    "l20",
+    "rtx-pro-5000",
+    "910b-32",
+    "910b-64",
+    "910c",
+}
+
+
+def normalize_chip_id(raw: str) -> tuple[str, list[str]]:
+    """Normalize hardware aliases to canonical chip IDs.
+
+    Returns:
+        tuple[str, list[str]]: canonical chip id and alias chain. Unknown input
+        returns ("", aliases) so callers can keep legacy best-effort behavior.
+    """
+    value = (raw or "").strip().lower().replace(" ", "-")
+    if not value:
+        return "", []
+    canonical = CHIP_ALIASES.get(value, value)
+    if canonical in KNOWN_CHIP_IDS:
+        aliases = [raw]
+        if canonical != raw:
+            aliases.append(canonical)
+        return canonical, aliases
+    return "", [raw]
+
+
+def _memory_gb(raw: Any) -> float:
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _infer_chip_id(device: str, details: list[dict[str, Any]], device_name: str = "") -> tuple[str, list[str]]:
+    """Infer a canonical chip ID from static sidecar hardware hints."""
+    candidates = []
+    if device_name:
+        candidates.append({"name": device_name})
+    candidates.extend([d for d in details if isinstance(d, dict)])
+
+    for detail in candidates:
+        name = str(detail.get("name") or detail.get("model") or "").strip().lower()
+        memory = _memory_gb(
+            detail.get("total_memory")
+            or detail.get("memory_total")
+            or detail.get("hbm_gb")
+        )
+        normalized, aliases = normalize_chip_id(name)
+        if normalized:
+            return normalized, aliases
+        if device == "ascend":
+            if "910c" in name:
+                return "910c", [name]
+            if "910b" in name or "ascend910b" in name:
+                if memory and memory <= 40:
+                    return "910b-32", [name]
+                if memory and memory > 40:
+                    return "910b-64", [name]
+                return "910b-64", [name]
+        elif device == "nvidia":
+            if "h20" in name:
+                if memory and memory >= 120:
+                    return "h20-141", [name]
+                return "h20-96", [name]
+            if "l20" in name:
+                return "l20", [name]
+            if "rtx" in name and "5000" in name:
+                return "rtx-pro-5000", [name]
+    return "", []
+
+
+def _attach_chip_context(
+    data: Dict[str, Any],
+    *,
+    explicit_chip: str = "",
+    source: str = "inferred",
+) -> Dict[str, Any]:
+    """Attach canonical chip fields while preserving legacy keys."""
+    aliases: list[str] = []
+    chip_id = ""
+    chip_source = source
+
+    if explicit_chip:
+        chip_id, aliases = normalize_chip_id(explicit_chip)
+        chip_source = "cli"
+    if not chip_id:
+        file_chip = str(data.get("chip_id") or "")
+        if file_chip:
+            chip_id, aliases = normalize_chip_id(file_chip)
+            chip_source = "hardware_file"
+    if not chip_id:
+        chip_id, aliases = _infer_chip_id(
+            str(data.get("device") or ""),
+            data.get("details") if isinstance(data.get("details"), list) else [],
+            os.getenv("WINGS_DEVICE_NAME", "").strip(),
+        )
+        chip_source = "inferred" if chip_id else "unknown"
+
+    data["chip_id"] = chip_id
+    data["chip_source"] = chip_source
+    data["chip_aliases"] = aliases
+    return data
+
+
 def _normalize_device(raw: str) -> str:
     """将用户输入的设备类型字符串标准化为内部统一格式。
 
@@ -140,13 +261,14 @@ def _load_hardware_from_file(file_path: str) -> Dict[str, Any]:
     return data
 
 
-def detect_hardware() -> Dict[str, Any]:
+def detect_hardware(chip: str = "") -> Dict[str, Any]:
     """探测硬件环境信息。
 
-    按以下优先级获取硬件信息：
-      1. JSON 文件（由 WINGS_HARDWARE_FILE 指定路径，默认 /shared-volume/hardware_info.json）
-      2. 环境变量（WINGS_DEVICE / DEVICE, WINGS_DEVICE_COUNT / DEVICE_COUNT, WINGS_DEVICE_NAME）
-      3. 默认值（nvidia, 1 卡）
+        按以下优先级获取硬件信息：
+            1. 显式 chip 参数 / WINGS_CHIP（仅补充 canonical chip 上下文）
+            2. JSON 文件（由 WINGS_HARDWARE_FILE 指定路径，默认 /shared-volume/hardware_info.json）
+            3. 环境变量（WINGS_DEVICE / DEVICE, WINGS_DEVICE_COUNT / DEVICE_COUNT, WINGS_DEVICE_NAME）
+            4. 默认值（nvidia, 1 卡）
 
     JSON 文件方式可提供每张卡的完整信息（型号、显存、利用率等），
     激活 VRAM 校验和 CUDA Graph 尺寸自动计算等下游功能。
@@ -158,6 +280,8 @@ def detect_hardware() -> Dict[str, Any]:
             - details: 设备详情列表
             - units:   显存单位 (GB)
     """
+    explicit_chip = chip or os.getenv("WINGS_CHIP", "")
+
     # ── 策略 1: 从 JSON 文件加载 ──────────────────────────────────────────
     hw_file = os.getenv(
         "WINGS_HARDWARE_FILE",
@@ -165,10 +289,14 @@ def detect_hardware() -> Dict[str, Any]:
     )
     if os.path.isfile(hw_file):
         try:
-            result = _load_hardware_from_file(hw_file)
+            result = _attach_chip_context(
+                _load_hardware_from_file(hw_file),
+                explicit_chip=explicit_chip,
+                source="hardware_file",
+            )
             logger.info(
-                "Loaded hardware info from file %s: device=%s, count=%d, cards=%d",
-                hw_file, result["device"], result["count"], len(result["details"]),
+                "Loaded hardware info from file %s: device=%s, count=%d, chip=%s, cards=%d",
+                hw_file, result["device"], result["count"], result.get("chip_id") or "unknown", len(result["details"]),
             )
             for i, detail in enumerate(result["details"]):
                 logger.info(
@@ -204,6 +332,7 @@ def detect_hardware() -> Dict[str, Any]:
         "details": details,
         "units": "GB",
     }
+    result = _attach_chip_context(result, explicit_chip=explicit_chip, source="inferred")
     logger.info("Using static hardware context (env vars): %s", result)
     return result
 

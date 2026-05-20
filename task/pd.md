@@ -1,5 +1,7 @@
 # PD 分离 - Mooncake 升级方案
 
+> 状态：历史专项记录。当前正式 PD 部署口径请以 [../docs/features/pd-disaggregation.md](../docs/features/pd-disaggregation.md) 为准；`wings_start.sh` 支持的启动项优先使用 CLI 字段。
+
 ## 当前环境
 
 | 组件 | 版本 |

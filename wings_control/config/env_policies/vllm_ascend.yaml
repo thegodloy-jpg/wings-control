@@ -1,0 +1,563 @@
+engine: vllm_ascend
+env_policies:
+  - name: ASCEND_RT_VISIBLE_DEVICES
+    mode: inherit
+    applies_to_versions: ">=0.18.0"
+    rationale: Device visibility is selected by deployment orchestration and should not be overwritten by default.
+    source_type: wings_decision
+    decision_date: "2026-01-01"
+
+  - name: VLLM_USE_MODELSCOPE
+    mode: idempotent
+    default_value: "False"
+    applies_to_versions: ">=0.18.0"
+    rationale: Keep upstream-compatible default unless user explicitly opts in.
+    source_type: official_doc
+    decision_date: "2026-01-01"
+
+  - name: HCCL_BUFFSIZE
+    mode: force_override
+    default_value: "1024"
+    applies_to_versions: ">=0.18.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    rationale: Ascend HCCL buffer size tuned for current vllm-ascend cookbook. The default base value is owned by set_vllm_ascend_env.sh; runtime deployment-specific overrides use value_template entries below.
+    source_type: vendor_doc
+    evidence_ref: wings_control/config/set_vllm_ascend_env.sh
+    decision_date: "2026-05-14"
+
+  - name: OMP_PROC_BIND
+    mode: idempotent
+    default_value: "false"
+    applies_to_versions: ">=0.18.0"
+    rationale: OpenMP thread binding off by default; Ascend kernels manage their own affinity via CANN.
+    source_type: vendor_doc
+    decision_date: "2026-05-14"
+
+  - name: OMP_NUM_THREADS
+    mode: idempotent
+    default_value: "1"
+    applies_to_versions: ">=0.18.0"
+    rationale: Single-thread OpenMP for base vLLM-Ascend startup; distributed DP/PD overrides are runtime-rendered below.
+    source_type: vendor_doc
+    decision_date: "2026-05-14"
+
+  - name: TASK_QUEUE_ENABLE
+    mode: idempotent
+    default_value: "1"
+    applies_to_versions: ">=0.18.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    rationale: Single-node task-queue mode 1. Distributed task queue behavior is handled by runtime-specific policies when needed.
+    source_type: vendor_doc
+    decision_date: "2026-05-14"
+
+  - name: PYTORCH_NPU_ALLOC_CONF
+    mode: idempotent
+    default_value: "expandable_segments:True"
+    applies_to_versions: ">=0.18.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    rationale: Reduces NPU memory fragmentation in long-running serving workloads.
+    source_type: vendor_doc
+    decision_date: "2026-05-14"
+
+  # ── Runtime-rendered common vLLM-Ascend env ───────────────────────────────
+  - name: HCCL_OP_EXPANSION_MODE
+    mode: force_override
+    value_template: "AIV"
+    applies_when:
+      engine: vllm_ascend
+      vllm_ascend_ray_distributed: false
+    applies_to_versions: ">=0.18.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    rationale: AIV expansion mode is required for non-Ray vLLM-Ascend paths; Ray distributed skips it for compatibility.
+    source_type: vendor_doc
+    evidence_ref: wings_control/engines/vllm_adapter.py
+    decision_date: "2026-05-15"
+
+  - name: USE_KUNLUN_ATB
+    mode: force_override
+    default_value: "1"
+    applies_to_versions: ">=0.18.0"
+    applies_to_hardware: ["910c"]
+    rationale: Required on 910C for Kunlun ATB backend; adapter only emits this on matching hardware.
+    source_type: vendor_doc
+    decision_date: "2026-05-14"
+
+  # ── Runtime-rendered Ray networking ───────────────────────────────────────
+  - name: VLLM_HOST_IP
+    mode: force_override
+    value_template: >-
+      ${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived Ray node IP; HCCL_IF_IP and ray node-ip-address reuse this value.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_WHITELIST_DISABLE
+    mode: force_override
+    value_template: "1"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Current Ray distributed HCCL bootstrap requires whitelist disabled.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_IF_IP
+    mode: force_override
+    value_template: "$VLLM_HOST_IP"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Keep HCCL_IF_IP aligned with Ray node IP.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_SOCKET_IFNAME
+    mode: force_override
+    value_template: >-
+      $(awk '$2=="00000000"{print $1;exit}' /proc/net/route 2>/dev/null || echo eth0)
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived HCCL socket NIC for Ray distributed.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: GLOO_SOCKET_IFNAME
+    mode: force_override
+    value_template: >-
+      $(awk '$2=="00000000"{print $1;exit}' /proc/net/route 2>/dev/null || echo eth0)
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived Gloo NIC for Ray distributed.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: TP_SOCKET_IFNAME
+    mode: force_override
+    value_template: >-
+      $(awk '$2=="00000000"{print $1;exit}' /proc/net/route 2>/dev/null || echo eth0)
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived TP NIC for Ray distributed.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES
+    mode: force_override
+    value_template: "1"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Let deployment/device plugin own ASCEND_RT_VISIBLE_DEVICES instead of Ray.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: ASCEND_PROCESS_LOG_PATH
+    mode: force_override
+    value_template: "/tmp/ray_vllm010"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Current Ray distributed logs are isolated under /tmp/ray_vllm010.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_CONNECT_TIMEOUT
+    mode: force_override
+    value_template: "${hccl_connect_timeout}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+      ray_role: head
+    applies_to_versions: ">=0.18.0"
+    rationale: Ray head waits for slow Ascend HCCL startup.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_EXEC_TIMEOUT
+    mode: force_override
+    value_template: "${hccl_exec_timeout}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+      ray_role: head
+    applies_to_versions: ">=0.18.0"
+    rationale: Ray head waits for slow Ascend first-token execution and graph compilation.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: RAY_CGRAPH_get_timeout
+    mode: force_override
+    value_template: "${ray_cgraph_get_timeout}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: ray
+    applies_to_versions: ">=0.18.0"
+    rationale: Ascend first compile can exceed Ray compile DAG default timeout.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  # ── Runtime-rendered DP deployment networking ─────────────────────────────
+  - name: VLLM_HOST_IP
+    mode: force_override
+    value_template: >-
+      ${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived DP node IP; HCCL_IF_IP reuses this value.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_WHITELIST_DISABLE
+    mode: force_override
+    value_template: "1"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: Current DP deployment HCCL bootstrap requires whitelist disabled.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_IF_IP
+    mode: force_override
+    value_template: "$VLLM_HOST_IP"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: Keep HCCL_IF_IP aligned with vLLM DP node IP.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: GLOO_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived Gloo NIC for DP deployment.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: TP_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived TP NIC for DP deployment.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived HCCL socket NIC for DP deployment.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_CONNECT_TIMEOUT
+    mode: force_override
+    value_template: "${hccl_connect_timeout}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: DP deployment waits for slow Ascend HCCL startup.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_EXEC_TIMEOUT
+    mode: force_override
+    value_template: "${hccl_exec_timeout}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: DP deployment waits for slow Ascend execution and graph compilation.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: OMP_PROC_BIND
+    mode: force_override
+    value_template: "false"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: DP deployment keeps OpenMP thread binding disabled.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: OMP_NUM_THREADS
+    mode: force_override
+    value_template: "${omp_num_threads}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: DP deployment can override base OMP thread count from runtime env.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_BUFFSIZE
+    mode: force_override
+    value_template: "${hccl_buffsize}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: DP deployment can override base HCCL buffer size from runtime env.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: PYTORCH_NPU_ALLOC_CONF
+    mode: force_override
+    value_template: "expandable_segments:True"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: DP deployment keeps expandable NPU segments enabled.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: ASCEND_CUSTOM_OPP_PATH
+    mode: force_override
+    value_template: "/usr/local/Ascend/ascend-toolkit/latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: DeepSeek V3.2 DP deployment requires custom OPP path when present; keeping path is harmless for existing DeepSeek DP snapshots.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: LD_LIBRARY_PATH
+    mode: force_override
+    value_template: "/usr/local/Ascend/ascend-toolkit/latest/opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.18.0"
+    rationale: DeepSeek custom OPP op_api library path for DP deployment.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: VLLM_ENGINE_READY_TIMEOUT_S
+    mode: force_override
+    value_template: "${engine_ready_timeout}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: dp_deployment
+      deepseek_ascend_dp_deployment: true
+    applies_to_versions: ">=0.18.0"
+    rationale: DeepSeek Ascend DP can spend longer in first compile before readiness.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  # ── Runtime-rendered PD disaggregation networking ─────────────────────────
+  - name: HCCL_IF_IP
+    mode: force_override
+    value_template: "${current_ip}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: PD role uses local node IP for HCCL.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: GLOO_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived Gloo NIC for PD disaggregation.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: TP_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived TP NIC for PD disaggregation.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived HCCL socket NIC for PD disaggregation.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: OMP_PROC_BIND
+    mode: force_override
+    value_template: "false"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: PD deployment keeps OpenMP thread binding disabled.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: OMP_NUM_THREADS
+    mode: force_override
+    value_template: "${omp_num_threads}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: PD deployment can override OMP thread count from runtime env.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: VLLM_USE_V1
+    mode: force_override
+    value_template: "1"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: Current vLLM-Ascend PD path uses V1 runtime.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: LCCL_DETERMINISTIC
+    mode: force_override
+    value_template: "1"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: PD deployment keeps deterministic LCCL behavior.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: HCCL_DETERMINISTIC
+    mode: force_override
+    value_template: "true"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: PD deployment keeps deterministic HCCL behavior.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: CLOSE_MATMUL_K_SHIFT
+    mode: force_override
+    value_template: "1"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: Current PD disaggregation path requires this matmul compatibility flag.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: VLLM_LLMDD_RPC_PORT
+    mode: force_override
+    value_template: "${pd_rpc_port}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived LLMDataDist RPC port for PD.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: VLLM_MOONCAKE_BOOTSTRAP_PORT
+    mode: force_override
+    value_template: "${mooncake_bootstrap_port}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: Runtime-derived Mooncake bootstrap port for PD.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: PYTORCH_NPU_ALLOC_CONF
+    mode: force_override
+    value_template: "max_split_size_mb:${npu_max_split_size_mb}"
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: PD path uses max split size tuning to reduce NPU fragmentation.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: LD_LIBRARY_PATH
+    mode: force_override
+    value_template: "\"/usr/local/lib:${LD_LIBRARY_PATH:-}\""
+    applies_when:
+      engine: vllm_ascend
+      deployment_mode: pd
+    applies_to_versions: ">=0.18.0"
+    rationale: Mooncake transfer engine Ascend backend is loaded from /usr/local/lib.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  # ── Topology env tracked for provenance; runtime values are still derived by launcher ──
+  - name: MASTER_ADDR
+    mode: force_override
+    applies_to_versions: ">=0.18.0"
+    rationale: Distributed coordinator address resolved by wings at launch.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: MASTER_PORT
+    mode: force_override
+    applies_to_versions: ">=0.18.0"
+    rationale: Coordinator port allocated by wings.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: RANK
+    mode: force_override
+    applies_to_versions: ">=0.18.0"
+    rationale: Per-process rank computed by wings from topology.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: WORLD_SIZE
+    mode: force_override
+    applies_to_versions: ">=0.18.0"
+    rationale: Total process count computed by wings from topology.
+    source_type: wings_decision
+    decision_date: "2026-05-14"

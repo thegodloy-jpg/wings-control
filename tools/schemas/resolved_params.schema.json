@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wings resolved_params.json",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "required": [
+      "value",
+      "target",
+      "source_layer",
+      "source_ref",
+      "validation_tier",
+      "validation_gap",
+      "evidence_ref"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "value": {},
+      "target": {
+        "type": "string",
+        "pattern": "^(cli|env|additional_config|generated_file)\\."
+      },
+      "source_layer": {
+        "type": "string",
+        "enum": [
+          "user_cli",
+          "config_file",
+          "model_recipe",
+          "arch_recipe",
+          "deviation",
+          "env_policy",
+          "manifest_unwritten",
+          "legacy_model_deploy_config"
+        ]
+      },
+      "source_ref": {
+        "type": ["string", "null"]
+      },
+      "validation_tier": {
+        "type": ["string", "null"],
+        "enum": ["community_official", "vendor_validated", "wings_validated", "experimental", null]
+      },
+      "validation_gap": {
+        "type": ["string", "null"],
+        "enum": [
+          "chip-mismatch",
+          "version-mismatch-minor",
+          "version-mismatch-major",
+          "engine-mismatch",
+          "vendor-mismatch",
+          "unknown-hardware",
+          "partial-overlay-gap",
+          "missing-validation-target",
+          null
+        ]
+      },
+      "evidence_ref": {
+        "type": ["string", "null"]
+      }
+    }
+  }
+}

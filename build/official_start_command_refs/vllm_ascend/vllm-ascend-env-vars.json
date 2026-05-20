@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "engine": "vllm_ascend",
+  "source_id": "vllm-ascend-env-vars",
+  "source_url": "https://docs.vllm.ai/projects/ascend/en/latest/user_guide/configuration/env_vars.html",
+  "fetch": {
+    "from_cache": false,
+    "error": null,
+    "body_bytes": 49697
+  },
+  "parse": {
+    "kind": "env_vars",
+    "item_count": 22,
+    "notes": []
+  },
+  "target_files": [
+    "wings_control/config/manifests/vllm_ascend/<version>.yaml",
+    "wings_control/config/mappings/canonical_to_engines.yaml",
+    "wings_control/config/deviations/vllm_ascend.yaml",
+    "wings_control/config/env_policies/vllm_ascend.yaml",
+    "wings_control/config/recipes/architectures/*.yaml",
+    "wings_control/config/recipes/models/*.yaml",
+    "wings_control/config/set_vllm_ascend_env.sh"
+  ],
+  "summary": {
+    "upstream_only": 22,
+    "local_only": 2,
+    "value_drift": 0
+  },
+  "diff": [
+    {
+      "field": "MAX_JOBS",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "CMAKE_BUILD_TYPE",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "COMPILE_CUSTOM_KERNELS",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "1"
+      }
+    },
+    {
+      "field": "CXX_COMPILER",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "C_COMPILER",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "SOC_VERSION",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "VERBOSE",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "0"
+      }
+    },
+    {
+      "field": "ASCEND_HOME_PATH",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "HCCL_SO_PATH",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "VLLM_VERSION",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "0"
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_ENABLE_FLASHCOMM1",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "0"
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0
+      }
+    },
+    {
+      "field": "MSMONITOR_USE_DAEMON",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "0"
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_ENABLE_MLAPO",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "1"
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_ENABLE_NZ",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_ENABLE_CONTEXT_PARALLEL",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "0"
+      }
+    },
+    {
+      "field": "DYNAMIC_EPLB",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "false"
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_ENABLE_FUSED_MC2",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "0"
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_BALANCE_SCHEDULING",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "0"
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_FUSION_OP_TRANSPOSE_KV_CACHE_BY_BLOCK",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "1"
+      }
+    },
+    {
+      "field": "VLLM_ASCEND_ENABLE_BATCH_MEMCPY",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "ASCEND_RT_VISIBLE_DEVICES",
+      "status": "local_only",
+      "local": {
+        "type": "str",
+        "upstream_default": null
+      }
+    },
+    {
+      "field": "VLLM_USE_MODELSCOPE",
+      "status": "local_only",
+      "local": {
+        "type": "str",
+        "upstream_default": "False"
+      }
+    }
+  ]
+}

@@ -33,7 +33,7 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         return json.loads("\n".join(lines[start_idx:end_idx]))
 
     def _merge_mindie_config(self, overrides):
-        template_path = ROOT / "wings_control" / "config" / "defaults" / "mindie_service_config.json"
+        template_path = ROOT / "wings_control" / "config" / "templates" / "mindie_service_config.json"
         config = json.loads(template_path.read_text(encoding="utf-8"))
         for meta_key in ("_comment", "_usage"):
             config.pop(meta_key, None)
@@ -98,7 +98,7 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
 
     def test_service_template_optional_defaults_match_reference(self):
         template = json.loads(
-            (ROOT / "wings_control" / "config" / "defaults" / "mindie_service_config.json")
+            (ROOT / "wings_control" / "config" / "templates" / "mindie_service_config.json")
             .read_text(encoding="utf-8")
         )
 
@@ -155,8 +155,11 @@ class TestMindieDistributedEnvDefaults(unittest.TestCase):
         self.assertNotIn("NPU_MEMORY_FRACTION", rendered)
 
     def test_mindie_engine_defaults_do_not_override_npu_memory_fraction(self):
+        # Phase D: mindie engine defaults live in config/engine_defaults/mindie.yaml
+        # (loaded by engine_defaults_loader); npu_memory_fraction must NOT be set
+        # there so per-deployment overrides remain authoritative.
         defaults = json.loads(
-            (ROOT / "wings_control" / "config" / "defaults" / "mindie_default.json")
+            (ROOT / "wings_control" / "config" / "engine_defaults" / "mindie.yaml")
             .read_text(encoding="utf-8")
         )
 

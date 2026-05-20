@@ -1,0 +1,46 @@
+engine: mindie
+env_policies:
+  - name: NPU_MEMORY_FRACTION
+    mode: force_override
+    default_value: "0.96"
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    rationale: >
+      MindIE single-node runs use 96% of NPU HBM by default to maximize KV
+      cache headroom. Force_override because operator-set values typically
+      reflect old single-engine deployments and underutilize the device.
+      Operators wanting a different fraction must override per-deployment.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/set_mindie_env.sh
+    decision_date: "2026-05-14"
+
+  - name: GRPC_POLL_STRATEGY
+    mode: force_override
+    default_value: "poll"
+    applies_to_versions: ">=2.3.0"
+    rationale: >
+      MindIE service uses gRPC for control plane; the "poll" strategy avoids
+      epoll wakeup storms observed in containerized deployments on Ascend.
+    source_type: vendor_doc
+    evidence_ref: wings_control/engines/mindie_adapter.py
+    decision_date: "2026-05-14"
+
+  - name: MINDIE_LOG_TO_STDOUT
+    mode: force_override
+    default_value: "1"
+    applies_to_versions: ">=2.3.0"
+    rationale: >
+      Kubernetes/sidecar deployments require log capture via stdout rather
+      than file-based logging; MindIE defaults to file logging which is
+      invisible to the container runtime.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: ASCEND_RT_VISIBLE_DEVICES
+    mode: inherit
+    applies_to_versions: ">=2.3.0"
+    rationale: >
+      Device visibility is selected by deployment orchestration and must
+      not be overwritten by wings (FR-005 inherit semantics).
+    source_type: wings_decision
+    decision_date: "2026-05-14"

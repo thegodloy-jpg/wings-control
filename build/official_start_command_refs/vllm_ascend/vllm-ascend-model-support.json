@@ -1,0 +1,468 @@
+{
+  "schema_version": 1,
+  "engine": "vllm_ascend",
+  "source_id": "vllm-ascend-model-support",
+  "source_url": "https://docs.vllm.ai/projects/ascend/en/latest/user_guide/support_matrix/supported_models.html",
+  "fetch": {
+    "from_cache": false,
+    "error": null,
+    "body_bytes": 58536
+  },
+  "parse": {
+    "kind": "supported_models",
+    "item_count": 66,
+    "notes": []
+  },
+  "target_files": [
+    "wings_control/config/manifests/vllm_ascend/<version>.yaml",
+    "wings_control/config/mappings/canonical_to_engines.yaml",
+    "wings_control/config/deviations/vllm_ascend.yaml",
+    "wings_control/config/env_policies/vllm_ascend.yaml",
+    "wings_control/config/recipes/architectures/*.yaml",
+    "wings_control/config/recipes/models/*.yaml",
+    "wings_control/config/set_vllm_ascend_env.sh"
+  ],
+  "summary": {
+    "upstream_only": 59,
+    "local_only": 50,
+    "value_drift": 0
+  },
+  "diff": [
+    {
+      "field": "Aria",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Baichuan",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Baichuan2",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Bert",
+      "status": "upstream_only"
+    },
+    {
+      "field": "DeepSeek Distill (Qwen/Llama)",
+      "status": "upstream_only"
+    },
+    {
+      "field": "DeepseekOCR2",
+      "status": "upstream_only"
+    },
+    {
+      "field": "DeepSeek V2.5",
+      "status": "upstream_only"
+    },
+    {
+      "field": "DeepSeek V3/3.1",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Ernie4.5",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Ernie4.5-Moe",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Florence-2",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Gemma-2",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Gemma3",
+      "status": "upstream_only"
+    },
+    {
+      "field": "GLM-4V",
+      "status": "upstream_only"
+    },
+    {
+      "field": "GLM-4.x",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Internlm",
+      "status": "upstream_only"
+    },
+    {
+      "field": "InternVL2.0/2.5/3.0InternVideo2.5/Mono-InternVL",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Keye-VL-8B-Preview",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Kimi-K2-Thinking",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Llama2/3/3.1/3.2",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Llama3.2",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Llama4",
+      "status": "upstream_only"
+    },
+    {
+      "field": "LLaVA-Next",
+      "status": "upstream_only"
+    },
+    {
+      "field": "LLaVA-Next-Video",
+      "status": "upstream_only"
+    },
+    {
+      "field": "MiniCPM",
+      "status": "upstream_only"
+    },
+    {
+      "field": "MiniCPM3",
+      "status": "upstream_only"
+    },
+    {
+      "field": "MiniCPM-V",
+      "status": "upstream_only"
+    },
+    {
+      "field": "MiniMax-Text",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Mistral3",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Mistral/Mistral-Instruct",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Mllama",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Molmo",
+      "status": "upstream_only"
+    },
+    {
+      "field": "PaddleOCR-VL",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Phi-3/4",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Phi-3-Vision/Phi-3.5-Vision",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Phi-4-mini",
+      "status": "upstream_only"
+    },
+    {
+      "field": "QVQ",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen2",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen2.5",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen2-Audio",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen2-based",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen2-VL",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3.5-397B-A17B",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-based",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-Coder",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-Embedding",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-Moe",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-Next",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-Omni",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-Omni-30B-A3B-Thinking",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-Reranker",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-VL",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-VL-Embedding",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-VL-MOE",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Qwen3-VL-Reranker",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Ultravox",
+      "status": "upstream_only"
+    },
+    {
+      "field": "Whisper",
+      "status": "upstream_only"
+    },
+    {
+      "field": "XLM-RoBERTa-based",
+      "status": "upstream_only"
+    },
+    {
+      "field": "bge-large-zh-v1.5",
+      "status": "local_only"
+    },
+    {
+      "field": "bge-m3",
+      "status": "local_only"
+    },
+    {
+      "field": "bge-reranker-large",
+      "status": "local_only"
+    },
+    {
+      "field": "bge-reranker-v2-m3",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-Coder-V2-Instruct",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-Coder-V2-Instruct-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-0528",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-0528-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-Distill-Llama-70B",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-Distill-Llama-8B",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-Distill-Qwen-14B",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-Distill-Qwen-1.5B",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-Distill-Qwen-32B",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-Distill-Qwen-7B",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-R1-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V3",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V3-0324",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V3-0324-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V3.1",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V3.1-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V3.2-0715",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V3.2-Exp",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V3-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V4",
+      "status": "local_only"
+    },
+    {
+      "field": "DeepSeek-V4-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "GLM-4.7",
+      "status": "local_only"
+    },
+    {
+      "field": "GLM-4.7-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "GLM-4-9B-0414",
+      "status": "local_only"
+    },
+    {
+      "field": "GLM-5.1",
+      "status": "local_only"
+    },
+    {
+      "field": "GLM-5.1-FP8",
+      "status": "local_only"
+    },
+    {
+      "field": "GLM-5-FP8",
+      "status": "local_only"
+    },
+    {
+      "field": "GLM-5-w4a8",
+      "status": "local_only"
+    },
+    {
+      "field": "Kimi-K2.5",
+      "status": "local_only"
+    },
+    {
+      "field": "Kimi-K2.5-w4a8",
+      "status": "local_only"
+    },
+    {
+      "field": "LLaMA3.1-70B",
+      "status": "local_only"
+    },
+    {
+      "field": "LLaMA3.1-70B-Instruct",
+      "status": "local_only"
+    },
+    {
+      "field": "LLaMA3-8B",
+      "status": "local_only"
+    },
+    {
+      "field": "Meta-Llama-3.1-70B-Instruct",
+      "status": "local_only"
+    },
+    {
+      "field": "MiniMax-M2.5-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "MiniMax-M2.7",
+      "status": "local_only"
+    },
+    {
+      "field": "MiniMax-M2.7-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen2.5-32B-Instruct",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen3-235B-A22B",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen3-30B-A3B",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen3-32B",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen3.5-27B-Instruct",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen3.5-397-A17B",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen3.5-397-A17B-w8a8",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen3-Embedding-0.6B",
+      "status": "local_only"
+    },
+    {
+      "field": "Qwen3-Next-80B-A3B-Instruct",
+      "status": "local_only"
+    }
+  ]
+}

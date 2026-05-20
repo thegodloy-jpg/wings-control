@@ -1,0 +1,31 @@
+{
+  "engine": "vllm_ascend",
+  "deviations": [
+    {
+      "field": "max_model_len",
+      "target": "cli",
+      "wings_value": 4096,
+      "upstream_default": null,
+      "applies_to_versions": ">=0.18.0",
+      "applies_to_hardware": ["910b-32", "910b-64", "910c"],
+      "rationale": "Ascend HBM is smaller than H20; unconstricted context length causes OOM on first request. 4096 is the minimum safe default across all supported Ascend SKUs; operators requiring longer context must explicit override.",
+      "source_type": "wings_validation_run",
+      "evidence_ref": "tests/smoke/migration-bootstrap-2026-05-14.log",
+      "decision_date": "2026-05-14",
+      "decided_by": "platform-team@wings"
+    },
+    {
+      "field": "gpu_memory_utilization",
+      "target": "cli",
+      "wings_value": 0.92,
+      "upstream_default": 0.9,
+      "applies_to_versions": ">=0.18.0",
+      "applies_to_hardware": ["910b-32", "910b-64", "910c"],
+      "rationale": "Ascend NPU memory allocator has lower fragmentation overhead than CUDA; 0.92 recovers about 2 percent capacity without OOM risk on validated SKUs.",
+      "source_type": "wings_validation_run",
+      "evidence_ref": "plan/FINAL-design-spec-v3.6.1.md#phase-d",
+      "decision_date": "2026-01-01",
+      "decided_by": "wings-control"
+    }
+  ]
+}

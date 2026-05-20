@@ -112,8 +112,8 @@ echo "[wings-env] export PYTHONPATH=${PYTHONPATH:-}"
 echo "[wings] Injected faulthandler.enable() OOM patch for SGLang"
 # --- end faulthandler patch ---
 ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --context-length 8192 --tp-size 4'
-python3 -m sglang.launch_server --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --context-length 8192 --tp-size 4 &
+echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --context-length 8192 --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.8 --max-running-requests 256 --chunked-prefill-size 4096 --random-seed 42 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --tp-size 4'
+python3 -m sglang.launch_server --context-length 8192 --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.8 --max-running-requests 256 --chunked-prefill-size 4096 --random-seed 42 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --tp-size 4 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -150,8 +150,8 @@ else
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-    echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --context-length 8192 --tp-size 4'
-    python3 -m sglang.launch_server --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --context-length 8192 --tp-size 4 &
+    echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --context-length 8192 --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.8 --max-running-requests 256 --chunked-prefill-size 4096 --random-seed 42 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --tp-size 4'
+    python3 -m sglang.launch_server --context-length 8192 --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.8 --max-running-requests 256 --chunked-prefill-size 4096 --random-seed 42 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --tp-size 4 &
     ENGINE_PID=$!
     echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

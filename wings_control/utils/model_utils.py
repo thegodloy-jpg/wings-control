@@ -32,14 +32,44 @@ from typing import Any, Optional
 
 from utils.file_utils import load_json_config
 
+try:
+    from wings_control.core.phase_d_loader import load_structured_file
+except ImportError:
+    from core.phase_d_loader import load_structured_file  # noqa: F811
+
 logger = logging.getLogger(__name__)
 
-# IndexCache 支持的模型架构列表
-# 当 KV 稀疏开启时，这些架构使用 IndexCache 策略；其他架构使用 FP8 KV CACHE
-INDEXCACHE_ARCHS: frozenset[str] = frozenset({
-    "GlmMoeDsaForCausalLM",
-    "DeepseekV32ForCausalLM",
-})
+_MODELS_INVENTORY_PATH = (
+    Path(__file__).resolve().parents[1] / "config" / "models_inventory.yaml"
+)
+
+
+def _load_models_inventory(path: Path = _MODELS_INVENTORY_PATH) -> tuple[
+    dict[str, list[str]], dict[str, list[str]], dict[str, list[str]], frozenset[str]
+]:
+    """Load model SKU tables and IndexCache architectures from the yaml carrier."""
+    data = load_structured_file(path)
+    entries = data.get("inventory", []) or []
+    llm: dict[str, list[str]] = {}
+    embedding: dict[str, list[str]] = {}
+    rerank: dict[str, list[str]] = {}
+    indexcache: set[str] = set()
+    buckets = {"llm": llm, "embedding": embedding, "rerank": rerank}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        arch = entry.get("architecture")
+        kind = entry.get("type")
+        models = list(entry.get("models") or [])
+        if not arch or kind not in buckets:
+            continue
+        buckets[kind][arch] = models
+        if kind == "llm" and entry.get("indexcache"):
+            indexcache.add(arch)
+    return llm, embedding, rerank, frozenset(indexcache)
+
+
+_LLM_MODELS, _EMBEDDING_MODELS, _RERANK_MODELS, INDEXCACHE_ARCHS = _load_models_inventory()
 
 _GLM51_NAME_MARKERS = (
     "glm-5.1",
@@ -97,109 +127,6 @@ def is_glm_moe_dsa_glm51(model_info: Any, model_name: Any = None,
         model_path if model_path is not None else getattr(model_info, "model_path", None),
         getattr(model_info, "config", None),
     )
-
-#
-_LLM_MODELS = {
-    "DeepseekV3ForCausalLM": [
-        "DeepSeek-R1",
-        "DeepSeek-R1-0528",
-        "DeepSeek-V3",
-        "DeepSeek-V3-0324",
-        "DeepSeek-V3.1",
-        "DeepSeek-V4",
-        "DeepSeek-Coder-V2-Instruct",
-        "DeepSeek-R1-w8a8",
-        "DeepSeek-R1-0528-w8a8",
-        "DeepSeek-V3-w8a8",
-        "DeepSeek-V3-0324-w8a8",
-        "DeepSeek-V3.1-w8a8",
-        "DeepSeek-V4-w8a8",
-        "DeepSeek-Coder-V2-Instruct-w8a8"
-        ],
-    "KimiK25ForConditionalGeneration": [
-        "Kimi-K2.5",
-        "Kimi-K2.5-w4a8",
-        ],
-    "DeepseekV32ForCausalLM": [
-        "DeepSeek-V3.2",
-        "DeepSeek-V3.2-Exp",
-        "DeepSeek-V3.2-0715"
-        ],
-    "Glm4ForCausalLM": [
-        "GLM-4-9B-0414"
-        ],
-    "GlmMoeDsaForCausalLM": [
-        "GLM-5",
-        "GLM-5-FP8",
-        "GLM-5-w4a8",
-        "GLM-5.1",
-        "GLM-5.1-FP8"
-        ],
-    "Glm4MoeForCausalLM": [
-        "GLM-4.7",
-        "GLM-4.7-w8a8"
-        ],
-    "Qwen2ForCausalLM": [
-        "DeepSeek-R1-Distill-Qwen-1.5B",
-        "DeepSeek-R1-Distill-Qwen-7B",
-        "DeepSeek-R1-Distill-Qwen-14B",
-        "DeepSeek-R1-Distill-Qwen-32B",
-        "Qwen2.5-32B-Instruct",
-        "QwQ-32B"
-        ],
-    "Qwen3ForCausalLM": [
-        "Qwen3-32B"
-        ],
-    "Qwen3MoeForCausalLM": [
-        "Qwen3-30B-A3B",
-        "Qwen3-235B-A22B"
-        ],
-    "Qwen3NextForCausalLM": [
-        "Qwen3-Next-80B-A3B-Instruct"
-        ],
-    "Qwen3_5ForConditionalGeneration": [
-        "Qwen3.5-27B",
-        "Qwen3.5-27B-Instruct"
-        ],
-    "Qwen3_5MoeForConditionalGeneration": [
-        "Qwen3.5-397-A17B",
-        "Qwen3.5-397-A17B-w8a8"
-        ],
-    "MiniMaxM2ForCausalLM": [
-        "MiniMax-M2.5",
-        "MiniMax-M2.5-w8a8",
-        "MiniMax-M2.7",
-        "MiniMax-M2.7-w8a8"
-        ],
-    "LlamaForCausalLM": [
-        "LLaMA3-8B",
-        "LLaMA3.1-70B",
-        "LLaMA3.1-70B-Instruct",
-        "Meta-Llama-3.1-70B-Instruct",
-        "DeepSeek-R1-Distill-Llama-8B",
-        "DeepSeek-R1-Distill-Llama-70B"
-        ]
-}
-
-_EMBEDDING_MODELS = {
-    "XLMRobertaModel": [
-        "bge-m3"
-        ],
-    "BertModel": [
-        "bge-large-zh-v1.5"
-        ],
-    "Qwen3ForCausalLM": [
-        'Qwen3-Embedding-0.6B'
-        ]
-}
-
-_RERANK_MODELS = {
-    "XLMRobertaForSequenceClassification": [
-        "bge-reranker-v2-m3",
-        "bge-reranker-large"
-        ]
-}
-
 
 class ModelIdentifier:
     """模型元信息识别器，从模型目录的 config.json 提取架构、类型、量化信息。

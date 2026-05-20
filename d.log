@@ -1,0 +1,527 @@
+[root@master234 ~]# kubectl logs -f -n namespace-0 -c engine  serving-rn-snne293-ksy1rtlz-758f44954d-wgk48
+[log_analyzer] 配置信息: {"engine": "vllm_ascend", "deployment_mode": "distributed", "hardware": "ascend", "nnodes": 2, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 2, "model_name": "Qwen3-32B", "model_path": "/usr/local/serving/models/", "backend_port": 17000}
+[log_analyzer] 分析器PID: 69
+<frozen runpy>:128: RuntimeWarning: 'log_analyzer.log_analyzer' found in sys.modules after import of package 'log_analyzer', but prior to execution of 'log_analyzer.log_analyzer'; this may result in unpredictable behaviour
+[2026-04-24 07:39:52] [__main__] [INFO] Loading plugin: VLLMAscendDistributedPlugin
+[2026-04-24 07:39:52] [__main__] [INFO] [Progress] 5% - wings_control_init - running
+[2026-04-24 07:39:52] [__main__] [INFO] Starting log file monitoring: /var/log/wings/engine.log
+[2026-04-24 07:39:52] [__main__] [INFO] Log file created, starting analysis
+[triton-patch] Patched /usr/local/python3.11.14/lib/python3.11/site-packages/triton/runtime/driver.py for Ascend NPU
+[modelslim-patch] Patched modelslim_config.py: dict[] -> dict.get() for QuaRot compatibility
+INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2
+[wings-env] export HCCL_BUFFSIZE=1024
+[wings-env] export HCCL_OP_EXPANSION_MODE=AIV
+[wings-env] export HCCL_BUFFSIZE=512
+[wings-env] export HCCL_WHITELIST_DISABLE=1
+[wings-env] export HCCL_IF_IP=10.254.124.133
+[wings-env] export HCCL_SOCKET_IFNAME=eth0
+[wings-env] export TP_SOCKET_IFNAME=eth0
+[wings-env] export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1
+[wings-env] export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010
+[wings-env] export HCCL_CONNECT_TIMEOUT=1800
+[wings-env] export HCCL_EXEC_TIMEOUT=7200
+[wings-env] export GLOO_SOCKET_IFNAME=eth0
+[wings-env] export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1
+[wings-env] export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010
+[ray] head start command: ray start --head --port=28020 --node-ip-address=10.254.124.133 --resources='{NPU: 2}' --dashboard-host=10.254.124.133
+[wings-cmd] >>> ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --resources='{"NPU": 2}' --dashboard-host=$VLLM_HOST_IP
+2026-04-24 07:40:04,741 INFO usage_lib.py:467 -- Usage stats collection is enabled by default without user confirmation because this terminal is detected to be non-interactive. To disable this, add `--disable-usage-stats` to the command that starts the cluster, or run the following command: `ray disable-usage-stats` before starting the cluster. See https://docs.ray.io/en/master/cluster/usage-stats.html for more details.
+2026-04-24 07:40:04,742 INFO scripts.py:913 -- Local node IP: 10.254.124.133
+2026-04-24 07:40:06,885 SUCC scripts.py:949 -- --------------------
+2026-04-24 07:40:06,885 SUCC scripts.py:950 -- Ray runtime started.
+2026-04-24 07:40:06,885 SUCC scripts.py:951 -- --------------------
+2026-04-24 07:40:06,885 INFO scripts.py:953 -- Next steps
+2026-04-24 07:40:06,886 INFO scripts.py:956 -- To add another node to this Ray cluster, run
+2026-04-24 07:40:06,886 INFO scripts.py:959 --   ray start --address='10.254.124.133:28020'
+2026-04-24 07:40:06,886 INFO scripts.py:968 -- To connect to this Ray cluster:
+2026-04-24 07:40:06,886 INFO scripts.py:970 -- import ray
+2026-04-24 07:40:06,886 INFO scripts.py:971 -- ray.init(_node_ip_address='10.254.124.133')
+2026-04-24 07:40:06,886 INFO scripts.py:1002 -- To terminate the Ray runtime, run
+2026-04-24 07:40:06,886 INFO scripts.py:1003 --   ray stop
+2026-04-24 07:40:06,886 INFO scripts.py:1006 -- To view the status of the cluster, use
+2026-04-24 07:40:06,886 INFO scripts.py:1007 --   ray status
+[ray-wait] iter=1 count=1 expected=2, sleep 5s...
+[ray-wait] OK: 2 ray nodes joined.
+[wings-cmd] >>> python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.124.133 --port 17000 --served-model-name Qwen3-32B --model /usr/local/serving/models/ --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.8 --enable-chunked-prefill --max-num-batched-tokens 4096 --block-size 128 --max-num-seqs 256 --seed 42 --enable-prefix-caching --tensor-parallel-size 4 --distributed-executor-backend ray
+[Engine] Engine PID: 3051
+[Engine] Engine process monitor started, PID=3051
+INFO 04-24 07:40:19 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 04-24 07:40:19 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 04-24 07:40:19 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 04-24 07:40:19 [__init__.py:239] Platform plugin ascend is activated
+INFO 04-24 07:40:24 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader`
+INFO 04-24 07:40:24 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork`
+(APIServer pid=3051) INFO 04-24 07:40:26 [utils.py:297]
+(APIServer pid=3051) INFO 04-24 07:40:26 [utils.py:297]        █     █     █▄   ▄█
+(APIServer pid=3051) INFO 04-24 07:40:26 [utils.py:297]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.18.0
+(APIServer pid=3051) INFO 04-24 07:40:26 [utils.py:297]   █▄█▀ █     █     █     █  model   /usr/local/serving/models/
+(APIServer pid=3051) INFO 04-24 07:40:26 [utils.py:297]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=3051) INFO 04-24 07:40:26 [utils.py:297]
+(APIServer pid=3051) INFO 04-24 07:40:26 [utils.py:233] non-default args: {'host': '10.254.124.133', 'port': 17000, 'model': '/usr/local/serving/models/', 'trust_remote_code': True, 'seed': 42, 'max_model_len': 4096, 'served_model_name': ['Qwen3-32B'], 'distributed_executor_backend': 'ray', 'tensor_parallel_size': 4, 'block_size': 128, 'gpu_memory_utilization': 0.8, 'enable_prefix_caching': True, 'max_num_batched_tokens': 4096, 'max_num_seqs': 256, 'enable_chunked_prefill': True}
+[2026-04-24 07:40:26] [__main__] [INFO] [Progress] 37% - engine初始化 - running
+(APIServer pid=3051) INFO 04-24 07:40:36 [model.py:533] Resolved architecture: Qwen3ForCausalLM
+(APIServer pid=3051) INFO 04-24 07:40:36 [model.py:1582] Using max model len 4096
+[2026-04-24 07:40:36] [__main__] [INFO] [Progress] 40% - engine初始化 - running
+(APIServer pid=3051) INFO 04-24 07:40:36 [scheduler.py:231] Chunked prefill is enabled with max_num_batched_tokens=4096.
+(APIServer pid=3051) WARNING 04-24 07:40:36 [vllm.py:743] Async scheduling will be disabled because it is not supported with the `ray` distributed executor backend (only `mp`, `uni`, and `external_launcher` are supported).
+(APIServer pid=3051) INFO 04-24 07:40:36 [vllm.py:754] Asynchronous scheduling is disabled.
+(APIServer pid=3051) WARNING 04-24 07:40:36 [platform.py:749] Parameter '--disable-cascade-attn' is a GPU-specific feature. Resetting to False for Ascend.
+(APIServer pid=3051) WARNING 04-24 07:40:36 [platform.py:838] Ignored parameter 'disable_flashinfer_prefill'. This is a GPU-specific feature not supported on Ascend. Resetting to False.
+(APIServer pid=3051) INFO 04-24 07:40:36 [ascend_config.py:425] Dynamic EPLB is False
+(APIServer pid=3051) INFO 04-24 07:40:36 [ascend_config.py:426] The number of redundant experts is 0
+(APIServer pid=3051) INFO 04-24 07:40:36 [platform.py:354] PIECEWISE compilation enabled on NPU. use_inductor not supported - using only ACL Graph mode
+(APIServer pid=3051) INFO 04-24 07:40:36 [utils.py:526] Calculated maximum supported batch sizes for ACL graph: 12
+(APIServer pid=3051) INFO 04-24 07:40:36 [utils.py:570] Adjusted ACL graph batch sizes for Qwen3ForCausalLM model (layers: 64): 35 → 12 sizes
+(APIServer pid=3051) INFO 04-24 07:40:36 [platform.py:502] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+(APIServer pid=3051) INFO 04-24 07:40:36 [compilation.py:289] Enabled custom fusions: norm_quant, act_quant
+INFO 04-24 07:40:41 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 04-24 07:40:41 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 04-24 07:40:41 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 04-24 07:40:41 [__init__.py:239] Platform plugin ascend is activated
+(EngineCore pid=3100) INFO 04-24 07:40:46 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader`
+(EngineCore pid=3100) INFO 04-24 07:40:46 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork`
+(EngineCore pid=3100) INFO 04-24 07:40:46 [core.py:103] Initializing a V1 LLM engine (v0.18.0) with config: model='/usr/local/serving/models/', speculative_config=None, tokenizer='/usr/local/serving/models/', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=4, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=True, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=npu, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=42, served_model_name=Qwen3-32B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'vllm_ascend.compilation.compiler_interface.AscendCompiler', 'custom_ops': ['all'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update', 'vllm::mla_forward'], 'compile_mm_encoder': False, 'compile_sizes': [], 'compile_ranges_endpoints': [4096], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.PIECEWISE: 1>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 8, 32, 56, 80, 104, 136, 160, 184, 208, 232, 256], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 256, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=3100) 2026-04-24 07:40:46,195   INFO worker.py:1747 -- Connecting to existing Ray cluster at address: 10.254.124.133:28020...
+(EngineCore pid=3100) 2026-04-24 07:40:46,223   INFO worker.py:1927 -- Connected to Ray cluster.
+[2026-04-24 07:40:46] [__main__] [INFO] [Progress] 43% - engine初始化 - running
+(EngineCore pid=3100) INFO 04-24 07:40:46 [ray_utils.py:441] No current placement group found. Creating a new placement group.
+(EngineCore pid=3100) WARNING 04-24 07:40:46 [ray_utils.py:252] tensor_parallel_size=4 is bigger than a reserved number of NPUs (2 NPUs) in a node 2aec22baf1caba6c0a1cbfd05fc9b8ed00c4f4e9ab295b0d1256fa6d. Tensor parallel workers can be spread out to 2+ nodes which can degrade the performance unless you have fast interconnect across nodes, like Infiniband. To resolve this issue, make sure you have more than 4 GPUs available at each node.
+(EngineCore pid=3100) WARNING 04-24 07:40:46 [ray_utils.py:252] tensor_parallel_size=4 is bigger than a reserved number of NPUs (2 NPUs) in a node 5c363d7409bb088a895cf1d736a3b7d4c30797d33764a394672f3a1c. Tensor parallel workers can be spread out to 2+ nodes which can degrade the performance unless you have fast interconnect across nodes, like Infiniband. To resolve this issue, make sure you have more than 4 GPUs available at each node.
+(EngineCore pid=3100) (pid=1210) INFO 04-24 07:40:51 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+(EngineCore pid=3100) (pid=1210) INFO 04-24 07:40:51 [__init__.py:46] - ascend -> vllm_ascend:register
+(EngineCore pid=3100) (pid=1210) INFO 04-24 07:40:51 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+(EngineCore pid=3100) (pid=1210) INFO 04-24 07:40:51 [__init__.py:239] Platform plugin ascend is activated
+(EngineCore pid=3100) INFO 04-24 07:40:54 [ray_env.py:100] Env var prefixes to copy: ['HF_', 'HUGGING_FACE_', 'LMCACHE_', 'NCCL_', 'UCX_', 'VLLM_']
+(EngineCore pid=3100) INFO 04-24 07:40:54 [ray_env.py:101] Copying the following environment variables to workers: ['LD_LIBRARY_PATH', 'VLLM_DISABLE_SHARED_EXPERTS_STREAM', 'VLLM_WORKER_MULTIPROC_METHOD']
+(EngineCore pid=3100) INFO 04-24 07:40:54 [ray_env.py:111] To exclude env vars from copying, add them to /root/.config/vllm/ray_non_carry_over_env_vars.json
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) WARNING 04-24 07:40:54 [system_utils.py:38] Overwriting environment variable LD_LIBRARY_PATH from '/usr/local/python3.11.14/lib/python3.11/site-packages/cv2/../../lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/cann-8.5.1/lib64:/usr/local/Ascend/cann-8.5.1/lib64/plugin/opskernel:/usr/local/Ascend/cann-8.5.1/lib64/plugin/nnengine:/usr/local/Ascend/cann-8.5.1/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/cann-8.5.1/tools/aml/lib64:/usr/local/Ascend/cann-8.5.1/tools/aml/lib64/plugin:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common/:/usr/local/Ascend/driver/lib64/driver/:/usr/local/python3.11.14/lib:' to '/usr/local/python3.11.14/lib/python3.11/site-packages/cv2/../../lib64:/usr/local/python3.11.14/lib/python3.11/site-packages/cv2/../../lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/cann-8.5.1/lib64:/usr/local/Ascend/cann-8.5.1/lib64/plugin/opskernel:/usr/local/Ascend/cann-8.5.1/lib64/plugin/nnengine:/usr/local/Ascend/cann-8.5.1/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/cann-8.5.1/tools/aml/lib64:/usr/local/Ascend/cann-8.5.1/tools/aml/lib64/plugin:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common/:/usr/local/Ascend/driver/lib64/driver/:/usr/local/python3.11.14/lib:'
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:40:55 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader`
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:40:55 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork`
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) WARNING 04-24 07:40:58 [worker_base.py:287] Missing `shared_worker_lock` argument from executor. This argument is needed for mm_processor_cache_type='shm'.
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:40:58 [ascend_config.py:425] Dynamic EPLB is False
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:40:58 [ascend_config.py:426] The number of redundant experts is 0
+(EngineCore pid=3100) (pid=467, ip=10.254.13.115) INFO 04-24 07:39:42 [__init__.py:44] Available plugins for group vllm.platform_plugins: [repeated 3x across cluster] (Ray deduplicates logs by default. Set RAY_DEDUP_LOGS=0 to disable log deduplication, or see https://docs.ray.io/en/master/ray-observability/user-guides/configure-logging.html#log-deduplication for more options.)
+(EngineCore pid=3100) (pid=467, ip=10.254.13.115) INFO 04-24 07:39:42 [__init__.py:46] - ascend -> vllm_ascend:register [repeated 3x across cluster]
+(EngineCore pid=3100) (pid=467, ip=10.254.13.115) INFO 04-24 07:39:42 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load. [repeated 3x across cluster]
+(EngineCore pid=3100) (pid=467, ip=10.254.13.115) INFO 04-24 07:39:42 [__init__.py:239] Platform plugin ascend is activated [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) WARNING 04-24 07:39:45 [system_utils.py:38] Overwriting environment variable LD_LIBRARY_PATH from '/usr/local/python3.11.14/lib/python3.11/site-packages/cv2/../../lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/cann-8.5.1/lib64:/usr/local/Ascend/cann-8.5.1/lib64/plugin/opskernel:/usr/local/Ascend/cann-8.5.1/lib64/plugin/nnengine:/usr/local/Ascend/cann-8.5.1/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/cann-8.5.1/tools/aml/lib64:/usr/local/Ascend/cann-8.5.1/tools/aml/lib64/plugin:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common/:/usr/local/Ascend/driver/lib64/driver/:/usr/local/python3.11.14/lib:' to '/usr/local/python3.11.14/lib/python3.11/site-packages/cv2/../../lib64:/usr/local/python3.11.14/lib/python3.11/site-packages/cv2/../../lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/cann-8.5.1/lib64:/usr/local/Ascend/cann-8.5.1/lib64/plugin/opskernel:/usr/local/Ascend/cann-8.5.1/lib64/plugin/nnengine:/usr/local/Ascend/cann-8.5.1/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/cann-8.5.1/tools/aml/lib64:/usr/local/Ascend/cann-8.5.1/tools/aml/lib64/plugin:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/lib:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/examples:/usr/local/Ascend/nnal/atb/latest/atb/cxx_abi_1/tests/atbopstest:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common/:/usr/local/Ascend/driver/lib64/driver/:/usr/local/python3.11.14/lib:' [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:39:52 [parallel_state.py:1395] world_size=4 rank=2 local_rank=0 distributed_init_method=tcp://10.254.124.133:40497 backend=hccl
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) INFO 04-24 07:39:46 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader` [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) INFO 04-24 07:39:46 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork` [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [W424 07:39:52.754208940 socket.cpp:209] [c10d] The hostname of the client socket cannot be retrieved. err=-3
+[2026-04-24 07:41:01] [__main__] [INFO] [Progress] 43% - engine初始化 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) WARNING 04-24 07:39:50 [worker_base.py:287] Missing `shared_worker_lock` argument from executor. This argument is needed for mm_processor_cache_type='shm'. [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) INFO 04-24 07:39:50 [ascend_config.py:425] Dynamic EPLB is False [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) INFO 04-24 07:39:50 [ascend_config.py:426] The number of redundant experts is 0 [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:41:06 [parallel_state.py:1395] world_size=4 rank=1 local_rank=1 distributed_init_method=tcp://10.254.124.133:40497 backend=hccl [repeated 2x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) [W424 07:41:06.952728470 socket.cpp:209] [c10d] The hostname of the client socket cannot be retrieved. err=-3 [repeated 2x across cluster]
+[2026-04-24 07:41:06] [__main__] [INFO] [Progress] 43% - engine初始化 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:41:08 [parallel_state.py:1717] rank 1 in world size 4 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 1, EP rank N/A, EPLB rank N/A
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) WARNING 04-24 07:39:59 [worker.py:306] Bind cpus failed in rank0: Can not get running npu info. Skip binding cpu.
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:41:08 [model_runner_v1.py:2562] Starting to load model /usr/local/serving/models/...
+[2026-04-24 07:41:08] [__main__] [INFO] [Progress] 45% - 模型加载 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:41:09 [compilation.py:942] Using OOT custom backend for compilation.
+Loading safetensors checkpoint shards:   0% Completed | 0/17 [00:00<?, ?it/s]
+[2026-04-24 07:41:09] [__main__] [INFO] [Progress] 45% - 模型加载 - running
+Loading safetensors checkpoint shards:   6% Completed | 1/17 [00:00<00:04,  3.73it/s]
+[2026-04-24 07:41:10] [__main__] [INFO] [Progress] 45% - 模型加载 - running
+Loading safetensors checkpoint shards:  12% Completed | 2/17 [00:00<00:05,  2.72it/s]
+[2026-04-24 07:41:10] [__main__] [INFO] [Progress] 45% - 模型加载 - running
+Loading safetensors checkpoint shards:  18% Completed | 3/17 [00:01<00:06,  2.31it/s]
+[2026-04-24 07:41:11] [__main__] [INFO] [Progress] 47% - 模型加载 - running
+Loading safetensors checkpoint shards:  24% Completed | 4/17 [00:01<00:05,  2.28it/s]
+[2026-04-24 07:41:11] [__main__] [INFO] [Progress] 48% - 模型加载 - running
+Loading safetensors checkpoint shards:  29% Completed | 5/17 [00:02<00:05,  2.32it/s]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [W424 07:41:07.137484730 socket.cpp:209] [c10d] The hostname of the client socket cannot be retrieved. err=-3
+[2026-04-24 07:41:11] [__main__] [INFO] [Progress] 49% - 模型加载 - running
+Loading safetensors checkpoint shards:  35% Completed | 6/17 [00:02<00:04,  2.31it/s]
+[2026-04-24 07:41:12] [__main__] [INFO] [Progress] 51% - 模型加载 - running
+Loading safetensors checkpoint shards:  41% Completed | 7/17 [00:02<00:04,  2.39it/s]
+[2026-04-24 07:41:12] [__main__] [INFO] [Progress] 52% - 模型加载 - running
+Loading safetensors checkpoint shards:  47% Completed | 8/17 [00:03<00:03,  2.33it/s]
+[2026-04-24 07:41:13] [__main__] [INFO] [Progress] 54% - 模型加载 - running
+Loading safetensors checkpoint shards:  53% Completed | 9/17 [00:03<00:03,  2.42it/s]
+[2026-04-24 07:41:13] [__main__] [INFO] [Progress] 55% - 模型加载 - running
+Loading safetensors checkpoint shards:  59% Completed | 10/17 [00:04<00:02,  2.38it/s]
+[2026-04-24 07:41:13] [__main__] [INFO] [Progress] 57% - 模型加载 - running
+Loading safetensors checkpoint shards:  65% Completed | 11/17 [00:04<00:02,  2.29it/s]
+[2026-04-24 07:41:14] [__main__] [INFO] [Progress] 58% - 模型加载 - running
+Loading safetensors checkpoint shards:  71% Completed | 12/17 [00:05<00:02,  2.39it/s]
+[2026-04-24 07:41:14] [__main__] [INFO] [Progress] 60% - 模型加载 - running
+Loading safetensors checkpoint shards:  76% Completed | 13/17 [00:05<00:01,  2.35it/s]
+[2026-04-24 07:41:15] [__main__] [INFO] [Progress] 61% - 模型加载 - running
+Loading safetensors checkpoint shards:  82% Completed | 14/17 [00:05<00:01,  2.34it/s]
+[2026-04-24 07:41:15] [__main__] [INFO] [Progress] 62% - 模型加载 - running
+Loading safetensors checkpoint shards:  88% Completed | 15/17 [00:06<00:00,  2.36it/s]
+[2026-04-24 07:41:16] [__main__] [INFO] [Progress] 64% - 模型加载 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:40:07 [default_loader.py:384] Loading weights took 6.40 seconds
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:41:07 [parallel_state.py:1395] world_size=4 rank=0 local_rank=0 distributed_init_method=tcp://10.254.124.133:40497 backend=hccl
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3 [repeated 25x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) INFO 04-24 07:39:59 [parallel_state.py:1717] rank 3 in world size 4 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 3, EP rank N/A, EPLB rank N/A [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) WARNING 04-24 07:41:08 [worker.py:306] Bind cpus failed in rank0: Can not get running npu info. Skip binding cpu. [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) INFO 04-24 07:39:59 [model_runner_v1.py:2562] Starting to load model /usr/local/serving/models/... [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) INFO 04-24 07:40:00 [compilation.py:942] Using OOT custom backend for compilation. [repeated 7x across cluster]
+[2026-04-24 07:41:16] [__main__] [INFO] [Progress] 64% - engine初始化 - running
+[2026-04-24 07:41:16] [__main__] [INFO] [Progress] 64% - 模型加载 - running
+Loading safetensors checkpoint shards:  94% Completed | 16/17 [00:06<00:00,  2.25it/s]
+[2026-04-24 07:41:16] [__main__] [INFO] [Progress] 65% - 模型加载 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:40:07 [model_runner_v1.py:2589] Loading model weights took 15.2866 GB
+Loading safetensors checkpoint shards: 100% Completed | 17/17 [00:07<00:00,  2.45it/s]
+Loading safetensors checkpoint shards: 100% Completed | 17/17 [00:07<00:00,  2.39it/s]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)
+[2026-04-24 07:41:16] [__main__] [INFO] [Progress] 67% - 模型加载 - running
+[2026-04-24 07:41:16] [__main__] [INFO] [Progress] 67% - 模型加载 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:40:18 [backends.py:988] Using cache directory: /root/.cache/vllm/torch_compile_cache/1e4c5ea479/rank_2_0/backbone for vLLM's torch.compile
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:40:18 [backends.py:1048] Dynamo bytecode transform time: 8.85 s
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:41:16 [default_loader.py:384] Loading weights took 7.18 seconds
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:41:18 [model_runner_v1.py:2589] Loading model weights took 15.2866 GB [repeated 3x across cluster]
+[2026-04-24 07:41:27] [__main__] [INFO] [Progress] 70% - 模型编译 - running
+[2026-04-24 07:41:27] [__main__] [INFO] [Progress] 74% - 模型编译 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:40:31 [compiler_interface.py:162] enable_npugraph_ex is enabled, which will bring graph compilation optimization.
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:41:28 [backends.py:988] Using cache directory: /root/.cache/vllm/torch_compile_cache/1e4c5ea479/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:41:28 [backends.py:1048] Dynamo bytecode transform time: 9.69 s
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)   warnings.warn(
+[2026-04-24 07:41:40] [__main__] [INFO] [Progress] 74% - 模型编译 - running
+[2026-04-24 07:41:40] [__main__] [INFO] [Progress] 74% - 模型编译 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:40:36 [compiler_interface.py:162] enable_npugraph_ex is enabled, which will bring graph compilation optimization. [repeated 57x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print [repeated 57x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)   warnings.warn( [repeated 57x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:41:50 [compiler_interface.py:162] enable_npugraph_ex is enabled, which will bring graph compilation optimization. [repeated 66x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print [repeated 66x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210)   warnings.warn( [repeated 66x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print [repeated 55x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)   warnings.warn( [repeated 55x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:41:55 [compiler_interface.py:162] enable_npugraph_ex is enabled, which will bring graph compilation optimization. [repeated 55x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:40:51 [backends.py:387] Compiling a graph for compile range (1, 4096) takes 19.59 s
+[2026-04-24 07:42:00] [__main__] [INFO] [Progress] 78% - 模型编译 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) INFO 04-24 07:42:01 [compiler_interface.py:162] enable_npugraph_ex is enabled, which will bring graph compilation optimization. [repeated 61x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print [repeated 61x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210)   warnings.warn( [repeated 61x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print [repeated 20x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)   warnings.warn( [repeated 20x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:42:06 [compiler_interface.py:162] enable_npugraph_ex is enabled, which will bring graph compilation optimization. [repeated 20x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:42:06 [backends.py:387] Compiling a graph for compile range (1, 4096) takes 24.13 s
+[2026-04-24 07:42:06] [__main__] [INFO] [Progress] 78% - 模型编译 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:41:05 [monitor.py:48] torch.compile and initial profiling/warmup run together took 56.06 s in total
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) INFO 04-24 07:41:08 [worker.py:357] Available KV cache memory: 32.97 GiB
+[2026-04-24 07:42:17] [__main__] [INFO] [Progress] 80% - 模型编译 - running
+(EngineCore pid=3100) INFO 04-24 07:42:18 [kv_cache_utils.py:1316] GPU KV cache size: 540,160 tokens
+(EngineCore pid=3100) INFO 04-24 07:42:18 [kv_cache_utils.py:1321] Maximum concurrency for 4,096 tokens per request: 131.88x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   0%|          | 0/12 [00:00<?, ?it/s]
+[2026-04-24 07:42:21] [__main__] [INFO] [Progress] 80% - CUDA图捕获 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) [rank1]:[W424 07:42:21.558167230 compiler_depend.ts:207] Warning: Waiting for pending NCCL work to finish before starting graph capture. (function operator())
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   8%|▊         | 1/12 [00:04<00:48,  4.40s/it]
+[2026-04-24 07:42:25] [__main__] [INFO] [Progress] 80% - CUDA图捕获 - running
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  17%|█▋        | 2/12 [00:11<01:00,  6.02s/it]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [rank3]:[W424 07:41:12.421023620 compiler_depend.ts:207] Warning: Waiting for pending NCCL work to finish before starting graph capture. (function operator()) [repeated 3x across cluster]
+[2026-04-24 07:42:32] [__main__] [INFO] [Progress] 82% - CUDA图捕获 - running
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  25%|██▌       | 3/12 [00:17<00:52,  5.84s/it]
+[2026-04-24 07:42:38] [__main__] [INFO] [Progress] 83% - CUDA图捕获 - running
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  33%|███▎      | 4/12 [00:22<00:45,  5.72s/it]
+[2026-04-24 07:42:43] [__main__] [INFO] [Progress] 83% - CUDA图捕获 - running
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  42%|████▏     | 5/12 [00:28<00:41,  5.92s/it]
+[2026-04-24 07:42:50] [__main__] [INFO] [Progress] 85% - CUDA图捕获 - running
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  50%|█████     | 6/12 [00:36<00:39,  6.59s/it]
+[2026-04-24 07:42:57] [__main__] [INFO] [Progress] 86% - CUDA图捕获 - running
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  58%|█████▊    | 7/12 [00:45<00:36,  7.29s/it]
+[2026-04-24 07:43:06] [__main__] [INFO] [Progress] 86% - CUDA图捕获 - running
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  67%|██████▋   | 8/12 [00:55<00:32,  8.09s/it]
+[2026-04-24 07:43:16] [__main__] [INFO] [Progress] 88% - CUDA图捕获 - running
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  75%|███████▌  | 9/12 [01:05<00:25,  8.59s/it]
+[2026-04-24 07:43:26] [__main__] [INFO] [Progress] 89% - CUDA图捕获 - running
+[2026-04-24 07:48:26] [__main__] [WARNING] 日志文件超过300秒未更新，判定为超时（累计 300 秒）
+[2026-04-24 07:48:26] [__main__] [INFO] [Progress] 89% - startup_timeout - warning
+[2026-04-24 07:53:26] [__main__] [WARNING] 日志文件超过300秒未更新，判定为超时（累计 600 秒）
+[2026-04-24 07:53:26] [__main__] [INFO] [Progress] 89% - startup_timeout - warning
+[2026-04-24 07:58:26] [__main__] [WARNING] 日志文件超过300秒未更新，判定为超时（累计 900 秒）
+[2026-04-24 07:58:26] [__main__] [INFO] [Progress] 89% - startup_timeout - warning
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [467] [2026-04-24 08:00:28:794] torch.distributed: [ERROR] [910] Find exception when finishedNPUExecutionInternal, query:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:83 NPU function error: acl::AclQueryEventRecordedStatus(event_, &currStatus), error code is 507034
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [ERROR] 2026-04-24-08:00:28 (PID:467, Device:1, RankID:-1) ERR00100 PTA call acl api failed
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [Error]: Vector core execution timed out.
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115)         Rectify the fault based on the error information in the ascend log.
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) EE9999: Inner Error!
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) EE9999[PID: 467] 2026-04-24-08:00:28.793.806 (EE9999):  rtEventQueryStatus execution failed, reason=vector core timeout[FUNC:FuncErrorReason][FILE:error_message_manage.cc][LINE:61]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115)         TraceBack (most recent call last):
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115)        [Query][Status]query event recorded status failed, runtime result = 507034[FUNC:ReportCallError][FILE:log_inner.cpp][LINE:148]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115)
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) Exception raised from query at build/CMakeFiles/torch_npu.dir/compiler_depend.ts:83 (most recent call first):
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::alloca
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [rank3]:[E424 08:00:28.004077320 compiler_depend.ts:1693] [Rank 3] HCCL watchdog thread terminated with exception:
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [ERROR] 2026-04-24-08:00:28 (PID:467, Device:1, RankID:-1) ERR02005 DIST internal error
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [2026-04-24 08:00:28,794 E 467 910] logging.cc:117: Unhandled exception: St13runtime_error. what(): [Rank 3] HCCL watchdog thread terminated with exception:
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) [ERROR] 2026-04-24-08:00:28 (PID:467, Device:1, RankID:-1) ERR02005 DIST internal error
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):  75%|███████▌  | 9/12 [19:16<06:25, 128.52s/it]
+[2026-04-24 08:01:37] [__main__] [INFO] [Progress] 89% - CUDA图捕获 - running
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:28,884 E 466 909] logging.cc:124: Stack trace:
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)  /usr/local/python3.11.14/lib/python3.11/site-packages/ray/_raylet.so(+0x13d8d88) [0xffff99dc8d88] ray::operator<<()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /usr/local/python3.11.14/lib/python3.11/site-packages/ray/_raylet.so(+0x13dc608) [0xffff99dcc608] ray::TerminateHandler()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2b4c) [0xffff9c7d2b4c]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2bb0) [0xffff9c7d2bb0]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2b38) [0xffff9c7d2b38]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/lib/libtorch_npu.so(_ZN8c10d_npu16ProcessGroupHCCL16hcclCommWatchdogEv+0x2f8) [0xffeda002f84c] c10d_npu::ProcessGroupHCCL::hcclCommWatchdog()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xd29cc) [0xffff9c8029cc]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /lib/aarch64-linux-gnu/libc.so.6(+0x80398) [0xffff9c9e0398]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) /lib/aarch64-linux-gnu/libc.so.6(+0xe9e9c) [0xffff9ca49e9c]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2b4c) [0xffff80222b4c]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2bb0) [0xffff80222bb0]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2b38) [0xffff80222b38]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/lib/libtorch_npu.so(_ZN8c10d_npu16ProcessGroupHCCL16hcclCommWatchdogEv+0x2f8) [0xffed83a2f84c] c10d_npu::ProcessGroupHCCL::hcclCommWatchdog()
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xd29cc) [0xffff802529cc]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) /lib/aarch64-linux-gnu/libc.so.6(+0x80398) [0xffff80430398]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115) /lib/aarch64-linux-gnu/libc.so.6(+0xe9e9c) [0xffff80499e9c]
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115)
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210)
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allo
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2b4c) [0xffff8c8a2b4c]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2bb0) [0xffff8c8a2bb0]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2b38) [0xffff8c8a2b38]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/lib/libtorch_npu.so(_ZN8c10d_npu16ProcessGroupHCCL16hcclCommWatchdogEv+0x2f8) [0xffedbe0cf84c] c10d_npu::ProcessGroupHCCL::hcclCommWatchdog()
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xd29cc) [0xffff8c8d29cc]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /lib/aarch64-linux-gnu/libc.so.6(+0x80398) [0xffff8cab0398]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210) /lib/aarch64-linux-gnu/libc.so.6(+0xe9e9c) [0xffff8cb19e9c]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210)
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2b4c) [0xffffb1222b4c]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2bb0) [0xffffb1222bb0]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xa2b38) [0xffffb1222b38]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /usr/local/python3.11.14/lib/python3.11/site-packages/torch_npu/lib/libtorch_npu.so(_ZN8c10d_npu16ProcessGroupHCCL16hcclCommWatchdogEv+0x2f8) [0xffede202f84c] c10d_npu::ProcessGroupHCCL::hcclCommWatchdog()
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /lib/aarch64-linux-gnu/libstdc++.so.6(+0xd29cc) [0xffffb12529cc]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /lib/aarch64-linux-gnu/libc.so.6(+0x80398) [0xffffb1430398]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /lib/aarch64-linux-gnu/libc.so.6(+0xe9e9c) [0xffffb1499e9c]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) *** SIGABRT received at time=1777017630 on cpu 296 ***
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) PC: @     0xffff9c9e2008  (unknown)  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff99dce598        464  absl::lts_20230802::AbslFailureSignalHandler()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff9d23193c       4928  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff9c99a83c         64  gsignal
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff9c987134        320  abort
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff99dcc5d8         48  ray::TerminateHandler()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff9c7d2b4c       1152  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff9c7d2bb0         16  std::terminate()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff9c7d2b38         16  std::rethrow_exception()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffeda002f84c        528  c10d_npu::ProcessGroupHCCL::hcclCommWatchdog()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff9c8029cc         80  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)     @     0xffff9c9e0398        272  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,163 E 466 909] logging.cc:501: *** SIGABRT received at time=1777017630 on cpu 296 ***
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,163 E 466 909] logging.cc:501: PC: @     0xffff9c9e2008  (unknown)  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,166 E 466 909] logging.cc:501:     @     0xffff99dce5c0        464  absl::lts_20230802::AbslFailureSignalHandler()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,171 E 466 909] logging.cc:501:     @     0xffff9d23193c       4928  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,171 E 466 909] logging.cc:501:     @     0xffff9c99a83c         64  gsignal
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,171 E 466 909] logging.cc:501:     @     0xffff9c987134        320  abort
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,171 E 466 909] logging.cc:501:     @     0xffff99dcc5d8         48  ray::TerminateHandler()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,175 E 466 909] logging.cc:501:     @     0xffff9c7d2b4c       1152  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,175 E 466 909] logging.cc:501:     @     0xffff9c7d2bb0         16  std::terminate()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,175 E 466 909] logging.cc:501:     @     0xffff9c7d2b38         16  std::rethrow_exception()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,175 E 466 909] logging.cc:501:     @     0xffeda002f84c        528  c10d_npu::ProcessGroupHCCL::hcclCommWatchdog()
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,175 E 466 909] logging.cc:501:     @     0xffff9c8029cc         80  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) [2026-04-24 08:00:30,176 E 466 909] logging.cc:501:     @     0xffff9c9e0398        272  (unknown)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) Fatal Python error: Aborted
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115)
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) Extension modules: msgpack._cmsgpack, google._upb._message, psutil._psutil_linux, psutil._psutil_posix, yaml._yaml, charset_normalizer.md, charset_normalizer.cd, requests.packages.charset_normalizer.md, requests.packages.chardet.md, requests.packages.charset_normalizer.cd, requests.packages.chardet.cd, uvloop.loop, ray._raylet, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, torch._C, torch._C._dynamo.autograd_compiler, torch._C._dynamo.eval_frame, torch._C._dynamo.guards, torch._C._dynamo.utils, torch._C._fft, torch._C._linalg, torch._C._nested, torch._C._nn, torch._C._sparse, torch._C._special, torch_npu._C, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, markupsafe._speedups, regex._regex, _cbor2, PIL._imaging, PIL._imagingft, av._core, av.logging, av.buffer, av.audio.format, av.error, av.dictionary, av.container.pyio, av.option, av.descriptor, av.format, av.index, av.utils, av.stream, av.container.streams, av.sidedata.encparams, av.sidedata.motionvectors, av.sidedata.sidedata, av.opaque, av.packet, av.container.input, av.container.output, av.container.core, av.codec.context, av.video.format, av.video.reformatter, av.plane, av.video.plane, av.video.frame, av.video.stream, av.codec.hwaccel, av.codec.codec, av.frame, av.audio.layout, av.audio.plane, av.audio.frame, av.audio.stream, av.filter.link, av.filter.context, av.filter.graph, av.filter.filter, av.filter.loudnorm, av.audio.resampler, av.audio.codeccontext, av.audio.fifo, av.bitstream, av.device, av.video.codeccontext, _cffi_backend, _cyutility, scipy._cyutility, scipy._lib._ccallback_c, scipy.linalg._fblas, scipy.linalg._flapack, scipy.linalg.cython_lapack, scipy.linalg._cythonized_array_utils, scipy.linalg._solve_toeplitz, scipy.linalg._batched_linalg, scipy.linalg._decomp_lu_cython, scipy.linalg._matfuncs_schur_sqrtm, scipy.linalg._matfuncs_expm, scipy.linalg._linalg_pythran, scipy.linalg.cython_blas, scipy.linalg._decomp_update, scipy.sparse._sparsetools, _csparsetools, scipy.sparse._csparsetools, scipy.sparse.linalg._dsolve._superlu, scipy.sparse.linalg._eigen.arpack._arpacklib, scipy.sparse.linalg._propack, scipy.optimize._group_columns, scipy._lib.messagestream, scipy.optimize._trlib._trlib, scipy.optimize._lbfgsb, _moduleTNC, scipy.optimize._moduleTNC, scipy.optimize._slsqplib, scipy.optimize._minpack, scipy.optimize._lsq.givens_elimination, scipy.optimize._zeros, scipy._lib._uarray._uarray, scipy.special._ufuncs_cxx, scipy.special._ellip_harm_2, scipy.special._special_ufuncs, scipy.special._gufuncs, scipy.special._ufuncs, scipy.special._specfun, scipy.special._comb, scipy.linalg._decomp_interpolative, scipy.optimize._bglu_dense, scipy.optimize._lsap, scipy.spatial._ckdtree, scipy.spatial._qhull, scipy.spatial._voronoi, scipy.spatial._hausdorff, scipy.spatial._distance_wrap, scipy.spatial.transform._rotation_cy, scipy.spatial.transform._rigid_transform_cy, scipy.optimize._direct, sklearn.__check_build._check_build, scipy.integrate._odepack, scipy.integrate._quadpack, scipy.integrate._vode, scipy.integrate._dop, scipy.interpolate._fitpack, scipy.interpolate._dfitpack, scipy.interpolate._dierckx, scipy.interpolate._ppoly, scipy.interpolate._interpnd, scipy.interpolate._rbfinterp_pythran, scipy.interpolate._rgi_cython, scipy.special.cython_special, scipy.stats._stats, scipy.stats._biasedurn, scipy.stats._stats_pythran, scipy.stats._levy_stable.levyst, scipy.stats._ansari_swilk_statistics, scipy.sparse.csgraph._tools, scipy.sparse.csgraph._shortest_path, scipy.sparse.csgraph._traversal, scipy.sparse.csgraph._min_spanning_tree, scipy.sparse.csgraph._flow, scipy.sparse.csgraph._matching, scipy.sparse.csgraph._reordering, scipy.stats._sobol, scipy.stats._qmc_cy, scipy.stats._rcont.rcont, scipy.stats._qmvnt_cy, scipy.ndimage._nd_image, scipy.ndimage._rank_filter_1d, _ni_label, scipy.ndimage._ni_label, pandas._libs._cyutility, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.properties, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.period, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatch, pandas._libs.missing, pandas._libs.hashtable, pandas._libs.algos, pandas._libs.interval, pandas._libs.lib, pandas._libs.ops, pandas._libs.hashing, pandas._libs.arrays, pandas._libs.tslib, pandas._libs.sparse, pandas._libs.internals, pandas._libs.indexing, pandas._libs.index, pandas._libs.writers, pandas._libs.join, pandas._libs.window.aggregations, pandas._libs.window.indexers, pandas._libs.reshape, pandas._libs.groupby, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing, sklearn._cyutility, sklearn.utils._isfinite, sklearn.utils.sparsefuncs_fast, sklearn.utils.murmurhash, sklearn.utils._openmp_helpers, sklearn.metrics.cluster._expected_mutual_info_fast, sklearn.metrics._dist_metrics, sklearn.metrics._pairwise_distances_reduction._datasets_pair, sklearn.utils._cython_blas, sklearn.metrics._pairwise_distances_reduction._base, sklearn.metrics._pairwise_distances_reduction._middle_term_computer, sklearn.utils._heap, sklearn.utils._sorting, sklearn.metrics._pairwise_distances_reduction._argkmin, sklearn.metrics._pairwise_distances_reduction._argkmin_classmode, sklearn.utils._vector_sentinel, sklearn.metrics._pairwise_distances_reduction._radius_neighbors, sklearn.metrics._pairwise_distances_reduction._radius_neighbors_classmode, sklearn.metrics._pairwise_fast, sklearn.preprocessing._csr_polynomial_expansion, sklearn.preprocessing._target_encoder_fast, sentencepiece._sentencepiece, multidict._multidict, yarl._quoting_c, propcache._helpers_c, aiohttp._http_writer, aiohttp._http_parser, aiohttp._websocket.mask, aiohttp._websocket.reader_c, frozenlist._frozenlist, zmq.backend.cython._zmq, msgspec._core, grpc._cython.cygrpc, pybase64._pybase64, scipy.signal._sigtools, scipy.signal._max_len_seq_inner, scipy.signal._upfirdn_apply, scipy.signal._spline, scipy.signal._sosfilt, scipy.signal._peak_finding_utils, npu_utils, acl, vllm_ascend.vllm_ascend_C, numba.core.typeconv._typeconv, numba._helperlib, numba._dynfunc, numba._dispatcher, numba.core.runtime._nrt_python, numba.np.ufunc._internal, numba.experimental.jitclass._box, ijson.backends._yajl2, __triton_launcher (total: 265)
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115)
+(EngineCore pid=3100) (RayWorkerWrapper pid=467, ip=10.254.13.115)
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210)
+(EngineCore pid=3100) (RayWorkerWrapper pid=1210)
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)
+(EngineCore pid=3100) (raylet) A worker died or was killed while executing a task by an unexpected system error. To troubleshoot the problem, check the logs for the dead worker. RayTask ID: ffffffffffffffff8d8c700859419bf4ed36e06403000000 Worker ID: 17c485f4fae4effc091e3857c69c26142699438beb7e980207e93b1d Node ID: 5c363d7409bb088a895cf1d736a3b7d4c30797d33764a394672f3a1c Worker IP address: 10.254.13.115 Worker port: 10002 Worker PID: 466 Worker exit type: SYSTEM_ERROR Worker exit detail: Worker unexpectedly exits with a connection error code 2. End of file. There are some potential root causes. (1) The process is killed by SIGKILL by OOM killer due to high memory usage. (2) ray stop --force is called. (3) The worker is crashed unexpectedly due to SIGSEGV or other unexpected errors.
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:42:14 [monitor.py:48] torch.compile and initial profiling/warmup run together took 55.92 s in total
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) INFO 04-24 07:42:18 [worker.py:357] Available KV cache memory: 32.97 GiB
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099] EngineCore failed to start.
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099] Traceback (most recent call last):
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 1073, in run_engine_core
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/vllm-workspace/vllm/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     return func(*args, **kwargs)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 839, in __init__
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     super().__init__(
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 122, in __init__
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     kv_cache_config = self._initialize_kv_caches(vllm_config)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/vllm-workspace/vllm/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     return func(*args, **kwargs)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 278, in _initialize_kv_caches
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     self.model_executor.initialize_from_config(kv_cache_configs)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/vllm-workspace/vllm/vllm/v1/executor/abstract.py", line 118, in initialize_from_config
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     compilation_times: list[float] = self.collective_rpc("compile_or_warm_up_model")
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/vllm-workspace/vllm/vllm/v1/executor/ray_executor.py", line 515, in collective_rpc
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     return ray.get(ray_worker_outputs, timeout=timeout)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/usr/local/python3.11.14/lib/python3.11/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     return fn(*args, **kwargs)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]            ^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/usr/local/python3.11.14/lib/python3.11/site-packages/ray/_private/client_mode_hook.py", line 104, in wrapper
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     return func(*args, **kwargs)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/usr/local/python3.11.14/lib/python3.11/site-packages/ray/_private/worker.py", line 2858, in get
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     values, debugger_breakpoint = worker.get_objects(object_refs, timeout=timeout)
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]   File "/usr/local/python3.11.14/lib/python3.11/site-packages/ray/_private/worker.py", line 960, in get_objects
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]     raise value
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099] ray.exceptions.ActorDiedError: The actor died unexpectedly before finishing this task.
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]       class_name: RayWorkerWrapper
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]       actor_id: 8d8c700859419bf4ed36e06403000000
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]       pid: 466
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]       namespace: 87e3cbd6-bf38-4ce7-876d-d9e564e17483
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099]       ip: 10.254.13.115
+(EngineCore pid=3100) ERROR 04-24 08:01:42 [core.py:1099] The actor is dead because its worker process has died. Worker exit type: SYSTEM_ERROR Worker exit detail: Worker unexpectedly exits with a connection error code 2. End of file. There are some potential root causes. (1) The process is killed by SIGKILL by OOM killer due to high memory usage. (2) ray stop --force is called. (3) The worker is crashed unexpectedly due to SIGSEGV or other unexpected errors.
+(EngineCore pid=3100) Process EngineCore:
+(EngineCore pid=3100) Traceback (most recent call last):
+(EngineCore pid=3100)   File "/usr/local/python3.11.14/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+(EngineCore pid=3100)     self.run()
+(EngineCore pid=3100)   File "/usr/local/python3.11.14/lib/python3.11/multiprocessing/process.py", line 108, in run
+(EngineCore pid=3100)     self._target(*self._args, **self._kwargs)
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 1103, in run_engine_core
+(EngineCore pid=3100)     raise e
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 1073, in run_engine_core
+(EngineCore pid=3100)     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=3100)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=3100)     return func(*args, **kwargs)
+(EngineCore pid=3100)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 839, in __init__
+(EngineCore pid=3100)     super().__init__(
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 122, in __init__
+(EngineCore pid=3100)     kv_cache_config = self._initialize_kv_caches(vllm_config)
+(EngineCore pid=3100)                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=3100)     return func(*args, **kwargs)
+(EngineCore pid=3100)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/v1/engine/core.py", line 278, in _initialize_kv_caches
+(EngineCore pid=3100)     self.model_executor.initialize_from_config(kv_cache_configs)
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/v1/executor/abstract.py", line 118, in initialize_from_config
+(EngineCore pid=3100)     compilation_times: list[float] = self.collective_rpc("compile_or_warm_up_model")
+(EngineCore pid=3100)                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/vllm-workspace/vllm/vllm/v1/executor/ray_executor.py", line 515, in collective_rpc
+(EngineCore pid=3100)     return ray.get(ray_worker_outputs, timeout=timeout)
+(EngineCore pid=3100)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/usr/local/python3.11.14/lib/python3.11/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+(EngineCore pid=3100)     return fn(*args, **kwargs)
+(EngineCore pid=3100)            ^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/usr/local/python3.11.14/lib/python3.11/site-packages/ray/_private/client_mode_hook.py", line 104, in wrapper
+(EngineCore pid=3100)     return func(*args, **kwargs)
+(EngineCore pid=3100)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/usr/local/python3.11.14/lib/python3.11/site-packages/ray/_private/worker.py", line 2858, in get
+(EngineCore pid=3100)     values, debugger_breakpoint = worker.get_objects(object_refs, timeout=timeout)
+(EngineCore pid=3100)                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=3100)   File "/usr/local/python3.11.14/lib/python3.11/site-packages/ray/_private/worker.py", line 960, in get_objects
+(EngineCore pid=3100)     raise value
+(EngineCore pid=3100) ray.exceptions.ActorDiedError: The actor died unexpectedly before finishing this task.
+(EngineCore pid=3100)   class_name: RayWorkerWrapper
+(EngineCore pid=3100)   actor_id: 8d8c700859419bf4ed36e06403000000
+(EngineCore pid=3100)   pid: 466
+(EngineCore pid=3100)   namespace: 87e3cbd6-bf38-4ce7-876d-d9e564e17483
+(EngineCore pid=3100)   ip: 10.254.13.115
+(EngineCore pid=3100) The actor is dead because its worker process has died. Worker exit type: SYSTEM_ERROR Worker exit detail: Worker unexpectedly exits with a connection error code 2. End of file. There are some potential root causes. (1) The process is killed by SIGKILL by OOM killer due to high memory usage. (2) ray stop --force is called. (3) The worker is crashed unexpectedly due to SIGSEGV or other unexpected errors.
+[2026-04-24 08:01:42] [__main__] [INFO] [Progress] 89% - 模型编译 - running
+[2026-04-24 08:01:42] [__main__] [INFO] [Progress] 89% - startup_failed - failed
+(EngineCore pid=3100) (raylet) A worker died or was killed while executing a task by an unexpected system error. To troubleshoot the problem, check the logs for the dead worker. RayTask ID: ffffffffffffffff2a8b7135a74dd423331c44fb03000000 Worker ID: 09f6767927e058a85b7364d3bafcaca70a81cc6bc4f7d9f55b65a3bf Node ID: 5c363d7409bb088a895cf1d736a3b7d4c30797d33764a394672f3a1c Worker IP address: 10.254.13.115 Worker port: 10003 Worker PID: 467 Worker exit type: SYSTEM_ERROR Worker exit detail: Worker unexpectedly exits with a connection error code 2. End of file. There are some potential root causes. (1) The process is killed by SIGKILL by OOM killer due to high memory usage. (2) ray stop --force is called. (3) The worker is crashed unexpectedly due to SIGSEGV or other unexpected errors.
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [1213] [2026-04-24 08:01:37:698] torch.distributed: [ERROR] [3759] Find exception when finishedNPUExecutionInternal, query:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:83 NPU function error: acl::AclQueryEventRecordedStatus(event_, &currStatus), error code is 507034 [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [ERROR] 2026-04-24-08:01:37 (PID:1213, Device:0, RankID:-1) ERR00100 PTA call acl api failed [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [Error]: Vector core execution timed out.  [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)         Rectify the fault based on the error information in the ascend log. [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) EE9999: Inner Error! [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) EE9999[PID: 1213] 2026-04-24-08:01:37.697.610 (EE9999):  rtEventQueryStatus execution failed, reason=vector core timeout[FUNC:FuncErrorReason][FILE:error_message_manage.cc][LINE:61] [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)         TraceBack (most recent call last): [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)        [Query][Status]query event recorded status failed, runtime result = 507034[FUNC:ReportCallError][FILE:log_inner.cpp][LINE:148] [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) Exception raised from query at build/CMakeFiles/torch_npu.dir/compiler_depend.ts:83 (most recent call first): [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=466, ip=10.254.13.115) frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::alloca
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [rank0]:[E424 08:01:37.196356370 compiler_depend.ts:1693] [Rank 0] HCCL watchdog thread terminated with exception:  [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [ERROR] 2026-04-24-08:01:37 (PID:1213, Device:0, RankID:-1) ERR02005 DIST internal error [repeated 6x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:37,698 E 1213 3759] logging.cc:117: Unhandled exception: St13runtime_error. what(): [Rank 0] HCCL watchdog thread terminated with exception:  [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:37,711 E 1213 3759] logging.cc:124: Stack trace:  [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)  /usr/local/python3.11.14/lib/python3.11/site-packages/ray/_raylet.so(+0x13d8d88) [0xffffae808d88] ray::operator<<() [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) /usr/local/python3.11.14/lib/python3.11/site-packages/ray/_raylet.so(+0x13dc608) [0xffffae80c608] ray::TerminateHandler() [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allo
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) *** SIGABRT received at time=1777017699 on cpu 128 *** [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) PC: @     0xffffb1432008  (unknown)  (unknown) [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)     @     0xffede202f84c        528  c10d_npu::ProcessGroupHCCL::hcclCommWatchdog() [repeated 6x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)     @     0xffffb1430398        272  (unknown) [repeated 12x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)     @     0xffffb13ea83c         64  gsignal [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)     @     0xffffb13d7134        320  abort [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)     @     0xffffae80c5d8         48  ray::TerminateHandler() [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)     @     0xffffb1222bb0         16  std::terminate() [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213)     @     0xffffb1222b38         16  std::rethrow_exception() [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,243 E 1213 3759] logging.cc:501: *** SIGABRT received at time=1777017699 on cpu 128 *** [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,243 E 1213 3759] logging.cc:501: PC: @     0xffffb1432008  (unknown)  (unknown) [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,255 E 1213 3759] logging.cc:501:     @     0xffede202f84c        528  c10d_npu::ProcessGroupHCCL::hcclCommWatchdog() [repeated 6x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,255 E 1213 3759] logging.cc:501:     @     0xffffb1430398        272  (unknown) [repeated 12x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,251 E 1213 3759] logging.cc:501:     @     0xffffb13ea83c         64  gsignal [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,251 E 1213 3759] logging.cc:501:     @     0xffffb13d7134        320  abort [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,251 E 1213 3759] logging.cc:501:     @     0xffffae80c5d8         48  ray::TerminateHandler() [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,255 E 1213 3759] logging.cc:501:     @     0xffffb1222bb0         16  std::terminate() [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) [2026-04-24 08:01:39,255 E 1213 3759] logging.cc:501:     @     0xffffb1222b38         16  std::rethrow_exception() [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) Fatal Python error: Aborted [repeated 3x across cluster]
+(EngineCore pid=3100) (RayWorkerWrapper pid=1213) Extension modules: msgpack._cmsgpack, google._upb._message, psutil._psutil_linux, psutil._psutil_posix, yaml._yaml, charset_normalizer.md, charset_normalizer.cd, requests.packages.charset_normalizer.md, requests.packages.chardet.md, requests.packages.charset_normalizer.cd, requests.packages.chardet.cd, uvloop.loop, ray._raylet, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, torch._C, torch._C._dynamo.autograd_compiler, torch._C._dynamo.eval_frame, torch._C._dynamo.guards, torch._C._dynamo.utils, torch._C._fft, torch._C._linalg, torch._C._nested, torch._C._nn, torch._C._sparse, torch._C._special, torch_npu._C, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, markupsafe._speedups, regex._regex, _cbor2, PIL._imaging, PIL._imagingft, av._core, av.logging, av.buffer, av.audio.format, av.error, av.dictionary, av.container.pyio, av.option, av.descriptor, av.format, av.index, av.utils, av.stream, av.container.streams, av.sidedata.encparams, av.sidedata.motionvectors, av.sidedata.sidedata, av.opaque, av.packet, av.container.input, av.container.output, av.container.core, av.codec.context, av.video.format, av.video.reformatter, av.plane, av.video.plane, av.video.frame, av.video.stream, av.codec.hwaccel, av.codec.codec, av.frame, av.audio.layout, av.audio.plane, av.audio.frame, av.audio.stream, av.filter.link, av.filter.context, av.filter.graph, av.filter.filter, av.filter.loudnorm, av.audio.resampler, av.audio.codeccontext, av.audio.fifo, av.bitstream, av.device, av.video.codeccontext, _cffi_backend, _cyutility, scipy._cyutility, scipy._lib._ccallback_c, scipy.linalg._fblas, scipy.linalg._flapack, scipy.linalg.cython_lapack, scipy.linalg._cythonized_array_utils, scipy.linalg._solve_toeplitz, scipy.linalg._batched_linalg, scipy.linalg._decomp_lu_cython, scipy.linalg._matfuncs_schur_sqrtm, scipy.linalg._matfuncs_expm, scipy.linalg._linalg_pythran, scipy.linalg.cython_blas, scipy.linalg._decomp_update, scipy.sparse._sparsetools, _csparsetools, scipy.sparse._csparsetools, scipy.sparse.linalg._dsolve._superlu, scipy.sparse.linalg._eigen.arpack._arpacklib, scipy.sparse.linalg._propack, scipy.optimize._group_columns, scipy._lib.messagestream, scipy.optimize._trlib._trlib, scipy.optimize._lbfgsb, _moduleTNC, scipy.optimize._moduleTNC, scipy.optimize._slsqplib, scipy.optimize._minpack, scipy.optimize._lsq.givens_elimination, scipy.optimize._zeros, scipy._lib._uarray._uarray, scipy.special._ufuncs_cxx, scipy.special._ellip_harm_2, scipy.special._special_ufuncs, scipy.special._gufuncs, scipy.special._ufuncs, scipy.special._specfun, scipy.special._comb, scipy.linalg._decomp_interpolative, scipy.optimize._bglu_dense, scipy.optimize._lsap, scipy.spatial._ckdtree, scipy.spatial._qhull, scipy.spatial._voronoi, scipy.spatial._hausdorff, scipy.spatial._distance_wrap, scipy.spatial.transform._rotation_cy, scipy.spatial.transform._rigid_transform_cy, scipy.optimize._direct, sklearn.__check_build._check_build, scipy.integrate._odepack, scipy.integrate._quadpack, scipy.integrate._vode, scipy.integrate._dop, scipy.interpolate._fitpack, scipy.interpolate._dfitpack, scipy.interpolate._dierckx, scipy.interpolate._ppoly, scipy.interpolate._interpnd, scipy.interpolate._rbfinterp_pythran, scipy.interpolate._rgi_cython, scipy.special.cython_special, scipy.stats._stats, scipy.stats._biasedurn, scipy.stats._stats_pythran, scipy.stats._levy_stable.levyst, scipy.stats._ansari_swilk_statistics, scipy.sparse.csgraph._tools, scipy.sparse.csgraph._shortest_path, scipy.sparse.csgraph._traversal, scipy.sparse.csgraph._min_spanning_tree, scipy.sparse.csgraph._flow, scipy.sparse.csgraph._matching, scipy.sparse.csgraph._reordering, scipy.stats._sobol, scipy.stats._qmc_cy, scipy.stats._rcont.rcont, scipy.stats._qmvnt_cy, scipy.ndimage._nd_image, scipy.ndimage._rank_filter_1d, _ni_label, scipy.ndimage._ni_label, pandas._libs._cyutility, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.properties, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.period, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatch, pandas._libs.missing, pandas._libs.hashtable, pandas._libs.algos, pandas._libs.interval, pandas._libs.lib, pandas._libs.ops, pandas._libs.hashing, pandas._libs.arrays, pandas._libs.tslib, pandas._libs.sparse, pandas._libs.internals, pandas._libs.indexing, pandas._libs.index, pandas._libs.writers, pandas._libs.join, pandas._libs.window.aggregations, pandas._libs.window.indexers, pandas._libs.reshape, pandas._libs.groupby, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing, sklearn._cyutility, sklearn.utils._isfinite, sklearn.utils.sparsefuncs_fast, sklearn.utils.murmurhash, sklearn.utils._openmp_helpers, sklearn.metrics.cluster._expected_mutual_info_fast, sklearn.metrics._dist_metrics, sklearn.metrics._pairwise_distances_reduction._datasets_pair, sklearn.utils._cython_blas, sklearn.metrics._pairwise_distances_reduction._base, sklearn.metrics._pairwise_distances_reduction._middle_term_computer, sklearn.utils._heap, sklearn.utils._sorting, sklearn.metrics._pairwise_distances_reduction._argkmin, sklearn.metrics._pairwise_distances_reduction._argkmin_classmode, sklearn.utils._vector_sentinel, sklearn.metrics._pairwise_distances_reduction._radius_neighbors, sklearn.metrics._pairwise_distances_reduction._radius_neighbors_classmode, sklearn.metrics._pairwise_fast, sklearn.preprocessing._csr_polynomial_expansion, sklearn.preprocessing._target_encoder_fast, sentencepiece._sentencepiece, multidict._multidict, yarl._quoting_c, propcache._helpers_c, aiohttp._http_writer, aiohttp._http_parser, aiohttp._websocket.mask, aiohttp._websocket.reader_c, frozenlist._frozenlist, zmq.backend.cython._zmq, msgspec._core, grpc._cython.cygrpc, pybase64._pybase64, scipy.signal._sigtools, scipy.signal._max_len_seq_inner, scipy.signal._upfirdn_apply, scipy.signal._spline, scipy.signal._sosfilt, scipy.signal._peak_finding_utils, npu_utils, acl, vllm_ascend.vllm_ascend_C, numba.core.typeconv._typeconv, numba._helperlib, numba._dynfunc, numba._dispatcher, numba.core.runtime._nrt_python, numba.np.ufunc._internal, numba.experimental.jitclass._box, ijson.backends._yajl2, __triton_launcher (total: 265) [repeated 3x across cluster]
+(EngineCore pid=3100) INFO 04-24 08:01:43 [ray_executor.py:119] Shutting down Ray distributed executor. If you see error log from logging.cc regarding SIGTERM received, please ignore because this is the expected termination process in Ray.
+(APIServer pid=3051) Traceback (most recent call last):
+(APIServer pid=3051)   File "<frozen runpy>", line 198, in _run_module_as_main
+(APIServer pid=3051)   File "<frozen runpy>", line 88, in _run_code
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/entrypoints/openai/api_server.py", line 696, in <module>
+(APIServer pid=3051)     uvloop.run(run_server(args))
+(APIServer pid=3051)   File "/usr/local/python3.11.14/lib/python3.11/site-packages/uvloop/__init__.py", line 92, in run
+(APIServer pid=3051)     return runner.run(wrapper())
+(APIServer pid=3051)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "/usr/local/python3.11.14/lib/python3.11/asyncio/runners.py", line 118, in run
+(APIServer pid=3051)     return self._loop.run_until_complete(task)
+(APIServer pid=3051)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+(APIServer pid=3051)   File "/usr/local/python3.11.14/lib/python3.11/site-packages/uvloop/__init__.py", line 48, in wrapper
+(APIServer pid=3051)     return await main
+(APIServer pid=3051)            ^^^^^^^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/entrypoints/openai/api_server.py", line 656, in run_server
+(APIServer pid=3051)     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/entrypoints/openai/api_server.py", line 670, in run_server_worker
+(APIServer pid=3051)     async with build_async_engine_client(
+(APIServer pid=3051)   File "/usr/local/python3.11.14/lib/python3.11/contextlib.py", line 210, in __aenter__
+(APIServer pid=3051)     return await anext(self.gen)
+(APIServer pid=3051)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/entrypoints/openai/api_server.py", line 103, in build_async_engine_client
+(APIServer pid=3051)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=3051)   File "/usr/local/python3.11.14/lib/python3.11/contextlib.py", line 210, in __aenter__
+(APIServer pid=3051)     return await anext(self.gen)
+(APIServer pid=3051)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/entrypoints/openai/api_server.py", line 144, in build_async_engine_client_from_engine_args
+(APIServer pid=3051)     async_llm = AsyncLLM.from_vllm_config(
+(APIServer pid=3051)                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/v1/engine/async_llm.py", line 225, in from_vllm_config
+(APIServer pid=3051)     return cls(
+(APIServer pid=3051)            ^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/v1/engine/async_llm.py", line 154, in __init__
+(APIServer pid=3051)     self.engine_core = EngineCoreClient.make_async_mp_client(
+(APIServer pid=3051)                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/tracing/otel.py", line 178, in sync_wrapper
+(APIServer pid=3051)     return func(*args, **kwargs)
+(APIServer pid=3051)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/v1/engine/core_client.py", line 128, in make_async_mp_client
+(APIServer pid=3051)     return AsyncMPClient(*client_args)
+(APIServer pid=3051)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/tracing/otel.py", line 178, in sync_wrapper
+(APIServer pid=3051)     return func(*args, **kwargs)
+(APIServer pid=3051)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/v1/engine/core_client.py", line 924, in __init__
+(APIServer pid=3051)     super().__init__(
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/v1/engine/core_client.py", line 583, in __init__
+(APIServer pid=3051)     with launch_core_engines(
+(APIServer pid=3051)   File "/usr/local/python3.11.14/lib/python3.11/contextlib.py", line 144, in __exit__
+(APIServer pid=3051)     next(self.gen)
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/v1/engine/utils.py", line 972, in launch_core_engines
+(APIServer pid=3051)     wait_for_engine_startup(
+(APIServer pid=3051)   File "/vllm-workspace/vllm/vllm/v1/engine/utils.py", line 1031, in wait_for_engine_startup
+(APIServer pid=3051)     raise RuntimeError(
+(APIServer pid=3051) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+(APIServer pid=3051) [ERROR] 2026-04-24-08:01:44 (PID:3051, Device:-1, RankID:-1) ERR99999 UNKNOWN applicaiton exception
+(APIServer pid=3051) sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+[Engine] Engine process exited abnormally, exit_code=1, runtime=1314s
+[Engine] ┌── Engine Crash Retry ──

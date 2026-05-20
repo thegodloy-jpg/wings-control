@@ -1,5 +1,7 @@
 # 910C + vllm-ascend + Ray 双机：现场实施验证 Runbook
 
+> 状态：历史 Ascend/Ray 专项 Runbook。当前 wings-control 部署口径请以 [../README.md](../README.md)、[../docs/deployment/docker-compose.md](../docs/deployment/docker-compose.md)、[../docs/deployment/k8s.md](../docs/deployment/k8s.md) 和 [../docs/features/pd-disaggregation.md](../docs/features/pd-disaggregation.md) 为准；本文只保留上游 vllm-ascend / Ray 问题处置经验。
+
 > **当前文档角色：实施（How）** —— 现场可执行操作手册，受众：运维 / SRE
 
 ## 文档资产列表（Ascend + Ray 系列）

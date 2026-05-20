@@ -1,0 +1,110 @@
+version: "3.8"
+
+x-images:
+  wings-control: &wings-control-image "wings-control:26.0.0"
+  wings-accel: &wings-accel-image "wings-accel:26.0.0"
+  engine: &engine-image "vllm/vllm-openai:latest"
+
+x-model:
+  model-name: &model-name "Qwen3.5-27B"
+  model-path: &model-path "/models/Qwen3.5-27B"
+  model-volume: &model-volume "/data/models/Qwen3.5-27B:/models/Qwen3.5-27B:ro"
+
+services:
+  accel-init:
+    image: *wings-accel-image
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /accel-volume
+        cp -r /opt/packages/. /accel-volume/ 2>/dev/null || true
+        echo "[accel-init] accel packages prepared"
+    volumes:
+      - accel-vol:/accel-volume
+
+  wings-control:
+    image: *wings-control-image
+    depends_on:
+      accel-init:
+        condition: service_completed_successfully
+    network_mode: "host"
+    restart: unless-stopped
+    environment:
+      WINGS_DEVICE: nvidia
+      WINGS_DEVICE_COUNT: "2"
+      ENGINE_PORT: "17000"
+      HEALTH_PORT: "19000"
+      MONITOR_PROXY_PORT: "19100"
+      ENABLE_REASON_PROXY: "true"
+    command:
+      - bash
+      - /opt/wings-control/wings_start.sh
+      - --model-name
+      - *model-name
+      - --model-path
+      - *model-path
+      - --engine
+      - vllm
+      - --chip
+      - h20-96
+      - --port
+      - "18000"
+      - --input-length
+      - "8192"
+      - --output-length
+      - "2048"
+      - --device-count
+      - "2"
+      - --model-type
+      - llm
+      - --trust-remote-code
+      - --gpu-memory-utilization
+      - "0.9"
+      - --max-num-seqs
+      - "32"
+      - --max-num-batched-tokens
+      - "8192"
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+    volumes:
+      - shared-vol:/shared-volume
+      - accel-vol:/accel-volume:ro
+      - *model-volume
+
+  engine:
+    image: *engine-image
+    depends_on:
+      - wings-control
+    network_mode: "host"
+    shm_size: "16g"
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        timeout=3600
+        elapsed=0
+        echo "[engine] waiting for /shared-volume/start_command.sh"
+        while [ ! -f /shared-volume/start_command.sh ]; do
+          sleep 2
+          elapsed=$$((elapsed + 2))
+          if [ $$elapsed -ge $$timeout ]; then
+            echo "[engine] ERROR: timeout waiting for /shared-volume/start_command.sh"
+            exit 1
+          fi
+        done
+        cat /shared-volume/start_command.sh
+        exec bash /shared-volume/start_command.sh
+    volumes:
+      - shared-vol:/shared-volume
+      - accel-vol:/accel-volume:ro
+      - *model-volume
+
+volumes:
+  shared-vol:
+  accel-vol:

@@ -1,0 +1,19 @@
+engine: vllm
+deviations:
+  # T13: Nvidia context-length cap — matches historical vllm_default.json behavior.
+  # Without this cap, vllm uses the model's max_position_embeddings which can
+  # allocate excessive KV-cache on first request on smaller GPU SKUs (L20 48 GB).
+  - field: max_model_len
+    target: cli
+    wings_value: 4096
+    upstream_default: null
+    applies_to_versions: ">=0.19.0"
+    applies_to_hardware: ["h20-96", "h20-141", "l20"]
+    rationale: >
+      Conservative default inherited from vllm_default.json; ensures predictable
+      memory on L20 (48 GB). Operators targeting H20-141G with longer sequences
+      should override via config-file or model recipe hardware_overlay.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/defaults/vllm_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings

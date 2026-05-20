@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import atexit
 import dataclasses as _dc
-import json
 import logging
 import os
 import signal
@@ -35,7 +34,6 @@ import sys
 import threading
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -43,6 +41,7 @@ from pydantic import BaseModel
 import requests
 
 from config.settings import settings
+from core.runtime_config_loader import load_distributed_runtime_config
 from utils.env_utils import get_local_ip, get_master_ip, get_master_port, get_worker_port
 from utils.file_utils import safe_write_file
 
@@ -82,7 +81,7 @@ class EngineStartRequest(BaseModel):
 class WorkerConfig:
     """Worker 节点配置。
 
-    从环境变量和 distributed_config.json 加载 Master 地址和本机端口。
+    从环境变量和 Phase D distributed defaults 加载 Master 地址和本机端口。
 
     Attributes:
         node_id:            唯一标识 (worker_<uuid>)
@@ -100,21 +99,7 @@ class WorkerConfig:
         self.heartbeat_interval = 30
 
     def _load_config(self, master_ip: str | None = None):
-        config_path = (
-            Path(__file__).parent.parent / "config" / "defaults" / "distributed_config.json"
-        )
-        try:
-            with open(config_path) as f:
-                _config = json.load(f)
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                f"Distributed config not found: {config_path}. "
-                "Ensure infer-control-sidecar-unified is installed correctly."
-            ) from exc
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"Malformed JSON in {config_path}: {exc}"
-            ) from exc
+        _config = load_distributed_runtime_config()
 
         self.ip = get_local_ip()
 

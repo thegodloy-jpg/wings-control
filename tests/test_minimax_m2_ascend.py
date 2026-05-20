@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """MiniMax-M2 vLLM-Ascend 适配单测。"""
 
-import json
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]  # wings-control/
 sys.path.insert(0, str(ROOT / "wings_control"))
 
 import engines.vllm_adapter as vllm_adapter  # noqa: E402
+from core.model_deploy_compat_loader import load_migrated_model_deploy_config  # noqa: E402
 
 
 class _FakeMiniMaxM2Model:
@@ -21,23 +21,21 @@ class _FakeMiniMaxM2Model:
 
 class TestMiniMaxM2AscendDefaults(unittest.TestCase):
     def test_ascend_default_contains_minimax_m2_vllm_fields(self):
-        defaults_path = ROOT / "wings_control" / "config" / "defaults" / "ascend_default.json"
-        defaults = json.loads(defaults_path.read_text(encoding="utf-8-sig"))
+        defaults, _ = load_migrated_model_deploy_config({"device": "ascend"})
+        self.assertIsNotNone(defaults, "Phase D carrier assembly returned None")
 
-        cfg = defaults["model_deploy_config"]["llm"]["MiniMaxM2ForCausalLM"]["default"]["vllm_ascend"]
+        cfg = defaults["llm"]["MiniMaxM2ForCausalLM"]["default"]["vllm_ascend"]
 
         self.assertTrue(cfg["trust_remote_code"])
         self.assertEqual(cfg["gpu_memory_utilization"], 0.92)
         self.assertEqual(cfg["max_model_len"], 34816)
         self.assertEqual(cfg["max_num_seqs"], 64)
         self.assertEqual(cfg["tool_call_parser"], "minimax_m2")
-        self.assertEqual(cfg["reasoning_parser"], "minimax_m2_reasoning")
+        self.assertEqual(cfg["reasoning_parser"], "minimax_m2")
         self.assertEqual(cfg["compilation_config"], {"cudagraph_mode": "FULL_DECODE_ONLY"})
         self.assertEqual(cfg["additional_config"], {"enable_cpu_binding": True})
 
-        distributed_cfg = defaults["model_deploy_config"]["llm"]["MiniMaxM2ForCausalLM"]["default"][
-            "vllm_ascend_distributed"
-        ]
+        distributed_cfg = defaults["llm"]["MiniMaxM2ForCausalLM"]["default"]["vllm_ascend_distributed"]
         self.assertEqual(distributed_cfg["compilation_config"], cfg["compilation_config"])
         self.assertEqual(distributed_cfg["additional_config"], cfg["additional_config"])
 

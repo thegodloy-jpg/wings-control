@@ -1,0 +1,24 @@
+architecture: Qwen3_5ForConditionalGeneration
+also_matches: []
+defaults:
+  trust_remote_code: true
+  task: generate
+  tool_call_parser: hermes
+  reasoning_parser: qwen3
+hardware_overlays:
+- applies_to_hardware:
+  - 910b-32
+  - 910b-64
+  - 910c
+  defaults:
+    max_model_len: 4096
+    no_enable_prefix_caching: true
+    async_scheduling: true
+    compilation_config: '{"cudagraph_mode":"FULL_DECODE_ONLY"}'
+    additional_config: '{"enable_cpu_binding":true}'
+- applies_to_hardware:
+  - h20-96
+  - h20-141
+  - l20
+  defaults:
+    max_model_len: 4096

@@ -1,0 +1,19 @@
+engine: sglang
+deviations:
+  # T14: Nvidia/SGLang context-length cap.
+  # Canonical key max_model_len is translated to SGLang's --context-length flag
+  # via mappings/canonical_to_engines.yaml (sglang entry: field=context_length).
+  - field: max_model_len
+    target: cli
+    wings_value: 4096
+    upstream_default: null
+    applies_to_versions: ">=0.5.9"
+    applies_to_hardware: ["h20-96", "h20-141", "l20"]
+    rationale: >
+      Conservative default matching historical sglang_default.json behavior;
+      prevents unbounded KV-cache on L20. Override via model recipe
+      hardware_overlay for H20-141G high-throughput deployments.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/defaults/sglang_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings

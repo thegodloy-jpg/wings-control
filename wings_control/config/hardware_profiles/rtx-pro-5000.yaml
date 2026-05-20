@@ -1,0 +1,11 @@
+{
+  "chip_id": "rtx-pro-5000",
+  "display_name": "NVIDIA RTX Pro 5000",
+  "vendor": "nvidia",
+  "hbm_gb": 32,
+  "peer_link": "pcie",
+  "recommended": {},
+  "notes": [],
+  "source_type": "vendor_doc",
+  "source_path": ""
+}

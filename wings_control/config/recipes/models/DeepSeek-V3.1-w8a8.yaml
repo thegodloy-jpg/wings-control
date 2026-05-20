@@ -1,0 +1,18 @@
+model_id: DeepSeek-V3.1-w8a8
+matches:
+  model_names:
+  - DeepSeek-V3.1-w8a8
+  model_paths:
+  - DeepSeek-V3.1-w8a8
+inherits_architecture: DeepseekV3ForCausalLM
+defaults:
+  trust_remote_code: true
+  tool_call_parser: deepseek_v31
+  reasoning_parser: deepseek_r1
+hardware_overlays:
+- applies_to_hardware:
+  - 910b-32
+  - 910b-64
+  - 910c
+  defaults:
+    max_model_len: 4096

@@ -130,6 +130,26 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("--enforce-eager", script)
         self.assertIn("[wings-cmd] >>> exec vllm serve /usr/local/serving/models/", script)
 
+    def test_dp_deployment_network_envs_are_rendered_from_env_policies(self):
+        params = _base_params(node_rank=0)
+        policies = [
+            {
+                "name": "HCCL_IF_IP",
+                "mode": "force_override",
+                "value_template": "from_policy",
+                "applies_when": {
+                    "engine": "vllm_ascend",
+                    "deployment_mode": "dp_deployment",
+                },
+            }
+        ]
+
+        with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier), \
+                patch("engines.vllm_adapter.load_engine_env_policies", return_value=policies, create=True):
+            script = build_start_script(params)
+
+        self.assertIn("export HCCL_IF_IP=from_policy", script)
+
     def test_dp_deployment_strips_duplicate_dp_cli_flags_from_engine_config(self):
         params = _base_params(node_rank=0)
         params["engine_config"].update({

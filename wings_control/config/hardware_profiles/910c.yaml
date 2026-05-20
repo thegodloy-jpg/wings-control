@@ -1,0 +1,11 @@
+{
+  "chip_id": "910c",
+  "display_name": "Ascend 910C",
+  "vendor": "ascend",
+  "hbm_gb": null,
+  "peer_link": "hccl",
+  "recommended": {},
+  "notes": [],
+  "source_type": "vendor_doc",
+  "source_path": ""
+}

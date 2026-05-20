@@ -1,0 +1,28 @@
+{
+  "architecture": "Qwen3ForCausalLM",
+  "also_matches": [
+    "Qwen2ForCausalLM",
+    "Qwen3NextForCausalLM"
+  ],
+  "applies_to_versions": {
+    "vllm": ">=0.19.0",
+    "vllm_ascend": ">=0.18.0",
+    "sglang": ">=0.5.9"
+  },
+  "defaults": {
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "enable_auto_tool_choice": true,
+    "chat_template": "tool_use"
+  },
+  "hardware_overlays": [
+    {
+      "applies_to_hardware": [
+        "910b-32"
+      ],
+      "defaults": {
+        "max_num_seqs": 16
+      }
+    }
+  ]
+}

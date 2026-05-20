@@ -1,0 +1,205 @@
+# Canonical parameter key → engine-specific field name + render target.
+#
+# Rules (FR-007 / FR-008):
+#   - Each canonical key maps to one entry per supported engine.
+#   - `field`   : engine-native CLI flag or config key name.
+#   - `target`  : where the value is written ("cli" = command-line flag,
+#                 "additional_config" = engine JSON config block).
+#   - `applies_to_versions`: semver constraint; omit only if version-agnostic.
+#   - Engines absent from a key's map simply do not receive that parameter.
+#   - lint_mappings.py verifies each engine field exists in the corresponding
+#     manifest's upstream_params list (FR-008 orphan check).
+{
+  "canonical": {
+    "host": {
+      "vllm":         {"field": "host",           "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "host",           "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "host",           "target": "cli", "applies_to_versions": ">=0.5.9"},
+      "mindie":       {"field": "ipAddress",      "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    "port": {
+      "vllm":         {"field": "port",           "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "port",           "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "port",           "target": "cli", "applies_to_versions": ">=0.5.9"},
+      "mindie":       {"field": "port",           "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    "model_name": {
+      "vllm":         {"field": "served_model_name", "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "served_model_name", "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "served_model_name", "target": "cli", "applies_to_versions": ">=0.5.9"},
+      "mindie":       {"field": "modelName",      "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    "model_path": {
+      "vllm":         {"field": "model",          "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "model",          "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "model_path",     "target": "cli", "applies_to_versions": ">=0.5.9"},
+      "mindie":       {"field": "modelWeightPath","target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    "trust_remote_code": {
+      "vllm":         {"field": "trust_remote_code",  "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "trust_remote_code",  "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "trust_remote_code",  "target": "cli", "applies_to_versions": ">=0.5.9"},
+      "mindie":       {"field": "trustRemoteCode",    "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    "dtype": {
+      "vllm":         {"field": "dtype",          "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "dtype",          "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "dtype",          "target": "cli", "applies_to_versions": ">=0.5.9"}
+    },
+    "kv_cache_dtype": {
+      "vllm":         {"field": "kv_cache_dtype", "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "kv_cache_dtype", "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "kv_cache_dtype", "target": "cli", "applies_to_versions": ">=0.5.9"}
+    },
+    "quantization": {
+      "vllm":         {"field": "quantization",   "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "quantization",   "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "quantization",   "target": "cli", "applies_to_versions": ">=0.5.9"}
+    },
+    "quantization_param_path": {
+      "vllm":         {"field": "quantization_param_path", "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "quantization_param_path", "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "quantization_param_path", "target": "cli", "applies_to_versions": ">=0.5.9"}
+    },
+
+    # ── Context / sequence length ──────────────────────────────────────────────
+    # Single canonical name; each engine has its own field name.
+    "max_model_len": {
+      "vllm":                {"field": "max_model_len",  "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":         {"field": "max_model_len",  "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":              {"field": "context_length", "target": "cli", "applies_to_versions": ">=0.5.9"},
+      "mindie":              {"field": "maxSeqLen",       "target": "additional_config", "applies_to_versions": ">=2.3.0"},
+      "mindie_distributed":  {"field": "maxSeqLen",       "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+
+    # ── MindIE-specific sequence budget fields ─────────────────────────────────
+    # maxInputTokenLen: max tokens per input request (roughly max_prompt_len).
+    "max_input_token_len": {
+      "mindie":              {"field": "maxInputTokenLen", "target": "additional_config", "applies_to_versions": ">=2.3.0"},
+      "mindie_distributed":  {"field": "maxInputTokenLen", "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    # max_prefill_tokens: max tokens consumed in one prefill step (maxIterTimes).
+    "max_prefill_tokens": {
+      "vllm":                {"field": "max_num_batched_tokens", "target": "cli",               "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":         {"field": "max_num_batched_tokens", "target": "cli",               "applies_to_versions": ">=0.18.0"},
+      "sglang":              {"field": "max_prefill_tokens",     "target": "cli",               "applies_to_versions": ">=0.5.9"},
+      "mindie":              {"field": "maxIterTimes",           "target": "additional_config", "applies_to_versions": ">=2.3.0"},
+      "mindie_distributed":  {"field": "maxIterTimes",           "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    # max_prefill_batch_size: number of requests in one prefill batch.
+    "max_prefill_batch_size": {
+      "mindie_distributed":  {"field": "maxPrefillBatchSize", "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    # max_batch_size: total concurrent decode batch size.
+    "max_batch_size": {
+      "mindie_distributed":  {"field": "maxBatchSize", "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+
+    # ── Memory utilization ─────────────────────────────────────────────────────
+    "gpu_memory_utilization": {
+      "vllm":         {"field": "gpu_memory_utilization", "target": "cli",               "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "gpu_memory_utilization", "target": "cli",               "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "mem_fraction_static",    "target": "cli",               "applies_to_versions": ">=0.5.9"},
+      "mindie":       {"field": "npu_memory_fraction",    "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+
+    # ── Concurrency / scheduling ───────────────────────────────────────────────
+    "max_num_seqs": {
+      "vllm":         {"field": "max_num_seqs",         "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "max_num_seqs",         "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "max_running_requests", "target": "cli", "applies_to_versions": ">=0.5.9"}
+    },
+    "enable_chunked_prefill": {
+      "vllm":         {"field": "enable_chunked_prefill", "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "enable_chunked_prefill", "target": "cli", "applies_to_versions": ">=0.18.0"}
+    },
+    "max_num_batched_tokens": {
+      "vllm":         {"field": "max_num_batched_tokens", "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "max_num_batched_tokens", "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "chunked_prefill_size",   "target": "cli", "applies_to_versions": ">=0.5.9"}
+    },
+    "block_size": {
+      "vllm":         {"field": "block_size", "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "block_size", "target": "cli", "applies_to_versions": ">=0.18.0"}
+    },
+    "seed": {
+      "vllm":         {"field": "seed",        "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "seed",        "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "random_seed", "target": "cli", "applies_to_versions": ">=0.5.9"}
+    },
+    "enable_prefix_caching": {
+      "vllm":         {"field": "enable_prefix_caching",       "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "enable_prefix_caching",       "target": "cli", "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "disable_chunked_prefix_cache", "target": "cli", "applies_to_versions": ">=0.5.9"}
+    },
+    "enable_expert_parallel": {
+      "vllm":         {"field": "enable_expert_parallel", "target": "cli",               "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "enable_expert_parallel", "target": "cli",               "applies_to_versions": ">=0.18.0"},
+      "sglang":       {"field": "enable_ep_moe",          "target": "cli",               "applies_to_versions": ">=0.5.9"},
+      "mindie":       {"field": "enable_ep_moe",          "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    },
+    "compilation_config": {
+      "vllm":         {"field": "compilation_config", "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "compilation_config", "target": "cli", "applies_to_versions": ">=0.18.0"}
+    },
+
+    # ── Tool call & reasoning parsers ──────────────────────────────────────────
+    # tool_call_parser: canonical name; engines differ in field name AND value format.
+    # value_map: translates canonical values to engine-native format strings.
+    # SGLang uses no underscores: deepseek_v3→deepseekv3; hermes→qwen25.
+    # MindIE renames the field and uses the same value format as SGLang.
+    "tool_call_parser": {
+      "vllm":         {"field": "tool_call_parser",        "target": "cli",               "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "tool_call_parser",        "target": "cli",               "applies_to_versions": ">=0.18.0"},
+      "sglang": {
+        "field": "tool_call_parser", "target": "cli", "applies_to_versions": ">=0.5.9",
+        "value_map": {
+          "deepseek_v3":  "deepseekv3",
+          "deepseek_v31": "deepseekv31",
+          "deepseek_v32": "deepseekv32",
+          "hermes":       "qwen25",
+          "qwen3_xml":    "qwen25",
+          "llama3_json":  "llama3",
+          "minimax_m2":   "minimax_m2",
+          "kimi_k2":      "kimi_k2"
+          # glm47: not listed → sglang does not support GLM4 parser; key is dropped
+        }
+      },
+      "mindie": {
+        "field": "mindie_tool_call_parser", "target": "additional_config", "applies_to_versions": ">=2.3.0",
+        "value_map": {
+          "deepseek_v3":  "deepseekv3",
+          "deepseek_v31": "deepseek_v31",
+          "deepseek_v32": "deepseekv32",
+          "hermes":       "qwen3",
+          "qwen3_xml":    "qwen3",
+          "llama3_json":  "llama3"
+        }
+      },
+      "mindie_distributed": {
+        "field": "mindie_tool_call_parser", "target": "additional_config", "applies_to_versions": ">=2.3.0",
+        "value_map": {
+          "deepseek_v3":  "deepseekv3",
+          "deepseek_v31": "deepseek_v31",
+          "deepseek_v32": "deepseekv32",
+          "hermes":       "qwen3",
+          "qwen3_xml":    "qwen3",
+          "llama3_json":  "llama3"
+        }
+      }
+    },
+    "reasoning_parser": {
+      "vllm":         {"field": "reasoning_parser", "target": "cli", "applies_to_versions": ">=0.19.0"},
+      "vllm_ascend":  {"field": "reasoning_parser", "target": "cli", "applies_to_versions": ">=0.18.0"}
+    },
+
+    # ── MindIE model type hint ─────────────────────────────────────────────────
+    # model_type is a MindIE-only canonical key; other engines ignore it.
+    # Values are MindIE-specific ("deepseekv2", "qwen3", "qwen2_5") and are
+    # set per-architecture in deviations/mindie.yaml via applies_to_architectures.
+    "model_type": {
+      "mindie":             {"field": "mindie_model_type", "target": "additional_config", "applies_to_versions": ">=2.3.0"},
+      "mindie_distributed": {"field": "mindie_model_type", "target": "additional_config", "applies_to_versions": ">=2.3.0"}
+    }
+  }
+}

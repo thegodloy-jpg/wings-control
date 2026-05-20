@@ -195,7 +195,7 @@ def build_start_command(params: Dict[str, Any]) -> str:
         if ":" in head_node_addr:
             cmd += f" --dist-init-addr {shlex.quote(head_node_addr)}"
         else:
-            # dist_port: params 优先（config_loader 从 distributed_config.json 注入），其次环境变量
+            # dist_port: params 优先（config_loader 从 Phase D distributed defaults 注入），其次环境变量
             sglang_dist_port = str(
                 params.get(
                     "dist_port",

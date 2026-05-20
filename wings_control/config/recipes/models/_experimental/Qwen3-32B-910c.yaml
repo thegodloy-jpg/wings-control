@@ -1,0 +1,25 @@
+{
+  "model_id": "Qwen3-32B-910C-experimental",
+  "matches": {
+    "model_paths": [
+      "Qwen3-32B"
+    ],
+    "model_names": [
+      "Qwen3-32B"
+    ]
+  },
+  "inherits_architecture": "Qwen3ForCausalLM",
+  "defaults": {
+    "max_num_seqs": 64
+  },
+  "hardware_overlays": [
+    {
+      "applies_to_hardware": [
+        "910c"
+      ],
+      "defaults": {
+        "max_num_seqs": 128
+      }
+    }
+  ]
+}

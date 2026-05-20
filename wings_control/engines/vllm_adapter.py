@@ -40,6 +40,11 @@ try:
 except ImportError:
     from core.version_util import parse_engine_version_tuple  # noqa: F811
 
+try:
+    from wings_control.core.env_policy_renderer import load_engine_env_policies, render_env_exports
+except ImportError:
+    from core.env_policy_renderer import load_engine_env_policies, render_env_exports  # noqa: F811
+
 
 def _sanitize_shell_path(path: str) -> str:
     """对路径进行 shell 安全转义，防止命令注入攻击。
@@ -333,36 +338,6 @@ def _is_vllm_ascend_ray_distributed(params: Dict[str, Any], engine: str) -> bool
     return params.get("distributed_executor_backend", "ray") == "ray"
 
 
-def _filter_vllm_ascend_ray_incompatible_env(
-    commands: List[str],
-    params: Dict[str, Any],
-    engine: str,
-) -> List[str]:
-    """过滤 vllm_ascend Ray 分布式不适用的环境变量。"""
-    if not _is_vllm_ascend_ray_distributed(params, engine):
-        return commands
-    return [
-        command for command in commands
-        if command.strip() != "export HCCL_OP_EXPANSION_MODE=AIV"
-    ]
-
-
-def _build_vllm_ascend_forced_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
-    """构建 vllm_ascend 强制生效的通用环境变量。"""
-    if engine != "vllm_ascend":
-        return []
-
-    commands = [
-        "export OMP_PROC_BIND=false",
-        "export OMP_NUM_THREADS=1",
-        "export HCCL_BUFFSIZE=1024",
-        "export TASK_QUEUE_ENABLE=1",
-    ]
-    if not _is_vllm_ascend_ray_distributed(params, engine):
-        commands.append("export HCCL_OP_EXPANSION_MODE=AIV")
-    return commands
-
-
 def _build_base_env_commands(params, engine: str, root: str) -> List[str]:
     """构建基础环境变量设置命令列表。
 
@@ -654,7 +629,7 @@ def _build_qat_env_commands(engine) -> List[str]:
     return env_commands
 
 
-def _build_pd_role_env_commands(engine: str, current_ip: str, network_interface: str) -> List[str]:
+def _build_pd_role_env_commands(params: Dict[str, Any], engine: str, current_ip: str, network_interface: str) -> List[str]:
     """构建 PD 分离部署的环境变量设置命令。
 
     PD 分离 (Prefill-Decode Disaggregation) 是一种高级部署架构，
@@ -681,33 +656,14 @@ def _build_pd_role_env_commands(engine: str, current_ip: str, network_interface:
         - PD_ROLE: PD 角色 ('P' 或 'D')
         - VLLM_LLMDD_RPC_PORT: LLMDataDist RPC 端口号
     """
-    env_commands = []
-    if get_pd_role_env():
-        if engine == "vllm":
-            env_commands.append(f'export VLLM_NIXL_SIDE_CHANNEL_HOST={shlex.quote(current_ip)}')
-        elif engine == "vllm_ascend":
-            rpc_port = os.getenv('VLLM_LLMDD_RPC_PORT', "5569")
-            mooncake_bootstrap_port = os.getenv('VLLM_MOONCAKE_BOOTSTRAP_PORT', "23000")
-            # CANN 环境初始化已由 _build_base_env_commands() 完成，此处不再重复
-            env_commands.extend([
-                f"export HCCL_IF_IP={shlex.quote(current_ip)}",
-                f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                f"export HCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
-                "export OMP_PROC_BIND=false",
-                f"export OMP_NUM_THREADS={os.getenv('OMP_NUM_THREADS', '100')}",
-                "export VLLM_USE_V1=1",
-                "export LCCL_DETERMINISTIC=1",
-                "export HCCL_DETERMINISTIC=true",
-                "export CLOSE_MATMUL_K_SHIFT=1",
-                f"export VLLM_LLMDD_RPC_PORT={rpc_port}",
-                f"export VLLM_MOONCAKE_BOOTSTRAP_PORT={mooncake_bootstrap_port}",
-                f"export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:{os.getenv('NPU_MAX_SPLIT_SIZE_MB', '256')}",
-                # mooncake-transfer-engine 的 Ascend 传输后端 (ascend_transport.so)
-                # 安装在 /usr/local/lib，需追加到 LD_LIBRARY_PATH 以便运行时加载
-                'export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"',
-            ])
-    return env_commands
+    if not get_pd_role_env():
+        return []
+    return _render_env_policy_commands(
+        params, engine, "pd",
+        current_ip=current_ip,
+        network_interface=network_interface,
+        pd_role=get_pd_role_env(),
+    )
 
 
 def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
@@ -734,32 +690,29 @@ def _build_distributed_env_commands(params: Dict[str, Any], current_ip: str,
     if params.get("distributed", False):
         backend = params.get("distributed_executor_backend")
         if backend == "ray":
-            env_commands = _build_ray_network_env_commands(current_ip, network_interface, engine)
+            env_commands = _render_env_policy_commands(
+                params, engine, "ray",
+                current_ip=current_ip,
+                network_interface=network_interface,
+            )
         elif backend == "dp_deployment":
-            env_commands = _build_dp_network_env_commands(params, current_ip, network_interface, engine)
+            env_commands = _render_env_policy_commands(
+                params, engine, "dp_deployment",
+                current_ip=current_ip,
+                network_interface=network_interface,
+            )
     return env_commands
 
 
 def _build_ray_network_env_commands(current_ip: str, network_interface: str, engine: str) -> List[str]:
     """Build Ray distributed network environment commands."""
-    if engine == "vllm":
-        return [
-            f"export VLLM_HOST_IP={shlex.quote(current_ip)}",
-            f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-            f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-            f"export NCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
-        ]
-    if engine == "vllm_ascend":
-        return [
-            f"export HCCL_IF_IP={shlex.quote(current_ip)}",
-            f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-            f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-            "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
-            "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
-            # Ascend NPU 首次推理 JIT 编译算子耗时可能远超 Ray 编译DAG默认 300s 超时
-            "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
-        ]
-    return []
+    return _render_env_policy_commands(
+        {"engine": engine, "distributed_executor_backend": "ray"},
+        engine,
+        "ray",
+        current_ip=current_ip,
+        network_interface=network_interface,
+    )
 
 
 def _build_dp_network_env_commands(
@@ -769,40 +722,25 @@ def _build_dp_network_env_commands(
     engine: str,
 ) -> List[str]:
     """Build dp_deployment network environment commands."""
-    if engine == "vllm":
-        return [
-            f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-            f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-            f"export NCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
-            f"export VLLM_NIXL_SIDE_CHANNEL_PORT={params.get('nixl_port', '')}",
-            "export NCCL_IB_DISABLE=0",
-            "export NCCL_CUMEM_ENABLE=0",
-            "export NCCL_NET_GDR_LEVEL=SYS",
-        ]
-    if engine == "vllm_ascend":
-        return _build_ascend_dp_network_env_commands(current_ip, network_interface)
-    return []
+    return _render_env_policy_commands(
+        params, engine, "dp_deployment",
+        current_ip=current_ip,
+        network_interface=network_interface,
+    )
 
 
 def _build_ascend_dp_network_env_commands(current_ip: str, network_interface: str) -> List[str]:
     """Build vLLM-Ascend dp_deployment network environment commands."""
-    omp_threads = os.getenv('OMP_NUM_THREADS', '10')
-    hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '1024')
-    return [
-        f"export HCCL_IF_IP={shlex.quote(current_ip)}",
-        f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
-        f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
-        f"export HCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
-        "export OMP_PROC_BIND=false",
-        f"export OMP_NUM_THREADS={omp_threads}",
-        f"export HCCL_BUFFSIZE={hccl_buffsize}",
-        'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
-        "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
-        "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-        "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-        "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-        "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
-    ]
+    commands = _render_env_policy_commands(
+        {"engine": "vllm_ascend", "distributed_executor_backend": "dp_deployment"},
+        "vllm_ascend",
+        "dp_deployment",
+        current_ip=current_ip,
+        network_interface=network_interface,
+    )
+    if any(command.startswith("export HCCL_BUFFSIZE=") for command in commands):
+        commands.append('echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"')
+    return commands
 
 
 def _build_deepseek_fp8_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
@@ -1148,13 +1086,16 @@ def _build_env_commands(params: Dict[str, Any], current_ip: str, network_interfa
     env_commands.extend(_build_base_env_commands(params, engine, root))
     env_commands.extend(_build_cache_env_commands(engine, params))
     env_commands.extend(_build_qat_env_commands(engine))
-    env_commands.extend(_build_pd_role_env_commands(engine, current_ip, network_interface))
+    env_commands.extend(_build_pd_role_env_commands(params, engine, current_ip, network_interface))
     env_commands.extend(_build_distributed_env_commands(params, current_ip, network_interface, engine))
     env_commands.extend(_build_deepseek_fp8_env_commands(params, engine))
     env_commands.extend(_build_ascend910_9362_env_commands(params, engine))
     env_commands.extend(_build_model_env_commands(params, engine))
-    env_commands = _filter_vllm_ascend_ray_incompatible_env(env_commands, params, engine)
-    env_commands.extend(_build_vllm_ascend_forced_env_commands(params, engine))
+    env_commands.extend(_render_env_policy_commands(
+        params, engine, "common",
+        current_ip=current_ip,
+        network_interface=network_interface,
+    ))
 
     return env_commands
 
@@ -1863,7 +1804,8 @@ _SH_DETECT_IP = (
 )
 # VLLM_HOST_IP 优先级：POD_IP（K8s downward API） > RANK_IP（上层调度注入）> 路由探测。
 # 与 HCCL_IF_IP 走同一来源，避免多网卡场景下两者落到不同网卡。
-_SH_VLLM_HOST = "export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-" + _SH_DETECT_IP + "}}"
+_SH_VLLM_HOST_VALUE = "${POD_IP:-${RANK_IP:-" + _SH_DETECT_IP + "}}"
+_SH_VLLM_HOST = "export VLLM_HOST_IP=" + _SH_VLLM_HOST_VALUE
 _SH_IF_DETECT = (
     "$(awk '$2==\"00000000\"{print $1;exit}'"
     " /proc/net/route 2>/dev/null || echo eth0)"
@@ -1882,6 +1824,53 @@ class DistScriptCtx:
     head_addr: str
     ray_port: str
     node_ips: str
+
+
+def _env_policy_context(
+    params: Dict[str, Any],
+    engine: str,
+    deployment_mode: str,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Build the runtime context used by env_policies value_template rendering."""
+    network_interface = os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0"))
+    context: dict[str, Any] = {
+        "engine": engine,
+        "is_ascend": engine == "vllm_ascend",
+        "deployment_mode": deployment_mode,
+        "distributed_executor_backend": params.get("distributed_executor_backend", ""),
+        "current_ip": os.getenv("POD_IP", get_local_ip()),
+        "network_interface": network_interface,
+        "vllm_host_ip_expr": _SH_VLLM_HOST_VALUE,
+        "if_detect_expr": _SH_IF_DETECT,
+        "nixl_port": str(params.get("nixl_port", os.getenv("VLLM_NIXL_SIDE_CHANNEL_PORT", "12345"))),
+        "hccl_connect_timeout": os.getenv("HCCL_CONNECT_TIMEOUT", "1800"),
+        "hccl_exec_timeout": os.getenv("HCCL_EXEC_TIMEOUT", "7200"),
+        "ray_cgraph_get_timeout": os.getenv("RAY_CGRAPH_get_timeout", "3600"),
+        "omp_num_threads": os.getenv("OMP_NUM_THREADS", "100"),
+        "hccl_buffsize": os.getenv("HCCL_BUFFSIZE", "1024"),
+        "pd_rpc_port": os.getenv("VLLM_LLMDD_RPC_PORT", "5569"),
+        "mooncake_bootstrap_port": os.getenv("VLLM_MOONCAKE_BOOTSTRAP_PORT", "23000"),
+        "npu_max_split_size_mb": os.getenv("NPU_MAX_SPLIT_SIZE_MB", "256"),
+        "engine_ready_timeout": os.getenv("VLLM_ENGINE_READY_TIMEOUT_S", "7200"),
+        "vllm_ascend_ray_distributed": _is_vllm_ascend_ray_distributed(params, engine),
+        "deepseek_ascend_dp_deployment": _is_deepseek_ascend_dp_deployment(params),
+    }
+    context.update(overrides)
+    return context
+
+
+def _render_env_policy_commands(
+    params: Dict[str, Any],
+    engine: str,
+    deployment_mode: str,
+    **context_overrides: Any,
+) -> List[str]:
+    policies = load_engine_env_policies(engine)
+    if not policies:
+        return []
+    context = _env_policy_context(params, engine, deployment_mode, **context_overrides)
+    return render_env_exports(policies, context)
 
 
 def build_triton_patch_preamble(engine: str) -> str:
@@ -2001,30 +1990,19 @@ def build_modelslim_quarot_patch_preamble(engine: str) -> str:
     )
 
 
-def _build_comm_env_commands(is_ascend: bool) -> List[str]:
+def _build_comm_env_commands(params: Dict[str, Any], ctx: DistScriptCtx, role: str) -> List[str]:
     """返回 HCCL/NCCL 通信环境变量设置命令。"""
-    if is_ascend:
-        hccl_connect_timeout = os.getenv('HCCL_CONNECT_TIMEOUT', '1800')
-        hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
-        # Ascend NPU 首次推理需 JIT 编译算子，耗时可能超过 Ray 编译DAG默认 300s 超时。
-        # 设置较大值避免 RayChannelTimeoutError；可通过环境变量覆盖。
-        ray_cgraph_get_timeout = os.getenv('RAY_CGRAPH_get_timeout', '3600')
-        return [
-            "export HCCL_WHITELIST_DISABLE=1",
-            "export HCCL_IF_IP=$VLLM_HOST_IP",
-            "export HCCL_SOCKET_IFNAME=" + _SH_IF_DETECT,
-            "export TP_SOCKET_IFNAME=" + _SH_IF_DETECT,
-            "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
-            "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
-            f"export HCCL_CONNECT_TIMEOUT={hccl_connect_timeout}",
-            f"export HCCL_EXEC_TIMEOUT={hccl_exec_timeout}",
-            f"export RAY_CGRAPH_get_timeout={ray_cgraph_get_timeout}",
-        ]
-    nccl_if = os.getenv('NCCL_SOCKET_IFNAME', 'eth0')
-    return [
-        f"export NCCL_SOCKET_IFNAME={nccl_if}",
-        f"export TP_SOCKET_IFNAME={nccl_if}",
-    ]
+    network_interface = os.getenv(
+        "NCCL_SOCKET_IFNAME",
+        os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0")),
+    )
+    return _render_env_policy_commands(
+        params, ctx.engine, "ray",
+        ray_role=role,
+        node_rank=ctx.node_rank,
+        current_ip="$VLLM_HOST_IP",
+        network_interface=network_interface,
+    )
 
 
 def _build_ray_wait_loop(nnodes: int) -> List[str]:
@@ -2135,52 +2113,47 @@ def _build_ray_head_commands(
     sparse_args: str,
 ) -> List[str]:
     """Build shell commands for the Ray head node (rank 0)."""
-    parts: List[str] = [_SH_VLLM_HOST]
-    parts.extend(_build_comm_env_commands(ctx.is_ascend))
-    parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
+    parts: List[str] = []
+    parts.extend(_build_comm_env_commands(params, ctx, "head"))
     parts.extend(_build_ray_head_start_commands(params, ctx))
     parts.extend(_build_ray_wait_loop(ctx.nnodes))
     parts.append(_build_ray_head_exec_command(params, ctx, sparse_args))
     return parts
 
 
-def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = "") -> List[str]:
+def _build_ascend_ray_worker_env(params: Dict[str, Any], ctx: DistScriptCtx) -> List[str]:
     """构建 Ascend NPU Ray worker 的 HCCL 环境命令。
 
     优先尝试 Master 注入的 head_addr，失败后再扫描 node_ips 列表。
     """
     # 构建优先级排列的 IP 列表：head_addr 在前（如果存在且不在 node_ips 中已是首位）
-    if head_addr:
+    if ctx.head_addr:
         ip_list_expr = (
-            f"KNOWN_HEAD=\"{head_addr}\"\n"
-            f"NODE_IPS_LIST=\"{node_ips}\"\n"
+            f"KNOWN_HEAD=\"{ctx.head_addr}\"\n"
+            f"NODE_IPS_LIST=\"{ctx.node_ips}\"\n"
             "# 优先尝试已知 head，再扫描其余节点\n"
             "CANDIDATE_IPS=\"$KNOWN_HEAD $(echo $NODE_IPS_LIST | tr ',' ' ' "
             "| grep -v \"^$KNOWN_HEAD$\")\""
         )
     else:
         ip_list_expr = (
-            f"NODE_IPS_LIST=\"{node_ips}\"\n"
+            f"NODE_IPS_LIST=\"{ctx.node_ips}\"\n"
             "CANDIDATE_IPS=\"$(echo $NODE_IPS_LIST | tr ',' ' ')\""
         )
-    return [
-        "export HCCL_WHITELIST_DISABLE=1",
-        # 先确定 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），后续 HCCL_IF_IP 与 Ray
-        # node-ip-address 都复用此值，保证多网卡场景下走同一张网卡。
-        _SH_VLLM_HOST,
+    return _build_comm_env_commands(params, ctx, "worker") + [
         ip_list_expr,
         "HEAD_IP=\"\"",
-        f"echo \"[worker] Scanning for Ray head on port {ray_port}...\"",
+        f"echo \"[worker] Scanning for Ray head on port {ctx.ray_port}...\"",
         "for attempt in $(seq 1 120); do",
         "  for ip in $CANDIDATE_IPS; do",
         f"    if python3 -c \""
         f"import socket; s=socket.socket();"
         f" s.settimeout(2);"
-        f" s.connect(('$ip',{ray_port}));"
+        f" s.connect(('$ip',{ctx.ray_port}));"
         f" s.close()\""
         f" 2>/dev/null; then",
         "      HEAD_IP=$ip",
-        f"      echo \"[worker] Found Ray head at $HEAD_IP:{ray_port}\"",
+        f"      echo \"[worker] Found Ray head at $HEAD_IP:{ctx.ray_port}\"",
         "      break 2",
         "    fi",
         "  done",
@@ -2189,15 +2162,6 @@ def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = 
         "if [ -z \"$HEAD_IP\" ]; then "
         "echo '[worker] ERROR: Could not find Ray head'; "
         "exit 1; fi\n",
-        # 与 head 保持一致：HCCL_IF_IP 复用 VLLM_HOST_IP，避免与 8.8.8.8 路由探测/
-        # socket 出口探测落到不同网卡（业务网 vs 管理网），导致 HCCL 性能/稳定性问题。
-        "export HCCL_IF_IP=$VLLM_HOST_IP",
-        "export HCCL_SOCKET_IFNAME=" + _SH_IF_DETECT,
-        "export TP_SOCKET_IFNAME=" + _SH_IF_DETECT,
-        "export RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES=1",
-        "export ASCEND_PROCESS_LOG_PATH=/tmp/ray_vllm010",
-        # Ascend NPU 首次推理需 JIT 编译算子，耗时可能超过 Ray 编译DAG默认 300s 超时。
-        "export RAY_CGRAPH_get_timeout=" + os.getenv('RAY_CGRAPH_get_timeout', '3600'),
     ]
 
 
@@ -2208,13 +2172,10 @@ def _build_ray_worker_commands(
     """构建 Ray worker 节点 (rank > 0) 的脚本命令列表。"""
     parts: List[str] = []
     if ctx.is_ascend:
-        parts.extend(_build_ascend_ray_worker_env(ctx.ray_port, ctx.node_ips, ctx.head_addr))
+        parts.extend(_build_ascend_ray_worker_env(params, ctx))
     else:
-        nccl_if = os.getenv('NCCL_SOCKET_IFNAME', 'eth0')
+        parts.extend(_build_comm_env_commands(params, ctx, "worker"))
         parts.extend([
-            f"export NCCL_SOCKET_IFNAME={nccl_if}",
-            f"export TP_SOCKET_IFNAME={nccl_if}",
-            _SH_VLLM_HOST,
             "for i in $(seq 1 60); do",
             f"  python3 -c \"import socket;"
             f" s=socket.socket(); s.settimeout(2);"
@@ -2225,7 +2186,6 @@ def _build_ray_worker_commands(
             "done",
             f"HEAD_IP=\"{ctx.head_addr}\"",
         ])
-    parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
     ray_worker_resource = _get_ray_resource_flag(ctx.engine, params)
     ray_worker_cmd = (
         f"exec ray start"
@@ -2243,47 +2203,19 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
     """返回 dp_deployment 模式的分布式通信环境变量命令。"""
     net_if = os.getenv("NETWORK_INTERFACE", os.getenv("GLOO_SOCKET_IFNAME", "eth0"))
     if is_ascend:
-        hccl_connect_timeout = os.getenv('HCCL_CONNECT_TIMEOUT', '1800')
-        hccl_exec_timeout = os.getenv('HCCL_EXEC_TIMEOUT', '7200')
-        omp_threads = os.getenv('OMP_NUM_THREADS', '100')
-        hccl_buffsize = os.getenv('HCCL_BUFFSIZE', '1024')
-        env_commands = [
-            # 与 Ray 路径保持一致：先建立 VLLM_HOST_IP（POD_IP > RANK_IP > 路由探测），
-            # HCCL_IF_IP 直接复用，避免多网卡场景下与 vLLM 通信走错网卡。
-            _SH_VLLM_HOST,
-            "export HCCL_WHITELIST_DISABLE=1",
-            "export HCCL_IF_IP=$VLLM_HOST_IP",
-            f"export GLOO_SOCKET_IFNAME={net_if}",
-            f"export TP_SOCKET_IFNAME={net_if}",
-            f"export HCCL_SOCKET_IFNAME={net_if}",
-            f"export HCCL_CONNECT_TIMEOUT={hccl_connect_timeout}",
-            f"export HCCL_EXEC_TIMEOUT={hccl_exec_timeout}",
-            "export OMP_PROC_BIND=false",
-            f"export OMP_NUM_THREADS={omp_threads}",
-            f"export HCCL_BUFFSIZE={hccl_buffsize}",
-            'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
-            "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
-        ]
-        env_commands.extend([
-            "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/"
-            "latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-            "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/"
-            "opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
-        ])
-        if _is_deepseek_ascend_dp_deployment(params):
-            engine_ready_timeout = os.getenv("VLLM_ENGINE_READY_TIMEOUT_S", "7200")
-            env_commands.append(f"export VLLM_ENGINE_READY_TIMEOUT_S={engine_ready_timeout}")
+        env_commands = _render_env_policy_commands(
+            params, "vllm_ascend", "dp_deployment",
+            current_ip="$VLLM_HOST_IP",
+            network_interface=net_if,
+        )
+        if any(command.startswith("export HCCL_BUFFSIZE=") for command in env_commands):
+            env_commands.append('echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"')
         return env_commands
-    return [
-        f"export GLOO_SOCKET_IFNAME={net_if}",
-        f"export TP_SOCKET_IFNAME={net_if}",
-        f"export NCCL_SOCKET_IFNAME={net_if}",
-        f"export VLLM_NIXL_SIDE_CHANNEL_PORT="
-        f"{params.get('nixl_port', os.getenv('VLLM_NIXL_SIDE_CHANNEL_PORT', '12345'))}",
-        "export NCCL_IB_DISABLE=0",
-        "export NCCL_CUMEM_ENABLE=0",
-        "export NCCL_NET_GDR_LEVEL=SYS",
-    ]
+    return _render_env_policy_commands(
+        params, "vllm", "dp_deployment",
+        current_ip="$VLLM_HOST_IP",
+        network_interface=net_if,
+    )
 
 
 def _transform_dp_cmd(cmd: str) -> str:
@@ -2428,7 +2360,12 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     cmds.extend(_build_cache_env_commands(engine))
 
     cmds.extend(_build_qat_env_commands(engine))
-    cmds.extend(_build_pd_role_env_commands(engine, current_ip, net_if))
+    cmds.extend(_build_pd_role_env_commands(params, engine, current_ip, net_if))
+    cmds.extend(_render_env_policy_commands(
+        params, engine, "common",
+        current_ip=current_ip,
+        network_interface=net_if,
+    ))
     cmds.extend(_build_speculative_env_commands(params, engine))
     # 架构专用环境变量（GLM-4.7 / Qwen3 / Qwen3.5 / MiniMax-M2.5 / DeepSeek V3.2 / LLaMA 等）
     # 之前只在未被引用的 _build_env_commands 里调用，导致架构专用 env 一行都没进 start_command.sh
@@ -2436,8 +2373,6 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     # DeepSeek FP8 / Ascend910_9362 专用 env 也一并挂上，保持与 _build_env_commands 等价
     cmds.extend(_build_deepseek_fp8_env_commands(params, engine))
     cmds.extend(_build_ascend910_9362_env_commands(params, engine))
-    cmds = _filter_vllm_ascend_ray_incompatible_env(cmds, params, engine)
-    cmds.extend(_build_vllm_ascend_forced_env_commands(params, engine))
     return cmds
 
 

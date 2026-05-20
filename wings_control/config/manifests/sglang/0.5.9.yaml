@@ -1,0 +1,29 @@
+{
+  "engine": "sglang",
+  "version": "0.5.9",
+  "generated_at": null,
+  "generated_from": "manual-bootstrap",
+  "cli_params": {
+    "host": {"type": "str", "upstream_default": "0.0.0.0"},
+    "port": {"type": "int", "upstream_default": 30000},
+    "model_path": {"type": "str", "upstream_default": null},
+    "served_model_name": {"type": "str", "upstream_default": null},
+    "trust_remote_code": {"type": "bool", "upstream_default": false},
+    "dtype": {"type": "str", "upstream_default": "auto"},
+    "kv_cache_dtype": {"type": "str", "upstream_default": "auto"},
+    "quantization": {"type": "str", "upstream_default": null},
+    "quantization_param_path": {"type": "str", "upstream_default": null},
+    "context_length": {"type": "int", "upstream_default": null},
+    "mem_fraction_static": {"type": "float", "upstream_default": null},
+    "chunked_prefill_size": {"type": "int", "upstream_default": null},
+    "max_prefill_tokens": {"type": "int", "upstream_default": null},
+    "max_running_requests": {"type": "int", "upstream_default": null},
+    "random_seed": {"type": "int", "upstream_default": null},
+    "tool_call_parser": {"type": "str", "upstream_default": null},
+    "enable_ep_moe": {"type": "bool", "upstream_default": false},
+    "disable_chunked_prefix_cache": {"type": "bool", "upstream_default": null}
+  },
+  "env_vars": {},
+  "additional_config": {},
+  "generated_file": {}
+}

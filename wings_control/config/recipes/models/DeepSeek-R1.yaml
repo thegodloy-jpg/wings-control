@@ -1,0 +1,40 @@
+model_id: DeepSeek-R1
+matches:
+  model_names:
+  - DeepSeek-R1
+  model_paths:
+  - DeepSeek-R1
+inherits_architecture: DeepseekV3ForCausalLM
+defaults:
+  trust_remote_code: true
+  tool_call_parser: deepseek_v3
+  reasoning_parser: deepseek_r1
+hardware_overlays:
+- applies_to_hardware:
+  - h20-96
+  defaults:
+    max_model_len: 4096
+    mem_fraction_static: 0.9
+    grammar_backend: xgrammar
+- applies_to_hardware:
+  - h20-141
+  defaults:
+    max_model_len: 4096
+    mem_fraction_static: 0.95
+    grammar_backend: xgrammar
+    max_running_requests: 256
+    enable_dp_attention: true
+    enable_mixed_chunk: true
+    chunked_prefill_size: 2048
+    max_prefill_tokens: 4096
+    attention_backend: flashinfer
+    flashinfer_mla_disable_ragged: true
+    enable_nccl_nvls: true
+    show_time_cost: true
+    enable_torch_compile: true
+    torch_compile_max_bs: 32
+- applies_to_hardware:
+  - 910b-32
+  - 910b-64
+  defaults:
+    max_model_len: 4096

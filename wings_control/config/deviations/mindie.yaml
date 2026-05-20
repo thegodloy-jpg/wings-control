@@ -1,0 +1,95 @@
+engine: mindie
+deviations:
+  # ── Global context-length cap ────────────────────────────────────────────────
+  # Canonical key max_model_len → MindIE field maxSeqLen via mappings.
+  - field: max_model_len
+    target: additional_config
+    wings_value: 4096
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    rationale: >
+      MindIE maxSeqLen cap mirroring ascend_default.json global default.
+      Prevents NPU HBM OOM on first inference. Operators override per-deployment.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  # Canonical key max_input_token_len → MindIE field maxInputTokenLen via mappings.
+  - field: max_input_token_len
+    target: additional_config
+    wings_value: 2048
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    rationale: >
+      Matches historical ascend_default.json maxInputTokenLen=2048 for mindie.
+      Set to half of maxSeqLen to reserve headroom for generated tokens.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  # Canonical key max_prefill_tokens → MindIE field maxIterTimes via mappings.
+  - field: max_prefill_tokens
+    target: additional_config
+    wings_value: 2048
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    rationale: >
+      Matches historical ascend_default.json maxIterTimes=2048 for mindie.
+      Controls prefill batch token budget.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  # ── Architecture-level engine-private params ─────────────────────────────────
+  # applies_to_architectures is a Phase D schema extension (not in spec §6.4 base
+  # schema). Required because model_type is architecture-specific but engine-private
+  # (no vllm/sglang equivalent). Canonical key model_type → MindIE field
+  # mindie_model_type via mappings/canonical_to_engines.yaml.
+  - field: model_type
+    target: additional_config
+    wings_value: deepseekv2
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    applies_to_architectures: ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
+    rationale: >
+      MindIE requires explicit model type hint for DeepSeek V2/V3 family to
+      select the correct attention kernel. Value "deepseekv2" covers both V3
+      and V3.1 which share the same MindIE kernel path.
+    source_type: vendor_doc
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  - field: model_type
+    target: additional_config
+    wings_value: qwen3
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    applies_to_architectures: ["Qwen3ForCausalLM", "Qwen3MoeForCausalLM", "Qwen3NextForCausalLM"]
+    rationale: >
+      MindIE model type hint for Qwen3 family (dense and MoE share same value).
+    source_type: vendor_doc
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  - field: model_type
+    target: additional_config
+    wings_value: qwen2_5
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    applies_to_architectures: ["Qwen2ForCausalLM"]
+    rationale: MindIE model type hint for Qwen2/2.5 family.
+    source_type: vendor_doc
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings

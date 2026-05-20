@@ -1,0 +1,25 @@
+model_id: Qwen3-Coder-480B-A35B-Instruct
+matches:
+  model_names:
+  - Qwen3-Coder-480B-A35B-Instruct
+  - qwen3-coder-480b-a35b-instruct
+  model_paths:
+  - Qwen3-Coder-480B-A35B-Instruct
+inherits_architecture: Qwen3MoeForCausalLM
+defaults:
+  trust_remote_code: true
+  tool_call_parser: qwen3_xml
+  reasoning_parser: null
+hardware_overlays:
+- applies_to_hardware:
+  - h20-96
+  - h20-141
+  - l20
+  defaults:
+    max_model_len: 4096
+- applies_to_hardware:
+  - 910b-32
+  - 910b-64
+  - 910c
+  defaults:
+    max_model_len: 4096

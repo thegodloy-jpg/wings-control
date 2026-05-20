@@ -1,3 +1,5 @@
+> 状态：历史专项记录。当前正式部署口径请以 [../README.md](../README.md)、[../docs/deployment/docker-compose.md](../docs/deployment/docker-compose.md) 和 [../docs/deployment/k8s.md](../docs/deployment/k8s.md) 为准；`wings_start.sh` 支持的启动项优先使用 CLI 字段。
+
 使用 vLLM v0.19 (NVIDIA GPU) 拉起 GLM-5.1-FP8 模型的启动命令。
 
 ## 调研结论

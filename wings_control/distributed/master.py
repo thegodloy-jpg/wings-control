@@ -30,11 +30,9 @@ from __future__ import annotations
 
 import concurrent.futures
 import copy
-import json
 import logging
 import socket
 import time
-from pathlib import Path
 import os
 from typing import Any, Dict, Optional
 
@@ -42,6 +40,8 @@ import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+from core.runtime_config_loader import load_distributed_runtime_config
 
 from distributed.monitor import MonitorService
 from distributed.scheduler import TaskScheduler
@@ -367,9 +367,7 @@ def start_master():
         task_scheduler = TaskScheduler(monitor_service)
         task_scheduler.start()
 
-    config_path = Path(__file__).parent.parent / "config" / "defaults" / "distributed_config.json"
-    with open(config_path) as f:
-        cfg = json.load(f)
+    cfg = load_distributed_runtime_config()
 
     # 优先使用 COORDINATOR_PORT，避免与 HCCL 的 MASTER_PORT 冲突。
     # MASTER_PORT 在 MindIE 中用于 HCCL 集合通信（默认 27070），

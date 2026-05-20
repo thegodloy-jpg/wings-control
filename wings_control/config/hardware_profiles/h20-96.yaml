@@ -1,0 +1,11 @@
+{
+  "chip_id": "h20-96",
+  "display_name": "NVIDIA H20 96GB",
+  "vendor": "nvidia",
+  "hbm_gb": 96,
+  "peer_link": "nvlink",
+  "recommended": {},
+  "notes": [],
+  "source_type": "vendor_doc",
+  "source_path": ""
+}

@@ -1,0 +1,19 @@
+architecture: DeepseekV32ForCausalLM
+also_matches: []
+defaults:
+  trust_remote_code: true
+  tool_call_parser: deepseek_v32
+  reasoning_parser: deepseek_r1
+hardware_overlays:
+- applies_to_hardware:
+  - 910b-32
+  - 910b-64
+  - 910c
+  defaults:
+    max_model_len: 4096
+- applies_to_hardware:
+  - h20-96
+  - h20-141
+  - l20
+  defaults:
+    max_model_len: 4096

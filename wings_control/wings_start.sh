@@ -83,8 +83,12 @@ Options:
   --enable-prefix-caching   Enable prefix caching
   --model-path <value>      Set the model path
   --engine <value>          Set the engine type
+    --chip <value>            Set canonical hardware chip ID (e.g. 910b-32, h20-141)
   --input-length <value>    Set the max input length
   --output-length <value>   Set the max output length
+    --allow-experimental      Enable experimental recipe scanning
+    --no-experimental         Disable experimental recipe scanning and ignore env opt-in
+        --emit-resolved-params <path|true>  Write resolved_params.json audit output
   --distributed             Enable distributed mode
   --config-file <value>     Specify a config file
   --gpu-usage-mode <value>  Specify gpu usage mode
@@ -121,6 +125,8 @@ DEFAULT_MAX_NUM_SEQS=""
 DEFAULT_SEED=""
 DEFAULT_ENABLE_EXPERT_PARALLEL=""
 DEFAULT_ENGINE=""
+DEFAULT_CHIP=""
+DEFAULT_EMIT_RESOLVED_PARAMS=""
 DEFAULT_MAX_NUM_BATCHED_TOKENS=""
 DEFAULT_ENABLE_PREFIX_CACHING=""
 DEFAULT_INPUT_LENGTH=""
@@ -184,6 +190,9 @@ while [[ $# -gt 0 ]]; do
         --engine)
             [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --engine requires a value"; usage; }
             ENGINE="$2"; shift 2 ;;
+        --chip)
+            [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --chip requires a value"; usage; }
+            WINGS_CHIP="$2"; shift 2 ;;
         --input-length)
             [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --input-length requires a value"; usage; }
             INPUT_LENGTH="$2"; shift 2 ;;
@@ -192,6 +201,13 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_LENGTH="$2"; shift 2 ;;
         --distributed)
             DISTRIBUTED=true; shift ;;
+        --allow-experimental)
+            WINGS_ALLOW_EXPERIMENTAL=true; shift ;;
+        --no-experimental)
+            WINGS_NO_EXPERIMENTAL=true; shift ;;
+        --emit-resolved-params)
+            [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --emit-resolved-params requires a value"; usage; }
+            WINGS_EMIT_RESOLVED_PARAMS="$2"; shift 2 ;;
         --config-file)
             [[ -z "${2:-}" || "$2" == -* ]] && { echo "Error: --config-file requires a value"; usage; }
             CONFIG_FILE="$2"; shift 2 ;;
@@ -247,6 +263,8 @@ HOST=${HOST:-$DEFAULT_HOST}
 MODEL_NAME=${MODEL_NAME:-$DEFAULT_MODEL_NAME}
 MODEL_PATH=${MODEL_PATH:-$DEFAULT_MODEL_PATH}
 ENGINE=${ENGINE:-$DEFAULT_ENGINE}
+WINGS_CHIP=${WINGS_CHIP:-$DEFAULT_CHIP}
+WINGS_EMIT_RESOLVED_PARAMS=${WINGS_EMIT_RESOLVED_PARAMS:-$DEFAULT_EMIT_RESOLVED_PARAMS}
 SAVE_PATH=${SAVE_PATH:-$DEFAULT_SAVE_PATH}
 
 # 验证必要参数
@@ -265,6 +283,8 @@ export MODEL_NAME
 export MODEL_PATH
 export SAVE_PATH
 [ -n "${ENGINE:-}" ]                  && export ENGINE
+[ -n "${WINGS_CHIP:-}" ]              && export WINGS_CHIP
+[ -n "${WINGS_EMIT_RESOLVED_PARAMS:-}" ] && export WINGS_EMIT_RESOLVED_PARAMS
 [ -n "${HOST:-}" ]                    && export HOST
 # 代理关闭时才将 PORT 覆写为后端端口；代理开启时 PORT 保持用户指定值（proxy port，默认 18000）
 if [[ "${ENABLE_REASON_PROXY,,}" == "false" ]]; then
@@ -293,6 +313,8 @@ fi
 [ "${ENABLE_EXPERT_PARALLEL:-}" = true ]     && export ENABLE_EXPERT_PARALLEL="true"
 [ "${ENABLE_PREFIX_CACHING:-}" = true ]      && export ENABLE_PREFIX_CACHING="true"
 [ "${DISTRIBUTED:-}" = true ]                && export DISTRIBUTED="true"
+[ "${WINGS_ALLOW_EXPERIMENTAL:-}" = true ]   && export WINGS_ALLOW_EXPERIMENTAL="true"
+[ "${WINGS_NO_EXPERIMENTAL:-}" = true ]      && export WINGS_NO_EXPERIMENTAL="true"
 [ "${ENABLE_SPECULATIVE_DECODE:-}" = true ]  && export ENABLE_SPECULATIVE_DECODE="true"
 [ "${ENABLE_SPARSE:-}" = true ]              && export ENABLE_SPARSE="true"
 [ "${ENABLE_RAG_ACC:-}" = true ]             && export ENABLE_RAG_ACC="true"
@@ -316,6 +338,8 @@ APP_ARGS=("--model-name" "$MODEL_NAME" "--model-path" "$MODEL_PATH")
 
 [ -n "${SAVE_PATH:-}" ]               && APP_ARGS+=("--save-path" "$SAVE_PATH")
 [ -n "${ENGINE:-}" ]                   && APP_ARGS+=("--engine" "$ENGINE")
+[ -n "${WINGS_CHIP:-}" ]               && APP_ARGS+=("--chip" "$WINGS_CHIP")
+[ -n "${WINGS_EMIT_RESOLVED_PARAMS:-}" ] && APP_ARGS+=("--emit-resolved-params" "$WINGS_EMIT_RESOLVED_PARAMS")
 [ "${TRUST_REMOTE_CODE:-}" = true ]    && APP_ARGS+=("--trust-remote-code")
 [ -n "${DTYPE:-}" ]                    && APP_ARGS+=("--dtype" "$DTYPE")
 [ -n "${KV_CACHE_DTYPE:-}" ]          && APP_ARGS+=("--kv-cache-dtype" "$KV_CACHE_DTYPE")
@@ -335,6 +359,8 @@ APP_ARGS=("--model-name" "$MODEL_NAME" "--model-path" "$MODEL_PATH")
 [ -n "${OUTPUT_LENGTH:-}" ]           && APP_ARGS+=("--output-length" "$OUTPUT_LENGTH")
 [ -n "${CONFIG_FILE:-}" ]             && APP_ARGS+=("--config-file" "$CONFIG_FILE")
 [ "${DISTRIBUTED:-}" = true ]         && APP_ARGS+=("--distributed")
+[ "${WINGS_ALLOW_EXPERIMENTAL:-}" = true ] && APP_ARGS+=("--allow-experimental")
+[ "${WINGS_NO_EXPERIMENTAL:-}" = true ] && APP_ARGS+=("--no-experimental")
 [ -n "${GPU_USAGE_MODE:-}" ]          && APP_ARGS+=("--gpu-usage-mode" "$GPU_USAGE_MODE")
 [ -n "${DEVICE_COUNT:-}" ]            && APP_ARGS+=("--device-count" "$DEVICE_COUNT")
 [ -n "${MODEL_TYPE:-}" ]              && APP_ARGS+=("--model-type" "$MODEL_TYPE")

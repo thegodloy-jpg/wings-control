@@ -1,0 +1,26 @@
+{
+  "engine": "mindie_distributed",
+  "version": "2.3.0",
+  "generated_at": null,
+  "generated_from": "manual-bootstrap",
+  "cli_params": {},
+  "env_vars": {},
+  "additional_config": {
+    "ipAddress":              {"type": "str",   "upstream_default": "0.0.0.0"},
+    "port":                   {"type": "int",   "upstream_default": 1025},
+    "modelName":              {"type": "str",   "upstream_default": null},
+    "modelWeightPath":        {"type": "str",   "upstream_default": null},
+    "maxSeqLen":              {"type": "int",   "upstream_default": null},
+    "maxInputTokenLen":       {"type": "int",   "upstream_default": null},
+    "maxIterTimes":           {"type": "int",   "upstream_default": null},
+    "maxPrefillBatchSize":    {"type": "int",   "upstream_default": null},
+    "maxPrefillTokens":       {"type": "int",   "upstream_default": null},
+    "maxBatchSize":           {"type": "int",   "upstream_default": null},
+    "trustRemoteCode":        {"type": "bool",  "upstream_default": false},
+    "npu_memory_fraction":    {"type": "float", "upstream_default": null},
+    "enable_ep_moe":          {"type": "bool",  "upstream_default": false},
+    "mindie_model_type":      {"type": "str",   "upstream_default": null},
+    "mindie_tool_call_parser":{"type": "str",   "upstream_default": null}
+  },
+  "generated_file": {}
+}

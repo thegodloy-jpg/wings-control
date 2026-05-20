@@ -96,8 +96,8 @@ export PYTHONUNBUFFERED=1
 echo "[wings-env] export PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-}"
 exec > >(tee -a /var/log/wings/engine-full.log | grep --line-buffered -vE '"GET\s+/(health|metrics)\s|\b(Prefill|Decode) batch\b' | tee -a /var/log/wings/engine.log) 2>&1
 ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name custom-model-v1 --model /models/custom-model --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 4'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name custom-model-v1 --model /models/custom-model --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 4 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name custom-model-v1 --model /models/custom-model --trust-remote-code --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 4'
+python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name custom-model-v1 --model /models/custom-model --trust-remote-code --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 4 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -134,8 +134,8 @@ else
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-    echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name custom-model-v1 --model /models/custom-model --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 4'
-    python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name custom-model-v1 --model /models/custom-model --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 4 &
+    echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name custom-model-v1 --model /models/custom-model --trust-remote-code --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 4'
+    python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name custom-model-v1 --model /models/custom-model --trust-remote-code --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 4 &
     ENGINE_PID=$!
     echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

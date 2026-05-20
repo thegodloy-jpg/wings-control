@@ -1,5 +1,9 @@
 # wings_control 启动命令示例
 
+> 状态：历史任务记录。当前正式部署文档请优先阅读 [../README.md](../README.md)、[../docs/deployment/docker-compose.md](../docs/deployment/docker-compose.md)、[../docs/deployment/k8s.md](../docs/deployment/k8s.md) 和 [../docs/examples/qwen35-27b/README.md](../docs/examples/qwen35-27b/README.md)。
+>
+> 当前统一口径：`wings-control`、`wings-accel`、Engine 独立镜像交付；推荐 Docker Compose / K8s 编排；`wings_start.sh` 支持的启动项统一使用 CLI 字段，只有无 CLI 字段的运行时变量保留为环境变量。
+
 本文档覆盖三个可选模型：
 
 - GLM-5.1-FP8：8 张 H20-141G

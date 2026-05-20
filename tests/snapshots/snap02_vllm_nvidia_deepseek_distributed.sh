@@ -104,7 +104,6 @@ export TP_SOCKET_IFNAME=eth0
 echo "[wings-env] export TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME:-}"
 export GLOO_SOCKET_IFNAME=$(awk '$2=="00000000"{print $1;exit}' /proc/net/route 2>/dev/null || echo eth0)
 echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
-
 echo "[ray] head start command: ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP"
 echo '[wings-cmd] >>> ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP'
 ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP
@@ -122,8 +121,8 @@ if [ "$RAY_WAIT_OK" != "1" ]; then
 fi
 echo "[ray-wait] OK: $COUNT ray nodes joined."
 
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -168,7 +167,6 @@ else
     echo "[wings-env] export TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME:-}"
     export GLOO_SOCKET_IFNAME=$(awk '$2=="00000000"{print $1;exit}' /proc/net/route 2>/dev/null || echo eth0)
     echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
-
     echo "[ray] head start command: ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP"
     echo '[wings-cmd] >>> ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP'
     ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP
@@ -186,8 +184,8 @@ else
     fi
     echo "[ray-wait] OK: $COUNT ray nodes joined."
 
-    echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
-    python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
+    echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
+    python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
     ENGINE_PID=$!
     echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

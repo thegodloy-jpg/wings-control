@@ -25,6 +25,8 @@ from utils.file_utils import safe_write_file, WriteOptions
 from core.engine_manager import start_engine_service
 from core.hardware_detect import detect_hardware
 from core.port_plan import PortPlan
+from core.provenance import write_resolved_params
+from core.recipe_loader import write_recipe_shadow_diff
 from core.start_args_compat import LaunchArgs
 from core.version_util import normalize_engine_version
 from engines.vllm_adapter import (
@@ -634,7 +636,7 @@ def _parse_env_file(fpath: Path) -> list[str]:
             # 去掉可选的引号包裹
             if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
                 value = value[1:-1]
-            export_lines.append(f"export {key}={shlex.quote(value)}")
+            export_lines.append(f"export {key}='{_shell_escape_single_quote(value)}'")
             logger.debug("  env: %s=%s", key, value)
     except Exception as e:
         logger.error("Failed to parse env file %s: %s", fpath, e)
@@ -1443,8 +1445,19 @@ def build_launcher_plan(launch_args: LaunchArgs, port_plan: PortPlan) -> Launche
     Returns:
         LauncherPlan: 包含完整 shell 脚本、合并参数和硬件信息
     """
-    hardware = detect_hardware()
+    hardware = detect_hardware(chip=getattr(launch_args, "chip", ""))
     merged = _prepare_merged_params(launch_args, port_plan, hardware)
+    try:
+        write_recipe_shadow_diff(launch_args, hardware, merged)
+    except Exception as exc:  # Phase A shadow must never affect final startup.
+        logger.warning("[recipe-shadow] skipped after error: %s", exc, exc_info=True)
+    emit_resolved_params = str(getattr(launch_args, "emit_resolved_params", "") or "").strip()
+    if emit_resolved_params:
+        try:
+            output_path = None if emit_resolved_params.lower() in {"1", "true", "yes", "on"} else emit_resolved_params
+            write_resolved_params(merged.get("_resolution_trace") or {}, output_path=output_path)
+        except Exception as exc:  # Audit output must not block startup in this migration phase.
+            logger.warning("[resolved-params] skipped after error: %s", exc, exc_info=True)
 
     engine, has_advanced_feature, active_features_label = _resolve_engine_and_features(
         merged, launch_args,

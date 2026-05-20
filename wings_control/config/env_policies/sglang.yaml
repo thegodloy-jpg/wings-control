@@ -1,0 +1,39 @@
+engine: sglang
+env_policies:
+  - name: NCCL_SOCKET_IFNAME
+    mode: force_override
+    applies_to_versions: ">=0.5.9"
+    rationale: >
+      Distributed runs need deterministic NIC selection; wings derives the
+      interface from node networking discovery and overwrites stale values
+      inherited from the deployment image.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: GLOO_SOCKET_IFNAME
+    mode: force_override
+    applies_to_versions: ">=0.5.9"
+    rationale: Same as NCCL_SOCKET_IFNAME — runtime-derived NIC.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: TP_SOCKET_IFNAME
+    mode: force_override
+    applies_to_versions: ">=0.5.9"
+    rationale: Same as NCCL_SOCKET_IFNAME — runtime-derived NIC.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: MASTER_ADDR
+    mode: force_override
+    applies_to_versions: ">=0.5.9"
+    rationale: Distributed coordinator address resolved by wings at launch.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: MASTER_PORT
+    mode: force_override
+    applies_to_versions: ">=0.5.9"
+    rationale: Coordinator port allocated by wings.
+    source_type: wings_decision
+    decision_date: "2026-05-14"

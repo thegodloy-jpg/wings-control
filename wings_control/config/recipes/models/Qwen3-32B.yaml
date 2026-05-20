@@ -1,0 +1,35 @@
+{
+  "model_id": "Qwen3-32B",
+  "matches": {
+    "model_paths": [
+      "Qwen3-32B"
+    ],
+    "model_names": [
+      "Qwen3-32B",
+      "qwen3-32b"
+    ]
+  },
+  "inherits_architecture": "Qwen3ForCausalLM",
+  "defaults": {
+    "trust_remote_code": true
+  },
+  "hardware_overlays": [
+    {
+      "applies_to_hardware": [
+        "910b-32"
+      ],
+      "defaults": {
+        "max_num_seqs": 32,
+        "block_size": 128
+      }
+    },
+    {
+      "applies_to_hardware": [
+        "h20-141"
+      ],
+      "defaults": {
+        "max_num_seqs": 256
+      }
+    }
+  ]
+}

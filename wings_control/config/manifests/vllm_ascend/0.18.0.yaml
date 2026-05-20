@@ -1,0 +1,35 @@
+{
+  "engine": "vllm_ascend",
+  "version": "0.18.0",
+  "generated_at": null,
+  "generated_from": "manual-bootstrap",
+  "cli_params": {
+    "host": {"type": "str", "upstream_default": "0.0.0.0"},
+    "port": {"type": "int", "upstream_default": 8000},
+    "model": {"type": "str", "upstream_default": null},
+    "served_model_name": {"type": "str", "upstream_default": null},
+    "trust_remote_code": {"type": "bool", "upstream_default": false},
+    "dtype": {"type": "str", "upstream_default": "auto"},
+    "kv_cache_dtype": {"type": "str", "upstream_default": "auto"},
+    "quantization": {"type": "str", "upstream_default": null},
+    "quantization_param_path": {"type": "str", "upstream_default": null},
+    "max_model_len": {"type": "int", "upstream_default": null},
+    "gpu_memory_utilization": {"type": "float", "upstream_default": 0.9},
+    "enable_chunked_prefill": {"type": "bool", "upstream_default": null},
+    "max_num_batched_tokens": {"type": "int", "upstream_default": null},
+    "block_size": {"type": "int", "upstream_default": null},
+    "max_num_seqs": {"type": "int", "upstream_default": null},
+    "seed": {"type": "int", "upstream_default": null},
+    "tool_call_parser": {"type": "str", "upstream_default": null},
+    "reasoning_parser": {"type": "str", "upstream_default": null},
+    "enable_expert_parallel": {"type": "bool", "upstream_default": false},
+    "enable_prefix_caching": {"type": "bool", "upstream_default": false},
+    "compilation_config": {"type": "json", "upstream_default": null}
+  },
+  "env_vars": {
+    "ASCEND_RT_VISIBLE_DEVICES": {"type": "str", "upstream_default": null},
+    "VLLM_USE_MODELSCOPE": {"type": "str", "upstream_default": "False"}
+  },
+  "additional_config": {},
+  "generated_file": {}
+}

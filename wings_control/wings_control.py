@@ -63,7 +63,6 @@ Sidecar 架构说明：
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
 import os
 import signal
@@ -82,6 +81,7 @@ import requests
 
 from config.settings import settings
 from core.port_plan import PortPlan, derive_port_plan
+from core.runtime_config_loader import load_distributed_runtime_config
 from core.start_args_compat import LaunchArgs, parse_launch_args
 from core.wings_entry import build_launcher_plan
 from utils.env_utils import get_local_ip, get_master_ip, get_node_ips
@@ -611,10 +611,8 @@ def _override_distributed_args(
 
 
 def _load_distributed_config() -> dict:
-    """加载 config/distributed_config.json 配置。"""
-    config_path = Path(__file__).parent / "config" / "defaults" / "distributed_config.json"
-    with open(config_path) as f:
-        return json.load(f)
+    """加载 Phase D distributed defaults 配置。"""
+    return load_distributed_runtime_config()
 
 
 def _resolve_host_to_ip(host: str) -> str:
@@ -970,7 +968,7 @@ def _run_master_mode(
     """Master 模式主流程。
 
     1. 生成 rank 0 引擎启动脚本并写入共享卷 → engine 容器自动执行
-    2. 后台启动 Master FastAPI 协调服务（端口来自 distributed_config.json）
+    2. 后台启动 Master FastAPI 协调服务（端口来自 Phase D distributed defaults）
     3. 启动 proxy + health 子服务
     4. 后台等待 Worker 注册完成后分发启动指令到各 Worker
     5. 进入守护循环，监控 proxy/health 子进程状态

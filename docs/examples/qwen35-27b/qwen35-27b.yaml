@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qwen35-27b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qwen35-27b
+  template:
+    metadata:
+      labels:
+        app: qwen35-27b
+    spec:
+      volumes:
+        - name: shared-vol
+          emptyDir: {}
+        - name: accel-vol
+          emptyDir: {}
+        - name: model-vol
+          hostPath:
+            path: /data/models/Qwen3.5-27B
+            type: Directory
+      initContainers:
+        - name: wings-accel
+          image: wings-accel:26.0.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              mkdir -p /accel-volume
+              cp -r /opt/packages/. /accel-volume/ 2>/dev/null || true
+          volumeMounts:
+            - name: accel-vol
+              mountPath: /accel-volume
+      containers:
+        - name: wings-control
+          image: wings-control:26.0.0
+          env:
+            - { name: WINGS_DEVICE, value: "nvidia" }
+            - { name: WINGS_DEVICE_COUNT, value: "2" }
+            - { name: ENGINE_PORT, value: "17000" }
+            - { name: HEALTH_PORT, value: "19000" }
+            - { name: MONITOR_PROXY_PORT, value: "19100" }
+            - { name: ENABLE_REASON_PROXY, value: "true" }
+          command: ["bash", "/opt/wings-control/wings_start.sh"]
+          args:
+            - --model-name
+            - Qwen3.5-27B
+            - --model-path
+            - /models/Qwen3.5-27B
+            - --engine
+            - vllm
+            - --chip
+            - h20-96
+            - --port
+            - "18000"
+            - --input-length
+            - "8192"
+            - --output-length
+            - "2048"
+            - --device-count
+            - "2"
+            - --model-type
+            - llm
+            - --trust-remote-code
+            - --gpu-memory-utilization
+            - "0.9"
+            - --max-num-seqs
+            - "32"
+            - --max-num-batched-tokens
+            - "8192"
+            - --enable-prefix-caching
+            - --enable-chunked-prefill
+          ports:
+            - { name: proxy, containerPort: 18000 }
+            - { name: health, containerPort: 19000 }
+            - { name: monitor, containerPort: 19100 }
+          readinessProbe:
+            httpGet: { path: /health, port: 19000 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 36
+          livenessProbe:
+            httpGet: { path: /health, port: 19000 }
+            initialDelaySeconds: 600
+            periodSeconds: 30
+            failureThreshold: 10
+          volumeMounts:
+            - { name: shared-vol, mountPath: /shared-volume }
+            - { name: accel-vol, mountPath: /accel-volume, readOnly: true }
+            - { name: model-vol, mountPath: /models/Qwen3.5-27B, readOnly: true }
+        - name: engine
+          image: vllm/vllm-openai:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              timeout=3600
+              elapsed=0
+              echo "[engine] waiting for /shared-volume/start_command.sh"
+              while [ ! -f /shared-volume/start_command.sh ]; do
+                sleep 2
+                elapsed=$((elapsed + 2))
+                if [ $elapsed -ge $timeout ]; then
+                  echo "[engine] ERROR: timeout waiting for /shared-volume/start_command.sh"
+                  exit 1
+                fi
+              done
+              cat /shared-volume/start_command.sh
+              exec bash /shared-volume/start_command.sh
+          resources:
+            limits:
+              nvidia.com/gpu: "2"
+          volumeMounts:
+            - { name: shared-vol, mountPath: /shared-volume }
+            - { name: accel-vol, mountPath: /accel-volume, readOnly: true }
+            - { name: model-vol, mountPath: /models/Qwen3.5-27B, readOnly: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qwen35-27b
+spec:
+  selector:
+    app: qwen35-27b
+  ports:
+    - { name: openai, port: 18000, targetPort: 18000 }
+    - { name: health, port: 19000, targetPort: 19000 }

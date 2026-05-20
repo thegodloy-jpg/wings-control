@@ -1,0 +1,11 @@
+{
+  "chip_id": "910b-64",
+  "display_name": "Ascend 910B 64GB",
+  "vendor": "ascend",
+  "hbm_gb": 64,
+  "peer_link": "hccl",
+  "recommended": {},
+  "notes": [],
+  "source_type": "vendor_doc",
+  "source_path": ""
+}

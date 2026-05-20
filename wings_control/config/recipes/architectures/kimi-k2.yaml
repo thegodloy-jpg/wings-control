@@ -1,0 +1,22 @@
+architecture: KimiK25ForConditionalGeneration
+also_matches: []
+defaults:
+  trust_remote_code: true
+  enable_auto_tool_choice: true
+  tool_call_parser: kimi_k2
+  reasoning_parser: kimi_k2
+  mm_encoder_tp_mode: data
+hardware_overlays:
+- applies_to_hardware:
+  - 910b-32
+  - 910b-64
+  - 910c
+  defaults:
+    max_model_len: 4096
+    max_num_seqs: 16
+    max_num_batched_tokens: 8192
+    gpu_memory_utilization: 0.9
+    no_enable_prefix_caching: true
+    async_scheduling: true
+    compilation_config: '{"cudagraph_capture_sizes":[4,8,16,32,64,128,256],"cudagraph_mode":"FULL_DECODE_ONLY"}'
+    mm_encoder_tp_mode: data

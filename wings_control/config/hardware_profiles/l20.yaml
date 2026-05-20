@@ -1,0 +1,11 @@
+{
+  "chip_id": "l20",
+  "display_name": "NVIDIA L20",
+  "vendor": "nvidia",
+  "hbm_gb": 48,
+  "peer_link": "pcie",
+  "recommended": {},
+  "notes": [],
+  "source_type": "vendor_doc",
+  "source_path": ""
+}

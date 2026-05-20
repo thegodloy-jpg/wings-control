@@ -1,0 +1,19 @@
+model_id: Qwen3-235B-A22B
+matches:
+  model_names:
+  - Qwen3-235B-A22B
+  - qwen3-235b-a22b
+  model_paths:
+  - Qwen3-235B-A22B
+inherits_architecture: Qwen3MoeForCausalLM
+defaults:
+  trust_remote_code: true
+  tool_call_parser: hermes
+  reasoning_parser: qwen3
+hardware_overlays:
+- applies_to_hardware:
+  - 910b-32
+  - 910b-64
+  - 910c
+  defaults:
+    max_model_len: 4096

@@ -66,6 +66,18 @@ def _to_bool(raw: str | bool) -> bool:
     raise argparse.ArgumentTypeError(f"invalid bool: {raw}")
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    """从环境变量读取布尔值，非法值回退到默认值并记录告警。"""
+    raw = _env(name, "")
+    if raw == "":
+        return default
+    try:
+        return bool(_to_bool(raw))
+    except argparse.ArgumentTypeError:
+        logger.warning("[参数] 忽略非法布尔环境变量 %s=%r", name, raw)
+        return default
+
+
 def _add_bool(parser: argparse.ArgumentParser, flag: str, env_name: str, default: bool) -> None:
     """给 parser 添加兼容型布尔参数。
 
@@ -113,6 +125,38 @@ def _normalize_distributed_aliases(args: argparse.Namespace) -> None:
     ray_head_ip = str(getattr(args, "ray_head_ip", "") or "").strip()
     if not ray_head_ip:
         args.ray_head_ip = args.master_ip or args.head_node_addr or ""
+
+
+ENGINE_ALIASES = {
+    "vllm-ascend": "vllm_ascend",
+}
+
+
+def _normalize_engine(raw: str) -> str:
+    """Normalize CLI engine aliases to canonical engine IDs."""
+    engine = str(raw or "").strip().lower()
+    return ENGINE_ALIASES.get(engine, engine)
+
+
+def _resolve_experimental_flags(args: argparse.Namespace) -> None:
+    """解析 experimental 扫描开关。
+
+    规则：
+    - `--allow-experimental` 显式开启；省略时读取 `WINGS_ALLOW_EXPERIMENTAL`。
+    - `--no-experimental` 优先级最高，会忽略 env 中的 allow。
+    - CLI 同时显式开启 allow 与 no 时解析期失败。
+    """
+    allow_cli = getattr(args, "allow_experimental", None)
+    no_experimental = bool(getattr(args, "no_experimental", False))
+    if allow_cli is True and no_experimental:
+        raise ValueError("--allow-experimental and --no-experimental cannot be used together")
+    if no_experimental:
+        args.allow_experimental = False
+        return
+    if allow_cli is None:
+        args.allow_experimental = _env_bool("WINGS_ALLOW_EXPERIMENTAL", False)
+    else:
+        args.allow_experimental = bool(allow_cli)
 
 
 def _validate_distributed_args(args: argparse.Namespace) -> None:
@@ -243,6 +287,10 @@ class LaunchArgs:
     node_rank: int
     head_node_addr: str
     distributed_executor_backend: str
+    chip: str = ""
+    allow_experimental: bool = False
+    no_experimental: bool = False
+    emit_resolved_params: str = ""
     node_ips: str = ""
     nodes: str = ""
     master_ip: str = ""
@@ -268,6 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model-name", default=_env("MODEL_NAME", ""))
     p.add_argument("--model-path", default=_env("MODEL_PATH", "/weights"))
     p.add_argument("--engine", default=_env("ENGINE", "vllm"))
+    p.add_argument("--chip", default=_env("WINGS_CHIP", ""))
     p.add_argument("--input-length", type=int, default=_env_int("INPUT_LENGTH", 4096))
     p.add_argument("--output-length", type=int, default=_env_int("OUTPUT_LENGTH", 1024))
     p.add_argument("--config-file", default=_env("CONFIG_FILE", ""))
@@ -275,6 +324,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device-count", type=int, default=_env_int("DEVICE_COUNT", 1))
     p.add_argument("--model-type", default=_env("MODEL_TYPE", "auto"))
     p.add_argument("--save-path", default=_env("SAVE_PATH", "/opt/wings/outputs"))
+    p.add_argument("--emit-resolved-params", default=_env("WINGS_EMIT_RESOLVED_PARAMS", ""))
 
     _add_bool(p, "--trust-remote-code", "TRUST_REMOTE_CODE", False)
     p.add_argument("--dtype", default=_env("DTYPE", "auto"))
@@ -308,6 +358,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nodes", default=_env("NODES", _env("NODE_IPS", "")))
     p.add_argument("--master-ip", default=_env("MASTER_IP", ""))
     p.add_argument("--ray-head-ip", default=_env("RAY_HEAD_IP", ""))
+    p.add_argument(
+        "--allow-experimental",
+        nargs="?",
+        const=True,
+        default=None,
+        type=_to_bool,
+        help="scan recipes/_experimental entries (defaults to WINGS_ALLOW_EXPERIMENTAL)",
+    )
+    p.add_argument(
+        "--no-experimental",
+        nargs="?",
+        const=True,
+        default=False,
+        type=_to_bool,
+        help="disable experimental recipes and ignore WINGS_ALLOW_EXPERIMENTAL",
+    )
     return p
 
 
@@ -353,6 +419,10 @@ def _map_args_to_launch_kwargs(args, engine: str) -> dict:
         "node_rank": int(args.node_rank),
         "head_node_addr": str(args.head_node_addr),
         "distributed_executor_backend": str(args.distributed_executor_backend),
+        "chip": str(args.chip),
+        "allow_experimental": bool(args.allow_experimental),
+        "no_experimental": bool(args.no_experimental),
+        "emit_resolved_params": str(args.emit_resolved_params),
         "node_ips": str(args.node_ips),
         "nodes": str(args.nodes),
         "master_ip": str(args.master_ip),
@@ -381,11 +451,12 @@ def parse_launch_args(argv: list[str] | None = None) -> LaunchArgs:
     parser = build_parser()
     args = parser.parse_args(argv)
     _normalize_distributed_aliases(args)
+    _resolve_experimental_flags(args)
     _validate_distributed_args(args)
 
     if not args.model_name:
         raise ValueError("model_name is required")
-    engine = str(args.engine).lower()
+    engine = _normalize_engine(args.engine)
     if not engine:
         engine = "vllm"
         logger.info("[参数] ENGINE 未指定或为空，自动使用默认值: %s", engine)
@@ -400,5 +471,10 @@ def parse_launch_args(argv: list[str] | None = None) -> LaunchArgs:
     if current_env != engine:
         os.environ["ENGINE"] = engine
         logger.info("[Params] Syncing ENGINE env var: '%s' -> '%s'", current_env, engine)
+
+    chip = str(args.chip or "").strip()
+    if chip and os.getenv("WINGS_CHIP", "") != chip:
+        os.environ["WINGS_CHIP"] = chip
+        logger.info("[Params] Syncing WINGS_CHIP env var: '%s'", chip)
 
     return LaunchArgs(**_map_args_to_launch_kwargs(args, engine))

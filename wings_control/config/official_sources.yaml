@@ -1,0 +1,254 @@
+{
+  "schema_version": 1,
+  "last_checked_at": "2026-05-15",
+  "purpose": "Catalog official and vendor-maintained startup command sources for periodic offline sync. Runtime startup generation must not fetch these URLs.",
+  "sync_contract": {
+    "runtime_remote_fetch": false,
+    "candidate_output_dir": "build/official_start_command_refs",
+    "default_mode": "report",
+    "promotion_requires": [
+      "human_review",
+      "lint_mappings",
+      "lint_deviations",
+      "lint_env_policies",
+      "lint_recipes",
+      "lint_cross_refs",
+      "script_snapshot_review"
+    ]
+  },
+  "normalization": {
+    "record_fields": [
+      "engine",
+      "source_id",
+      "scenario_id",
+      "source_type",
+      "source_url",
+      "model_family",
+      "hardware",
+      "official_entrypoint",
+      "env",
+      "cli_args",
+      "config_patch",
+      "target_updates"
+    ],
+    "compare_command_semantics": true,
+    "compare_entrypoint_literal": false
+  },
+  "engines": {
+    "vllm": {
+      "enabled": true,
+      "wings_adapter": "wings_control/engines/vllm_adapter.py",
+      "wings_runtime_entrypoint": "python3 -m vllm.entrypoints.openai.api_server",
+      "official_entrypoints": ["vllm serve"],
+      "target_config_files": [
+        "wings_control/config/manifests/vllm/<version>.yaml",
+        "wings_control/config/mappings/canonical_to_engines.yaml",
+        "wings_control/config/deviations/vllm.yaml",
+        "wings_control/config/env_policies/vllm.yaml",
+        "wings_control/config/recipes/architectures/*.yaml",
+        "wings_control/config/recipes/models/*.yaml"
+      ],
+      "sources": [
+        {
+          "id": "vllm-openai-compatible-server",
+          "source_type": "official_doc",
+          "url": "https://docs.vllm.ai/en/latest/serving/openai_compatible_server/",
+          "crawl_mode": "html_code_blocks",
+          "extract_targets": ["command_examples", "chat_template_flags", "api_surface"],
+          "target_updates": ["recipes", "mappings"]
+        },
+        {
+          "id": "vllm-serve-args",
+          "source_type": "official_doc",
+          "url": "https://docs.vllm.ai/en/latest/configuration/serve_args/",
+          "crawl_mode": "html_sections_and_tables",
+          "extract_targets": ["cli_params", "config_file_precedence"],
+          "target_updates": ["manifests/vllm", "mappings"]
+        },
+        {
+          "id": "vllm-cli-serve-reference",
+          "source_type": "official_doc",
+          "url": "https://docs.vllm.ai/en/latest/cli/serve/",
+          "crawl_mode": "html_cli_reference",
+          "extract_targets": ["cli_params", "defaults", "deprecated_flags"],
+          "target_updates": ["manifests/vllm"]
+        }
+      ],
+      "scenario_groups": [
+        "openai_compatible_server",
+        "chat_template",
+        "tool_calling",
+        "reasoning",
+        "embedding",
+        "pooling",
+        "data_parallel",
+        "expert_parallel",
+        "speculative_decoding",
+        "structured_outputs"
+      ]
+    },
+    "sglang": {
+      "enabled": true,
+      "wings_adapter": "wings_control/engines/sglang_adapter.py",
+      "wings_runtime_entrypoint": "python3 -m sglang.launch_server",
+      "official_entrypoints": [
+        "python3 -m sglang.launch_server",
+        "python -m sglang.launch_server",
+        "python -m sglang_router.launch_server"
+      ],
+      "target_config_files": [
+        "wings_control/config/manifests/sglang/<version>.yaml",
+        "wings_control/config/mappings/canonical_to_engines.yaml",
+        "wings_control/config/deviations/sglang.yaml",
+        "wings_control/config/env_policies/sglang.yaml",
+        "wings_control/config/recipes/architectures/*.yaml",
+        "wings_control/config/recipes/models/*.yaml"
+      ],
+      "sources": [
+        {
+          "id": "sglang-cookbook-index",
+          "source_type": "vendor_cookbook",
+          "url": "https://docs.sglang.io/llms.txt",
+          "crawl_mode": "plain_text_markdown_links",
+          "extract_targets": ["model_cookbook_urls", "scenario_labels", "model_families"],
+          "target_updates": ["recipes"]
+        },
+        {
+          "id": "sglang-server-arguments",
+          "source_type": "official_doc",
+          "url": "https://docs.sglang.io/docs/advanced_features/server_arguments",
+          "crawl_mode": "html_code_blocks_and_argument_tables",
+          "extract_targets": ["cli_params", "tp_dp_multinode_examples", "config_file_support"],
+          "target_updates": ["manifests/sglang", "mappings", "deviations/sglang"]
+        },
+        {
+          "id": "sglang-cookbook-home",
+          "source_type": "vendor_cookbook",
+          "url": "https://lmsysorg.mintlify.app/cookbook/intro",
+          "crawl_mode": "html_index",
+          "extract_targets": ["cookbook_index_pointer", "model_scenario_groups"],
+          "target_updates": ["recipes"]
+        }
+      ],
+      "scenario_groups": [
+        "single_node",
+        "tensor_parallel",
+        "data_parallel",
+        "multi_node_tensor_parallel",
+        "deepseek",
+        "glm",
+        "qwen",
+        "kimi",
+        "minimax",
+        "embedding",
+        "rerank"
+      ]
+    },
+    "vllm_ascend": {
+      "enabled": true,
+      "wings_adapter": "wings_control/engines/vllm_adapter.py",
+      "wings_runtime_entrypoint": "python3 -m vllm.entrypoints.openai.api_server",
+      "official_entrypoints": ["vllm serve"],
+      "target_config_files": [
+        "wings_control/config/manifests/vllm_ascend/<version>.yaml",
+        "wings_control/config/mappings/canonical_to_engines.yaml",
+        "wings_control/config/deviations/vllm_ascend.yaml",
+        "wings_control/config/env_policies/vllm_ascend.yaml",
+        "wings_control/config/recipes/architectures/*.yaml",
+        "wings_control/config/recipes/models/*.yaml",
+        "wings_control/config/set_vllm_ascend_env.sh"
+      ],
+      "sources": [
+        {
+          "id": "vllm-ascend-latest-tutorials",
+          "source_type": "official_doc",
+          "url": "https://docs.vllm.ai/projects/ascend/en/latest/tutorials/",
+          "crawl_mode": "html_index_and_child_pages",
+          "extract_targets": ["model_tutorial_urls", "feature_tutorial_urls", "hardware_tutorial_urls", "command_examples"],
+          "target_updates": ["recipes", "deviations/vllm_ascend", "env_policies/vllm_ascend"]
+        },
+        {
+          "id": "vllm-ascend-env-vars",
+          "source_type": "official_doc",
+          "url": "https://docs.vllm.ai/projects/ascend/en/latest/user_guide/configuration/env_vars.html",
+          "crawl_mode": "html_code_blocks",
+          "extract_targets": ["env_vars", "defaults"],
+          "target_updates": ["env_policies/vllm_ascend", "manifests/vllm_ascend"]
+        },
+        {
+          "id": "vllm-ascend-model-support",
+          "source_type": "official_doc",
+          "url": "https://docs.vllm.ai/projects/ascend/en/latest/user_guide/support_matrix/supported_models.html",
+          "crawl_mode": "html_tables",
+          "extract_targets": ["supported_models", "supported_hardware", "version_notes"],
+          "target_updates": ["recipes", "compatibility"]
+        }
+      ],
+      "scenario_groups": [
+        "qwen_dense",
+        "qwen_moe",
+        "qwen_embedding",
+        "qwen_reranker",
+        "deepseek",
+        "glm",
+        "kimi",
+        "pd_disaggregation",
+        "context_parallel",
+        "ray_distributed",
+        "multi_node_dp",
+        "speculative_decoding",
+        "atlas_300i"
+      ]
+    },
+    "mindie": {
+      "enabled": true,
+      "wings_adapter": "wings_control/engines/mindie_adapter.py",
+      "wings_runtime_entrypoint": "cd /usr/local/Ascend/mindie/latest/mindie-service && ./bin/mindieservice_daemon",
+      "official_entrypoints": ["./mindieservice_daemon", "./bin/mindieservice_daemon"],
+      "target_config_files": [
+        "wings_control/config/manifests/mindie/<version>.yaml",
+        "wings_control/config/mappings/canonical_to_engines.yaml",
+        "wings_control/config/deviations/mindie.yaml",
+        "wings_control/config/env_policies/mindie.yaml",
+        "wings_control/config/templates/mindie_service_config.json",
+        "wings_control/config/set_mindie_env.sh"
+      ],
+      "sources": [
+        {
+          "id": "mindie-quickstart-230",
+          "source_type": "vendor_doc",
+          "url": "https://www.hiascend.com/document/detail/zh/mindie/230/quickstart/mindie_quickstart_0004.html",
+          "crawl_mode": "html_steps_and_code_blocks",
+          "extract_targets": ["startup_steps", "daemon_examples", "service_config_examples", "npu_visibility_notes"],
+          "target_updates": ["templates/mindie_service_config", "env_policies/mindie", "deviations/mindie"]
+        },
+        {
+          "id": "mindie-daemon-command",
+          "source_type": "vendor_doc",
+          "url": "https://www.hiascend.com/document/detail/zh/mindie/10RC2/mindieservice/servicedev/mindie_service0216.html",
+          "crawl_mode": "html_command_section",
+          "extract_targets": ["daemon_command", "command_arguments"],
+          "target_updates": ["manifests/mindie"]
+        },
+        {
+          "id": "mindie-service-config-params",
+          "source_type": "vendor_doc",
+          "url": "https://www.hiascend.com/document/detail/zh/mindie/22RC1/mindiellm/llmdev/mindie_service0285.html",
+          "crawl_mode": "html_config_tables",
+          "extract_targets": ["config_params", "defaults", "value_ranges", "required_fields"],
+          "target_updates": ["templates/mindie_service_config", "mappings", "deviations/mindie"]
+        }
+      ],
+      "scenario_groups": [
+        "text_generation_service",
+        "single_node",
+        "multi_node_ranktable",
+        "function_call",
+        "mtp",
+        "sequence_parallel",
+        "pd_disaggregation",
+        "multimodal"
+      ]
+    }
+  }
+}

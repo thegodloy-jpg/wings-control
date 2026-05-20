@@ -1,0 +1,14 @@
+{
+  "chip_id": "910b-32",
+  "display_name": "Ascend 910B 32GB",
+  "vendor": "ascend",
+  "hbm_gb": 32,
+  "peer_link": "hccl",
+  "recommended": {
+    "gpu_memory_utilization": 0.88,
+    "enable_prefix_caching": false
+  },
+  "notes": ["32G HBM; use quantization or TP for large long-context models"],
+  "source_type": "vendor_doc",
+  "source_path": ""
+}

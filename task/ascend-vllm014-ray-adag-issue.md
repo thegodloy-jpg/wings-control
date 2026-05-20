@@ -1,5 +1,7 @@
 ﻿# 910C + vllm-ascend 0.14+ + Ray 双机：aDAG 卡死 / `ray_compile_graph_communication` 错误
 
+> 状态：历史 Ascend/Ray 专项分析。当前 wings-control 部署口径请以 [../README.md](../README.md)、[../docs/deployment/docker-compose.md](../docs/deployment/docker-compose.md)、[../docs/deployment/k8s.md](../docs/deployment/k8s.md) 和 [../docs/features/pd-disaggregation.md](../docs/features/pd-disaggregation.md) 为准；本文只保留上游 vllm-ascend / Ray 问题处置经验。
+
 > **当前文档角色：分析（Why）** —— 根因剖析与修复策略，受众：研发、架构
 
 ## 文档资产列表（Ascend + Ray 系列）

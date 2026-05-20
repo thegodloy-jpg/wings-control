@@ -1,0 +1,11 @@
+{
+  "chip_id": "h20-141",
+  "display_name": "NVIDIA H20 141GB",
+  "vendor": "nvidia",
+  "hbm_gb": 141,
+  "peer_link": "nvlink",
+  "recommended": {},
+  "notes": [],
+  "source_type": "vendor_doc",
+  "source_path": ""
+}

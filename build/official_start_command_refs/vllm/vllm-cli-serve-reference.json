@@ -1,0 +1,2125 @@
+{
+  "schema_version": 1,
+  "engine": "vllm",
+  "source_id": "vllm-cli-serve-reference",
+  "source_url": "https://docs.vllm.ai/en/latest/cli/serve/",
+  "fetch": {
+    "from_cache": false,
+    "error": null,
+    "body_bytes": 591800
+  },
+  "parse": {
+    "kind": "cli_params",
+    "item_count": 248,
+    "notes": []
+  },
+  "target_files": [
+    "wings_control/config/manifests/vllm/<version>.yaml",
+    "wings_control/config/mappings/canonical_to_engines.yaml",
+    "wings_control/config/deviations/vllm.yaml",
+    "wings_control/config/env_policies/vllm.yaml",
+    "wings_control/config/recipes/architectures/*.yaml",
+    "wings_control/config/recipes/models/*.yaml"
+  ],
+  "summary": {
+    "upstream_only": 228,
+    "local_only": 1,
+    "value_drift": 5
+  },
+  "diff": [
+    {
+      "field": "headless",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "api_server_count",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "grpc",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_log_stats",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "aggregate_engine_logging",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "fail_on_environ_validation",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "shutdown_timeout",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "gdn_prefill_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_log_requests",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "lora_modules",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "chat_template",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "chat_template_content_format",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "trust_request_chat_template",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "default_chat_template_kwargs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "response_role",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "assistant",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "return_tokens_as_token_ids",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_auto_tool_choice",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "exclude_tools_when_tool_choice_none",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "tool_parser_plugin",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "tool_server",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "log_config_file",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_log_len",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_prompt_tokens_details",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_server_load_tracking",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_force_include_usage",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_tokenizer_info_endpoint",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_log_outputs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_log_deltas",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": true,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "log_error_stack",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "tokens_only",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "fingerprint_mode",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "full",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "fingerprint_value",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "host",
+      "status": "value_drift",
+      "local": "0.0.0.0"
+    },
+    {
+      "field": "uds",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "uvicorn_log_level",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "info",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_uvicorn_access_log",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_access_log_for_endpoints",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "allow_credentials",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "allowed_origins",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": [
+          "*"
+        ],
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "allowed_methods",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": [
+          "*"
+        ],
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "allowed_headers",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": [
+          "*"
+        ],
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "api_key",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ssl_keyfile",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ssl_certfile",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ssl_ca_certs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_ssl_refresh",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ssl_cert_reqs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ssl_ciphers",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "root_path",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "middleware",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": [],
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_request_id_headers",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_fastapi_docs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "h11_max_incomplete_event_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 4194304,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "h11_max_header_count",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 256,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_offline_docs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_flash_late_interaction",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": true,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "model",
+      "status": "value_drift",
+      "upstream": "Qwen/Qwen3-0.6B"
+    },
+    {
+      "field": "runner",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "convert",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "tokenizer",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "tokenizer_mode",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "dtype",
+      "status": "value_drift",
+      "local": "auto"
+    },
+    {
+      "field": "hf_config_path",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "allowed_local_media_path",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "allowed_media_domains",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "revision",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "code_revision",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "tokenizer_revision",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "quantization_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "allow_deprecated_quantization",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": true
+      }
+    },
+    {
+      "field": "enforce_eager",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_return_routed_experts",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_logprobs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 20,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "logprobs_mode",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "raw_logprobs",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_sliding_window",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_cascade_attn",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": true,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "skip_tokenizer_init",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_prompt_embeds",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "config_format",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "hf_token",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "hf_overrides",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": {},
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "pooler_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "generation_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "override_generation_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_sleep_mode",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "model_impl",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "override_attention_dtype",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "logits_processors",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "io_processor_plugin",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "renderer_num_workers",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "load_format",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "download_dir",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "safetensors_load_strategy",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "safetensors_prefetch_num_threads",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 8,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "safetensors_prefetch_block_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "model_loader_extra_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": {},
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ignore_patterns",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": [
+          "original/**/*"
+        ],
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "use_tqdm_on_load",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": true,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "pt_load_map_location",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "cpu",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "attention_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mamba_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "MambaBackendEnum.TRITON",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_mamba_cache_stochastic_rounding",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mamba_cache_philox_rounds",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "reasoning_parser_plugin",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "distributed_executor_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "pipeline_parallel_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "master_addr",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "127.0.0.1",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "master_port",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 29501,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "nnodes",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "node_rank",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "distributed_timeout_seconds",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "numa_bind",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "numa_bind_nodes",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "numa_bind_cpus",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "tensor_parallel_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "decode_context_parallel_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "dcp_comm_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "ag_rs",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "dcp_kv_cache_interleave_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": true
+      }
+    },
+    {
+      "field": "cp_kv_cache_interleave_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "prefill_context_parallel_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_rank",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_start_rank",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_size_local",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_address",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_rpc_port",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "mp",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_hybrid_lb",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "data_parallel_external_lb",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_ep_weight_filter",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "all2all_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_dbo",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ubatch_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_elastic_ep",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "dbo_decode_token_threshold",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 32,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "dbo_prefill_token_threshold",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 512,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_nccl_for_dp_synchronization",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_eplb",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "eplb_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "expert_placement_strategy",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_parallel_loading_workers",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ray_workers_use_nsight",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_custom_all_reduce",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "worker_cls",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "worker_extension_cls",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "gpu_memory_utilization",
+      "status": "value_drift",
+      "upstream": 0.92,
+      "local": 0.9
+    },
+    {
+      "field": "kv_cache_memory_bytes",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "num_gpu_blocks_override",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_prefix_caching",
+      "status": "value_drift",
+      "local": false
+    },
+    {
+      "field": "prefix_caching_hash_algo",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "calculate_kv_scales",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": true
+      }
+    },
+    {
+      "field": "kv_cache_dtype_skip_layers",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": [],
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "kv_sharing_fast_prefill",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mamba_cache_dtype",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mamba_ssm_cache_dtype",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mamba_block_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mamba_cache_mode",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "kv_offloading_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "kv_offloading_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "native",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "offload_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "cpu_offload_gb",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "cpu_offload_params",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": [],
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "offload_group_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "offload_num_in_group",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "offload_prefetch_step",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "offload_params",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": [],
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "language_model_only",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "limit_mm_per_prompt",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_mm_embeds",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "media_io_kwargs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_processor_kwargs",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_processor_cache_gb",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_processor_cache_type",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "lru",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_shm_cache_max_object_size_mb",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 128,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_encoder_only",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_encoder_tp_mode",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_encoder_attn_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_encoder_attn_dtype",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_encoder_fp8_scale_path",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_encoder_fp8_scale_save_path",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_encoder_fp8_scale_save_margin",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1.5,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "interleave_mm_strings",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "skip_mm_profiling",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "video_pruning_rate",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "mm_tensor_ipc",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "direct_rpc",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_lora",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_loras",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_lora_rank",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 16,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "lora_dtype",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "auto",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_tower_connector_lora",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_cpu_loras",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "fully_sharded_loras",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "lora_target_modules",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "default_mm_loras",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "specialize_active_lora",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "show_hidden_metrics_for_version",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": true
+      }
+    },
+    {
+      "field": "otlp_traces_endpoint",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "collect_detailed_traces",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "kv_cache_metrics",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "kv_cache_metrics_sample",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0.01,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "cudagraph_metrics",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_layerwise_nvtx_tracing",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_mfu_metrics",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_logging_iteration_details",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_num_partial_prefills",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_long_partial_prefills",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "long_prefill_token_threshold",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 0,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "scheduling_policy",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_chunked_mm_input",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": false,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "scheduler_cls",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "scheduler_reserve_full_isl",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": true,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "disable_hybrid_kv_cache_manager",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "async_scheduling",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "stream_interval",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 1,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "cudagraph_capture_sizes",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "max_cudagraph_capture_size",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ir_op_priority",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "enable_flashinfer_autotune",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "moe_backend",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "speculative_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "kv_transfer_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "kv_events_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "ec_transfer_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "attention_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "reasoning_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "kernel_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "additional_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": {},
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "structured_outputs_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "profiler_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "optimization_level",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": 2,
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "performance_mode",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": "balanced",
+        "has_default": true,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "weight_transfer_config",
+      "status": "upstream_only",
+      "upstream": {
+        "upstream_default": null,
+        "has_default": false,
+        "deprecated": false
+      }
+    },
+    {
+      "field": "quantization_param_path",
+      "status": "local_only",
+      "local": {
+        "type": "str",
+        "upstream_default": null
+      }
+    }
+  ]
+}

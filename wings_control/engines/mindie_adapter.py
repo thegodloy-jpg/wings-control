@@ -1562,10 +1562,10 @@ def _build_config_merge_script(
     """生成 config.json 合并更新 + 守护进程启动的脚本片段。
 
     支持两种配置来源:
-      1. 本地模板: /opt/wings-control/config/defaults/mindie_service_config.json
-         如果存在，直接作为基础配置（完全替代镜像内默认配置）
-      2. 镜像默认: MINDIE_CONFIG_PATH 指向的原始 config.json
-         本地模板不存在时使用镜像内配置
+        1. Phase D 本地模板: /opt/wings-control/config/templates/mindie_service_config.json
+            如果存在，直接作为基础配置（完全替代镜像内默认配置）
+        2. 镜像默认: MINDIE_CONFIG_PATH 指向的原始 config.json
+            本地模板不存在时使用镜像内配置
 
     幂等性保证:
       首次 merge 前备份原始配置为 config.json.orig，后续 merge 始终从
@@ -1573,7 +1573,7 @@ def _build_config_merge_script(
     """
     return f"""# ── Merge-update MindIE config.json (preserve original, override changed) ──
 export _MINDIE_CONFIG_PATH={safe_config_path}
-_LOCAL_TEMPLATE=/opt/wings-control/config/defaults/mindie_service_config.json
+export _LOCAL_TEMPLATE=/opt/wings-control/config/templates/mindie_service_config.json
 
 cat > /tmp/_mindie_overrides.json << 'OVERRIDES_EOF'
 {overrides_json}
@@ -1583,17 +1583,19 @@ python3 << 'MERGE_SCRIPT_EOF'
 import json, os, sys
 
 CONFIG_PATH = os.environ['_MINDIE_CONFIG_PATH']
-LOCAL_TEMPLATE = os.environ.get('_LOCAL_TEMPLATE', '/opt/wings-control/config/defaults/mindie_service_config.json')
+LOCAL_TEMPLATE = os.environ.get('_LOCAL_TEMPLATE', '/opt/wings-control/config/templates/mindie_service_config.json')
 OVERRIDES_PATH = '/tmp/_mindie_overrides.json'
 BACKUP_PATH = CONFIG_PATH + '.orig'
 
 # 1. Load base config (idempotent: always merge from original/template, never from already-merged file)
-if os.path.isfile(LOCAL_TEMPLATE):
-    with open(LOCAL_TEMPLATE, 'r') as f:
+template_path = LOCAL_TEMPLATE if os.path.isfile(LOCAL_TEMPLATE) else None
+
+if template_path:
+    with open(template_path, 'r') as f:
         config = json.load(f)
     for meta_key in ('_comment', '_usage'):
         config.pop(meta_key, None)
-    print(f'[mindie] Loaded LOCAL template config ({{len(json.dumps(config))}} chars)')
+    print(f'[mindie] Loaded local template config from {{template_path}} ({{len(json.dumps(config))}} chars)')
 elif os.path.isfile(BACKUP_PATH):
     # Idempotent: re-merge from the original backup, not the already-merged file
     with open(BACKUP_PATH, 'r') as f:

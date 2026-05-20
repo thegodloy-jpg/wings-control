@@ -5,14 +5,14 @@ Architecture:
     合并为一份统一的参数字典，提供给 engine adapter 使用。
 
 Config Merge Priority (low -> high):
-    1. 硬件默认配置 (e.g., config/vllm_default.json)
+    1. Phase D 引擎基础默认配置 (config/engine_defaults/*.yaml)
     2. 模型专属配置 (model_deploy_config 匹配)
     3. 用户自定义配置 (--config-file 指定的 JSON)
     4. CLI 参数 / 环境变量覆盖
 
 Key Responsibilities:
     - 引擎自动选择（_auto_select_engine）
-    - 参数名映射（engine_parameter_mapping.json）
+    - 参数名映射（Phase D mappings/canonical_to_engines.yaml）
     - 张量并行度自动设置
     - PD 分离 / LMCache / Router / Soft FP8 等高级特性注入
     - 分布式参数注入（Ray / NIXL / HCCL）
@@ -27,7 +27,6 @@ import json
 import logging
 import math
 import os
-from pathlib import Path
 
 from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd_role_env, \
     get_config_force_env, get_soft_fp8_env, get_soft_fp4_env, get_speculative_decoding_env, \
@@ -39,42 +38,16 @@ from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_
                                is_deepseek_series_modelslim_quant, is_qwen3_series_fp8,
                                is_glm_moe_dsa_glm51)
 from utils.device_utils import check_pcie_cards
+from core.engine_defaults_loader import engine_default_ref, load_engine_defaults
+from core.mapping_loader import get_engine_parameter_mapping
+from core.model_deploy_compat_loader import load_migrated_model_deploy_config
+from core.phase_d_loader import PhaseDRuntimeContext, build_phase_d_resolution
+from core.runtime_config_loader import load_distributed_runtime_config
+from core.recipe_loader import RecipeRuntimeContext, read_model_architecture, resolve_recipe_defaults
+from core.provenance import LoadResult, build_resolution_trace
 
 logger = logging.getLogger(__name__)
 
-
-# 解析默认配置目录路径（优先级：环境变量 > 包内自带 > 硬编码回退）
-def _resolve_default_config_dir() -> str:
-    """解析默认配置目录，放在此目录下的配置文件为引擎提供默认参数。
-
-    查找顺序：
-    1. WINGS_CONFIG_DIR 环境变量（支持部署时重定向）
-    2. 包内的 app/config/ 目录（安装部署场景）
-    3. "wings/config" 硬编码回退（兼容旧版目录结构）
-    """
-    env_dir = os.getenv("WINGS_CONFIG_DIR", "").strip()
-    if env_dir:
-        return env_dir
-    bundled_dir = Path(__file__).resolve().parents[1] / "config" / "defaults"
-    if bundled_dir.exists():
-        return str(bundled_dir)
-    return "wings/config"
-
-
-# 配置目录单例（模块加载时解析一次）
-DEFAULT_CONFIG_DIR = _resolve_default_config_dir()
-
-# 各设备类型和引擎对应的默认配置文件名映射
-DEFAULT_CONFIG_FILES = {
-    "nvidia": "vllm_default.json",
-    "ascend": "vllm_default.json",
-    "distributed": "distributed_config.json",
-    "engine_parameter_mapping": "engine_parameter_mapping.json",
-    # Engine-specific fallback defaults (used when vllm_default.json
-    # has no model-level section for the selected engine)
-    "sglang": "sglang_default.json",
-    "mindie": "mindie_default.json",
-}
 
 SUPPORTED_DEVICE_TYPES = {"nvidia", "ascend"}
 
@@ -120,24 +93,17 @@ def _resolve_distributed_node_count(node_ips: str | None, nnodes: int | None) ->
     return 1
 
 
-_VLLM_ADVANCED_FEATURE_ENGINES = {"vllm", "vllm_ascend"}
-
-
 def _is_vllm_advanced_feature_engine(params: Dict[str, Any]) -> bool:
-    """Return whether selected engine supports vLLM advanced feature switches."""
-    return str(params.get("engine", "")).lower() in _VLLM_ADVANCED_FEATURE_ENGINES
+    """Return True when advanced vLLM feature toggles can affect the selected engine."""
+    return str(params.get("engine") or "").strip().lower() in {"vllm", "vllm_ascend", "vllm-ascend"}
 
 
 def _set_spec_decoding_config(params):
-    """配置推测解码（Speculative Decoding）相关环境变量。
-
-    根据 params 中 enable_speculative_decode 的值设置 SD_ENABLE 环境变量，
-    供引擎启动脚本和后续流程判断是否启用推测解码。
-    """
+    """配置投机解码相关环境变量。"""
     enabled = bool(params.get("enable_speculative_decode"))
     if enabled and not _is_vllm_advanced_feature_engine(params):
         logger.warning(
-            "Spec Decoding is only wired for vllm/vllm_ascend; disabled for engine=%s",
+            "Spec decoding is only wired for vllm/vllm_ascend; disabled for engine=%s",
             params.get("engine"),
         )
         params["enable_speculative_decode"] = False
@@ -351,14 +317,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     Returns:
         Dict[str, Any]: 合并后的引擎参数字典
     """
-    # 加载引擎参数名映射表
-    engine_param_map_config_path = os.path.join(
-        DEFAULT_CONFIG_DIR,
-        DEFAULT_CONFIG_FILES.get("engine_parameter_mapping")
-    )
-
-    #
-    _set_common_params(params, engine_cmd_parameter, engine_param_map_config_path)
+    _set_common_params(params, engine_cmd_parameter)
     _set_function_call(params, engine_cmd_parameter)
     _set_sequence_length(params, engine_cmd_parameter, model_type=ctx.get("model_type", "llm"))
     _set_parallelism_params(params, ctx)
@@ -705,14 +664,14 @@ def _validate_embedding_rerank_params(params, ctx):
         params.pop("enable_prefix_caching", None)
 
 
-def _set_common_params(params, engine_cmd_parameter, config_path):
+def _set_common_params(params, engine_cmd_parameter):
     """根据参数映射表，将用户 CLI 参数翻译为引擎实际的参数键名并写入 params。
 
     优先级保护：仅当用户通过 CLI 参数或环境变量 **显式** 指定了某个参数时，
-    才覆盖模型默认配置（nvidia_default.json / model_deploy_config）中的已有值。
+    才覆盖模型默认配置（Phase D model_deploy_compat carrier）中的已有值。
     对于用户未显式指定的参数，若模型配置中已有值则保留，否则用 argparse 默认值补充。
     """
-    vllm_param_map_config = _load_mapping(config_path, 'default_to_vllm_parameter_mapping')
+    vllm_param_map_config = get_engine_parameter_mapping('vllm')
     explicit_keys = _detect_explicit_cli_keys()
     for key, value in vllm_param_map_config.items():
         if not value:
@@ -1171,9 +1130,7 @@ def _set_mindie_common_params(params, engine_cmd_parameter):
     仅当用户通过 CLI 或环境变量显式指定了某个参数时才覆盖模型默认配置。
     对于用户未显式指定的参数，若模型配置中已有值则保留，否则用 argparse 默认值补充。
     """
-    engine_param_map_config_path = os.path.join(DEFAULT_CONFIG_DIR,
-                                            DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
-    mindie_param_map_config = _load_mapping(engine_param_map_config_path, 'default_to_mindie_parameter_mapping')
+    mindie_param_map_config = get_engine_parameter_mapping('mindie')
     explicit_keys = _detect_explicit_cli_keys()
     for key, value in mindie_param_map_config.items():
         if not value:
@@ -1237,10 +1194,7 @@ def _merge_sglang_params(params, ctx, engine_cmd_parameter):
     仅当用户通过 CLI 或环境变量显式指定了某个参数时才覆盖模型默认配置。
     对于用户未显式指定的参数，若模型配置中已有值则保留，否则用 argparse 默认值补充。
     """
-    #
-    engine_param_map_config_path = os.path.join(DEFAULT_CONFIG_DIR,
-                                            DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
-    sglang_param_map_config = _load_mapping(engine_param_map_config_path, 'default_to_sglang_parameter_mapping')
+    sglang_param_map_config = get_engine_parameter_mapping('sglang')
     explicit_keys = _detect_explicit_cli_keys()
     for key, value in sglang_param_map_config.items():
         if not value or engine_cmd_parameter.get(key) is None:
@@ -1277,7 +1231,7 @@ def _merge_sglang_params(params, ctx, engine_cmd_parameter):
 
     # sglang 4.10.0--enable-ep-moe is deprecated
     # 注意：必须检查值为 truthy 而非仅检查 key 存在，
-    # 因为 sglang_default.json 中 enable_ep_moe 默认为 null，
+    # 因为 Phase D SGLang engine defaults 中 enable_ep_moe 默认为 null，
     # 且参数映射会将 enable_expert_parallel=False 写入为 enable_ep_moe=False，
     # 若仅检查 key 存在会导致 EP 被错误启用。
     ep_moe_val = params.pop("enable_ep_moe", None)
@@ -1361,7 +1315,7 @@ def _adjust_tensor_parallelism(
             params[tp_key] = int(device_count) * n_nodes
 
 
-# 额外的通用参数名 → 引擎原生参数名映射（engine_parameter_mapping.json 中未覆盖的常见参数）
+# 额外的通用参数名 → 引擎原生参数名映射（Phase D mappings 中未覆盖的常见参数）
 _EXTRA_KEY_TRANSLATION: Dict[str, Dict[str, str]] = {
     "sglang": {
         "max_model_len": "context_length",
@@ -1400,9 +1354,7 @@ def _translate_user_config_for_engine(user_config: Dict[str, Any],
     if not mapping_name:
         return user_config
 
-    config_path = os.path.join(DEFAULT_CONFIG_DIR,
-                               DEFAULT_CONFIG_FILES.get("engine_parameter_mapping"))
-    param_map = _load_mapping(config_path, mapping_name)
+    param_map = get_engine_parameter_mapping(engine)
 
     extra_map = _EXTRA_KEY_TRANSLATION.get(engine, {})
 
@@ -1453,66 +1405,32 @@ def _load_default_config(hardware_env: Dict[str, Any]) -> Dict[str, Any]:
     """根据硬件类型（nvidia/ascend）加载对应的默认引擎配置文件。
 
     加载策略：
-      1. 优先加载 vllm_default.json（新版统一配置）
-      2. 若 vllm_default.json 不存在 → 回退到 <device>_default.json（旧版布局）
-      3. 若 vllm_default.json 存在但缺少 model_deploy_config →
-         尝试从旧版 <device>_default.json 中补充 model_deploy_config（兼容旧配置）
+    1. 统一加载 Phase D engine_defaults/vllm.yaml 作为引擎基础默认配置
+            2. 旧 <device>_default.json 中的 model_deploy_config 已迁移到
+                 config/recipes/model_deploy_compat/<device>.yaml，由
+                 _load_and_validate_models_dict() 优先读取
 
     兼容说明：
-      旧版使用 nvidia_default.json / ascend_default.json，其中包含按模型细分的
-      model_deploy_config 段落。新版统一使用 vllm_default.json，但如果部署环境
-      中同时存在旧版配置文件，会自动合并其中的 model_deploy_config 到新版配置中。
+            Phase D 不再从 nvidia_default.json / ascend_default.json 补读
+            model_deploy_config，避免旧 defaults JSON 继续参与运行时主链路。
     """
     device_key = 'device'
     device_type = hardware_env.get(device_key, "nvidia")
     if device_type not in SUPPORTED_DEVICE_TYPES:
         logger.warning("Unsupported device type '%s', fallback to 'nvidia'", device_type)
         device_type = "nvidia"
-    default_file = DEFAULT_CONFIG_FILES.get(device_type)
-    default_config_path = os.path.join(DEFAULT_CONFIG_DIR, default_file)
-    if not os.path.exists(default_config_path) and default_file == "vllm_default.json":
-        legacy_file = f"{device_type}_default.json"
-        legacy_path = os.path.join(DEFAULT_CONFIG_DIR, legacy_file)
-        if os.path.exists(legacy_path):
-            logger.warning("Fallback to legacy default config: %s", legacy_path)
-            default_config_path = legacy_path
-    logger.info("Determined default config file for hardware environment '%s': %s", device_type, default_config_path)
-    config = load_json_config(default_config_path)
-
-    # 兼容旧版：若主配置缺少 model_deploy_config，尝试从旧版设备配置文件中补充
-    if "model_deploy_config" not in config and default_file == "vllm_default.json":
-        legacy_file = f"{device_type}_default.json"
-        legacy_path = os.path.join(DEFAULT_CONFIG_DIR, legacy_file)
-        if os.path.exists(legacy_path):
-            legacy_config = load_json_config(legacy_path)
-            if "model_deploy_config" in legacy_config:
-                config["model_deploy_config"] = legacy_config["model_deploy_config"]
-                logger.info(
-                    "Supplemented model_deploy_config from legacy config: %s",
-                    legacy_path,
-                )
-    return config
+    logger.info("Loading Phase D engine defaults for hardware environment '%s': vllm", device_type)
+    return load_engine_defaults("vllm")
 
 
 def _load_engine_fallback_defaults(engine: str) -> Dict[str, Any]:
-    """加载特定引擎的兜底默认配置（sglang_default.json / mindie_default.json）。
+    """加载特定引擎的兜底默认配置（Phase D engine_defaults）。
 
-    当 vllm_default.json 或 model_deploy_config 中没有该引擎的专属配置项时，
-    从引擎专属默认文件加载参数。vllm/vllm_ascend 复用公共默认配置，无需此步骤。
+    当 model_deploy_compat 中没有该引擎的专属配置项时，从引擎专属默认
+    carrier 加载参数。vllm/vllm_ascend 复用公共 vllm 默认配置。
     """
-    fallback_file = DEFAULT_CONFIG_FILES.get(engine)
-    if not fallback_file:
-        logger.debug("No engine-level fallback config for engine='%s'", engine)
-        return {}
-    path = os.path.join(DEFAULT_CONFIG_DIR, fallback_file)
-    if not os.path.exists(path):
-        logger.warning(
-            "Engine fallback config '%s' not found at '%s'; using empty defaults",
-            fallback_file, path,
-        )
-        return {}
-    cfg = load_json_config(path)
-    logger.info("Loaded engine-level fallback defaults from '%s'", path)
+    cfg = load_engine_defaults(engine)
+    logger.info("Loaded Phase D engine-level fallback defaults for engine='%s'", engine)
     return cfg
 
 
@@ -1990,11 +1908,7 @@ def _handle_distributed(engine: str, cmd_params: Dict[str, Any], model_info):
     - sglang             → _handle_sglang_distributed（dist_port）
     - mindie             → _handle_mindie_distributed（MASTER_ADDR/PORT）
     """
-    distributed_config_path = os.path.join(
-        DEFAULT_CONFIG_DIR,
-        DEFAULT_CONFIG_FILES.get("distributed")
-    )
-    distributed_config = load_json_config(distributed_config_path)
+    distributed_config = load_distributed_runtime_config()
 
     if engine in ['vllm', 'vllm_ascend']:
         _handle_vllm_distributed(distributed_config, cmd_params, model_info)
@@ -2129,8 +2043,13 @@ def _load_and_validate_models_dict(
         (models_dict, fallback)：fallback 非 None 时应直接作为引擎默认值使用。
     """
     config_model_key = "model_deploy_config"
-    default_config = _load_default_config(hardware_env)
-    model_deploy_config = default_config.get(config_model_key, {})
+    migrated_model_deploy_config, migrated_ref = load_migrated_model_deploy_config(hardware_env)
+    if migrated_model_deploy_config is not None:
+        model_deploy_config = migrated_model_deploy_config
+        logger.info("Loaded migrated model_deploy_config from Phase D carrier: %s", migrated_ref)
+    else:
+        default_config = _load_default_config(hardware_env)
+        model_deploy_config = default_config.get(config_model_key, {})
     if not isinstance(model_deploy_config, dict):
         logger.warning("Invalid default config structure: %s is not a dict", config_model_key)
         model_deploy_config = {}
@@ -2147,6 +2066,59 @@ def _load_and_validate_models_dict(
         )
         return {}, _load_engine_fallback_defaults(engine)
     return models_dict, None
+
+
+def _get_recipe_primary_config(hardware_env: Dict[str, Any],
+                               cmd_known_params: Dict[str, Any],
+                               model_info) -> Optional[Dict[str, Any]]:
+    """Return Phase B recipe-primary defaults when explicitly enabled and matched.
+
+    ``WINGS_RECIPE_MODE=primary`` is the only mode that can replace the legacy
+    ``model_deploy_config`` lookup.  Shadow/off/unknown modes keep the legacy
+    behavior unchanged.  Conflicted selections also fall back to legacy config.
+    """
+    mode = os.getenv("WINGS_RECIPE_MODE", "shadow").strip().lower() or "shadow"
+    if mode != "primary":
+        return None
+
+    model_path = str(cmd_known_params.get("model_path") or getattr(model_info, "model_path", "") or "")
+    architecture = str(getattr(model_info, "model_architecture", "") or "")
+    if not architecture and hasattr(model_info, "identify_model_architecture"):
+        architecture = str(model_info.identify_model_architecture() or "")
+    if not architecture:
+        architecture = read_model_architecture(model_path)
+
+    ctx = RecipeRuntimeContext(
+        engine=str(cmd_known_params.get("engine") or ""),
+        version=str(cmd_known_params.get("engine_version") or cmd_known_params.get("version") or ""),
+        chip_id=str(hardware_env.get("chip_id") or ""),
+        model_name=str(cmd_known_params.get("model_name") or getattr(model_info, "model_name", "") or ""),
+        model_path=model_path,
+        architecture=architecture,
+        allow_experimental=bool(cmd_known_params.get("allow_experimental", False)),
+    )
+    proposed, resolution = resolve_recipe_defaults(ctx)
+    summary = resolution.get("summary") or {}
+    if resolution.get("status") == "conflict":
+        logger.warning("[recipe-primary] conflict detected; fallback to model_deploy_config")
+        return None
+    if not proposed:
+        logger.info(
+            "[recipe-primary] no applicable recipe defaults found "
+            "(selected=%s); fallback to model_deploy_config",
+            summary.get("selected_count", 0),
+        )
+        return None
+
+    logger.info(
+        "[recipe-primary] applying recipe defaults selected=%s proposed=%s experimental=%s",
+        summary.get("selected_count", 0),
+        summary.get("proposed_param_count", len(proposed)),
+        summary.get("experimental_selected", False),
+    )
+    cmd_known_params["_recipe_primary_resolution"] = resolution
+    cmd_known_params["_recipe_primary_proposed_keys"] = sorted(proposed.keys())
+    return _merge_cmd_params(hardware_env, proposed, cmd_known_params, model_info)
 
 
 def _resolve_model_lookup_keys(cmd_known_params: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -2183,6 +2155,10 @@ def _get_model_specific_config(hardware_env: Dict[str, Any],
 
     model_architecture = model_info.identify_model_architecture()
     model_type = model_info.identify_model_type()
+
+    recipe_primary_config = _get_recipe_primary_config(hardware_env, cmd_known_params, model_info)
+    if recipe_primary_config is not None:
+        return recipe_primary_config
 
     models_dict, fallback = _load_and_validate_models_dict(hardware_env, model_type, engine)
     if fallback is not None:
@@ -2229,8 +2205,77 @@ def _merge_final_config(engine_config: Dict[str, Any],
     """
     cmd_known_params['engine_config'] = engine_config
     cmd_known_params['_explicit_cli_keys'] = sorted(_detect_explicit_cli_keys())
+    recipe_resolution = cmd_known_params.get('_recipe_primary_resolution') or {}
+    phase_d_resolution = cmd_known_params.get('_phase_d_resolution') or {}
+    cmd_known_params['_resolution_trace'] = build_resolution_trace(
+        engine_config,
+        explicit_keys=set(cmd_known_params.get('_explicit_cli_keys') or []),
+        user_config_keys=set(cmd_known_params.get('_user_config_keys') or []),
+        user_config_ref=cmd_known_params.get('_user_config_ref'),
+        recipe_resolution=recipe_resolution,
+        phase_d_resolution=phase_d_resolution,
+        legacy_ref=cmd_known_params.get('_legacy_config_ref'),
+    )
+    selected = recipe_resolution.get('selected') if isinstance(recipe_resolution, dict) else None
+    if isinstance(selected, dict):
+        cmd_known_params['_matched_recipes'] = [item for item in selected.values() if item]
+
+    for internal_key in (
+        '_user_config_keys',
+        '_user_config_ref',
+        '_recipe_primary_resolution',
+        '_recipe_primary_proposed_keys',
+        '_phase_d_resolution',
+        '_legacy_config_ref',
+    ):
+        cmd_known_params.pop(internal_key, None)
 
     return cmd_known_params
+
+
+def _maybe_apply_phase_d_layers(engine_config: Dict[str, Any],
+                                hardware_env: Dict[str, Any],
+                                cmd_known_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve Phase D manifest/deviation/env-policy layers.
+
+    Default mode is ``shadow``: load and record diagnostics without mutating the
+    final engine config.  ``WINGS_PHASE_D_MODE=primary`` applies CLI-target
+    deviations unless the same field was explicitly set by user CLI/env.
+    """
+    mode = os.getenv("WINGS_PHASE_D_MODE", "shadow").strip().lower() or "shadow"
+    if mode == "off":
+        return engine_config
+    ctx = PhaseDRuntimeContext(
+        engine=str(cmd_known_params.get("engine") or ""),
+        version=str(cmd_known_params.get("engine_version") or cmd_known_params.get("version") or ""),
+        chip_id=str(hardware_env.get("chip_id") or ""),
+        allow_primary=(mode == "primary"),
+    )
+    try:
+        resolution = build_phase_d_resolution(ctx, engine_config)
+    except Exception as exc:
+        logger.warning("[phase-d] resolution skipped after error: %s", exc, exc_info=True)
+        return engine_config
+    cmd_known_params['_phase_d_resolution'] = resolution
+    summary = resolution.get("summary") or {}
+    logger.info(
+        "[phase-d] mode=%s manifest=%s deviations=%s env_policies=%s proposed=%s would_change=%s",
+        mode,
+        summary.get("manifest_found"),
+        summary.get("deviation_count", 0),
+        summary.get("env_policy_count", 0),
+        summary.get("proposed_param_count", 0),
+        summary.get("would_change_count", 0),
+    )
+    if mode != "primary":
+        return engine_config
+    explicit_keys = _detect_explicit_cli_keys()
+    for key, value in (resolution.get("proposed_params") or {}).items():
+        if key in explicit_keys:
+            logger.info("[phase-d] skip explicit user field: %s", key)
+            continue
+        engine_config[key] = value
+    return engine_config
 
 
 def load_and_merge_configs(
@@ -2240,7 +2285,7 @@ def load_and_merge_configs(
     """配置加载与合并的主入口函数。
 
     将多层配置源从低优先级到高优先级合并：
-        1. 硬件默认配置 (e.g., config/nvidia_default.json)
+        1. 引擎基础默认 + Phase D 模型默认 carrier
         2. 用户指定的配置文件 (--config-file)
         3. 用户 CLI 参数 (e.g., --model-path, --port)
         4. 引擎专属额外参数 (e.g., --tensor-parallel-size 2)
@@ -2297,6 +2342,9 @@ def load_and_merge_configs(
     engine_name = cmd_known_params.get("engine", "vllm")
     if user_config:
         user_config = _translate_user_config_for_engine(user_config, engine_name)
+    cmd_known_params['_user_config_keys'] = sorted(user_config.keys()) if user_config else []
+    cmd_known_params['_user_config_ref'] = config if isinstance(config, str) and config else None
+    cmd_known_params['_legacy_config_ref'] = engine_default_ref(cmd_known_params.get('engine') or 'vllm')
 
     if user_config and get_config_force_env():
         engine_config = user_config
@@ -2336,6 +2384,10 @@ def load_and_merge_configs(
         model_info,
     )
 
+    # 4.8 Phase D manifest/deviation/env_policy runtime loader。
+    #     默认 shadow 只记录诊断；WINGS_PHASE_D_MODE=primary 才应用 deviation。
+    engine_config = _maybe_apply_phase_d_layers(engine_config, hardware_env, cmd_known_params)
+
     # 5.
     final_engine_params = _merge_final_config(engine_config, cmd_known_params)
     if inherited_explicit_keys:
@@ -2345,4 +2397,13 @@ def load_and_merge_configs(
 
     logger.info("Final engine_config keys: %s", list(engine_config.keys()))
     logger.info("Config merging completed.")
-    return final_engine_params
+    return LoadResult(
+        final_engine_params,
+        resolution_trace=final_engine_params.get('_resolution_trace') or {},
+        chip_info={
+            'chip_id': hardware_env.get('chip_id'),
+            'chip_source': hardware_env.get('chip_source'),
+            'chip_aliases': hardware_env.get('chip_aliases'),
+        },
+        matched_recipes=final_engine_params.get('_matched_recipes') or [],
+    )

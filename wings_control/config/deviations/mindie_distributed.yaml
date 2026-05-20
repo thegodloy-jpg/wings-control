@@ -1,0 +1,81 @@
+engine: mindie_distributed
+deviations:
+  # ── Global context-length cap ────────────────────────────────────────────────
+  - field: max_model_len
+    target: additional_config
+    wings_value: 4096
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910c"]
+    rationale: >
+      Default cap for non-extended distributed deployments.
+      910b-64 extended params (maxSeqLen=16384) are model-specific and live in
+      model recipe hardware_overlays, not here.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  - field: max_input_token_len
+    target: additional_config
+    wings_value: 2048
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910c"]
+    rationale: Half of maxSeqLen; matches ascend_default.json global default.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  - field: max_prefill_tokens
+    target: additional_config
+    wings_value: 2048
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910c"]
+    rationale: Matches ascend_default.json maxIterTimes=2048 global default.
+    source_type: wings_decision
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  # ── Architecture-level model_type (same as mindie.yaml) ──────────────────────
+  - field: model_type
+    target: additional_config
+    wings_value: deepseekv2
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    applies_to_architectures: ["DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"]
+    rationale: MindIE distributed requires same model type hint as single-node.
+    source_type: vendor_doc
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  - field: model_type
+    target: additional_config
+    wings_value: qwen3
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    applies_to_architectures: ["Qwen3ForCausalLM", "Qwen3MoeForCausalLM", "Qwen3NextForCausalLM"]
+    rationale: MindIE distributed model type hint for Qwen3 family.
+    source_type: vendor_doc
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings
+
+  - field: model_type
+    target: additional_config
+    wings_value: qwen2_5
+    upstream_default: null
+    applies_to_versions: ">=2.3.0"
+    applies_to_hardware: ["910b-32", "910b-64", "910c"]
+    applies_to_architectures: ["Qwen2ForCausalLM"]
+    rationale: MindIE distributed model type hint for Qwen2/2.5 family.
+    source_type: vendor_doc
+    evidence_ref: wings_control/config/defaults/ascend_default.json
+    decision_date: "2026-05-14"
+    decided_by: platform-team@wings

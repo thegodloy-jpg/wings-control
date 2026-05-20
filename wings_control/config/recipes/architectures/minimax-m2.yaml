@@ -1,0 +1,25 @@
+architecture: MiniMaxM2ForCausalLM
+also_matches: []
+defaults:
+  trust_remote_code: true
+  tool_call_parser: minimax_m2
+  reasoning_parser: minimax_m2
+hardware_overlays:
+- applies_to_hardware:
+  - 910b-32
+  - 910b-64
+  - 910c
+  defaults:
+    max_model_len: 34816
+    max_num_seqs: 64
+    gpu_memory_utilization: 0.92
+    compilation_config:
+      cudagraph_mode: FULL_DECODE_ONLY
+    additional_config:
+      enable_cpu_binding: true
+- applies_to_hardware:
+  - h20-96
+  - h20-141
+  - l20
+  defaults:
+    max_model_len: 4096

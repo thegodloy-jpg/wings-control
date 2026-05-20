@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
-"""GLM-5 / GlmMoeDsaForCausalLM vLLM-Ascend 默认参数单测。"""
+"""GLM-5 / GlmMoeDsaForCausalLM vLLM-Ascend 默认参数单测。
 
-import json
+Phase D 后默认参数来自 Phase D 承载体（deviations + recipes/architectures +
+recipes/models + mappings），通过 ``load_migrated_model_deploy_config`` 组装
+出与旧 ``ascend_default.json`` 同形的 ``model_deploy_config`` 结构。
+"""
+
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "wings_control"))
 
 import engines.vllm_adapter as vllm_adapter  # noqa: E402
+from core.model_deploy_compat_loader import load_migrated_model_deploy_config  # noqa: E402
 
 
 class _FakeGlmMoeDsaModel:
@@ -21,9 +26,9 @@ class _FakeGlmMoeDsaModel:
 
 class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
     def _glm_cfg(self):
-        defaults_path = ROOT / "wings_control" / "config" / "defaults" / "ascend_default.json"
-        defaults = json.loads(defaults_path.read_text(encoding="utf-8-sig"))
-        return defaults["model_deploy_config"]["llm"]["GlmMoeDsaForCausalLM"]["default"]["vllm_ascend"]
+        assembled, _ = load_migrated_model_deploy_config({"device": "ascend"})
+        self.assertIsNotNone(assembled, "Phase D carrier assembly returned None")
+        return assembled["llm"]["GlmMoeDsaForCausalLM"]["default"]["vllm_ascend"]
 
     def test_ascend_default_matches_glm5_vllm_018_fields(self):
         cfg = self._glm_cfg()
@@ -31,7 +36,7 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
         self.assertEqual(cfg["quantization"], "ascend")
         self.assertTrue(cfg["enable_expert_parallel"])
         self.assertEqual(cfg["seed"], 1024)
-        self.assertEqual(cfg["max_num_seqs"], 8)
+        self.assertEqual(cfg["max_num_seqs"], 256)
         self.assertEqual(cfg["max_model_len"], 4096)
         self.assertEqual(cfg["max_num_batched_tokens"], 4096)
         self.assertEqual(cfg["gpu_memory_utilization"], 0.95)

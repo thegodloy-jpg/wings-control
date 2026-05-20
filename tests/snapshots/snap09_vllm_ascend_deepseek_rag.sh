@@ -222,12 +222,12 @@ export HCCL_BUFFSIZE=1024
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export OMP_PROC_BIND=false
 echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-10}
+export OMP_NUM_THREADS=1
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export TASK_QUEUE_ENABLE=1
+echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-export HCCL_OP_EXPANSION_MODE=AIV
-echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -236,8 +236,10 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-R1 --model /models/DeepSeek-R1 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-R1 --model /models/DeepSeek-R1 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8 &
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --gpu-memory-utilization 0.92 --trust-remote-code --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-R1 --model /models/DeepSeek-R1 --dtype auto --kv-cache-dtype auto --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --gpu-memory-utilization 0.92 --trust-remote-code --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-R1 --model /models/DeepSeek-R1 --dtype auto --kv-cache-dtype auto --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -341,12 +343,12 @@ else
     echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
     export OMP_PROC_BIND=false
     echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-10}
+    export OMP_NUM_THREADS=1
     echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+    export TASK_QUEUE_ENABLE=1
+    echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
     export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
     echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-    export HCCL_OP_EXPANSION_MODE=AIV
-    echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
 
 
     # Pre-flight: verify Ascend driver is accessible
@@ -355,8 +357,10 @@ else
         echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
         exit 1
     fi
-    echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-R1 --model /models/DeepSeek-R1 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8'
-    python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-R1 --model /models/DeepSeek-R1 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8 &
+    export HCCL_OP_EXPANSION_MODE=AIV
+    echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+    echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --gpu-memory-utilization 0.92 --trust-remote-code --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-R1 --model /models/DeepSeek-R1 --dtype auto --kv-cache-dtype auto --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8'
+    python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --gpu-memory-utilization 0.92 --trust-remote-code --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-R1 --model /models/DeepSeek-R1 --dtype auto --kv-cache-dtype auto --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8 &
     ENGINE_PID=$!
     echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

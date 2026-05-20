@@ -1,0 +1,208 @@
+engine: vllm
+env_policies:
+  - name: VLLM_USE_MODELSCOPE
+    mode: idempotent
+    default_value: "False"
+    applies_to_versions: ">=0.19.0"
+    rationale: >
+      Upstream default. Keep idempotent so users opting into ModelScope by
+      pre-setting the var on the deployment side are not overwritten.
+    source_type: official_doc
+    decision_date: "2026-05-14"
+
+  # ── Runtime-rendered Ray networking ───────────────────────────────────────
+  - name: VLLM_HOST_IP
+    mode: force_override
+    value_template: >-
+      ${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
+    applies_when:
+      engine: vllm
+      deployment_mode: ray
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived Ray node IP; must be stable before ray start.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: NCCL_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm
+      deployment_mode: ray
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived NIC for Ray/NCCL communication.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: TP_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm
+      deployment_mode: ray
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived NIC for Ray tensor-parallel communication.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: GLOO_SOCKET_IFNAME
+    mode: force_override
+    value_template: >-
+      $(awk '$2=="00000000"{print $1;exit}' /proc/net/route 2>/dev/null || echo eth0)
+    applies_when:
+      engine: vllm
+      deployment_mode: ray
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived Gloo NIC for Ray startup.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  # ── Runtime-rendered DP deployment networking ─────────────────────────────
+  - name: GLOO_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived Gloo NIC for vLLM DP deployment.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: TP_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived tensor-parallel NIC for vLLM DP deployment.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: NCCL_SOCKET_IFNAME
+    mode: force_override
+    value_template: "${network_interface}"
+    applies_when:
+      engine: vllm
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived NCCL NIC for vLLM DP deployment.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: VLLM_NIXL_SIDE_CHANNEL_PORT
+    mode: force_override
+    value_template: "${nixl_port}"
+    applies_when:
+      engine: vllm
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived NIXL side-channel port for DP deployment.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: NCCL_IB_DISABLE
+    mode: force_override
+    value_template: "0"
+    applies_when:
+      engine: vllm
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.19.0"
+    rationale: DP deployment requires NCCL IB enabled for multi-node throughput.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: NCCL_CUMEM_ENABLE
+    mode: force_override
+    value_template: "0"
+    applies_when:
+      engine: vllm
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.19.0"
+    rationale: Keep current DP deployment compatibility with NCCL cuMem disabled.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: NCCL_NET_GDR_LEVEL
+    mode: force_override
+    value_template: "SYS"
+    applies_when:
+      engine: vllm
+      deployment_mode: dp_deployment
+    applies_to_versions: ">=0.19.0"
+    rationale: Keep current DP deployment GDR scope.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  # ── Runtime-rendered PD disaggregation networking ─────────────────────────
+  - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+    mode: force_override
+    value_template: "${current_ip}"
+    applies_when:
+      engine: vllm
+      deployment_mode: pd
+    applies_to_versions: ">=0.19.0"
+    rationale: PD role uses local node IP as NIXL side-channel host.
+    source_type: wings_decision
+    decision_date: "2026-05-15"
+
+  - name: NCCL_SOCKET_IFNAME
+    mode: force_override
+    applies_to_versions: ">=0.19.0"
+    rationale: >
+      Distributed runs need a deterministic NIC selection; wings derives it
+      from the node networking discovery and must overwrite any stale value
+      inherited from the deployment image (FR-006 force_override allowed
+      for runtime-context vars).
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: GLOO_SOCKET_IFNAME
+    mode: force_override
+    applies_to_versions: ">=0.19.0"
+    rationale: Same as NCCL_SOCKET_IFNAME — runtime-derived NIC.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: TP_SOCKET_IFNAME
+    mode: force_override
+    applies_to_versions: ">=0.19.0"
+    rationale: Same as NCCL_SOCKET_IFNAME — runtime-derived NIC.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: VLLM_HOST_IP
+    mode: force_override
+    applies_to_versions: ">=0.19.0"
+    rationale: Runtime-derived from node discovery; user-set values are stale.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: MASTER_ADDR
+    mode: force_override
+    applies_to_versions: ">=0.19.0"
+    rationale: Distributed coordinator address resolved by wings at launch.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: MASTER_PORT
+    mode: force_override
+    applies_to_versions: ">=0.19.0"
+    rationale: Coordinator port allocated by wings.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: RANK
+    mode: force_override
+    applies_to_versions: ">=0.19.0"
+    rationale: Per-process rank, computed by wings from topology.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
+
+  - name: WORLD_SIZE
+    mode: force_override
+    applies_to_versions: ">=0.19.0"
+    rationale: Total process count, computed by wings from topology.
+    source_type: wings_decision
+    decision_date: "2026-05-14"
