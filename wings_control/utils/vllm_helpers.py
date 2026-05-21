@@ -79,6 +79,11 @@ def _strip_cli_flag(cmd: str, flag: str) -> str:
     return " ".join(out)
 
 
+def _is_json_like_str(s: str) -> bool:
+    """检查字符串是否看起来像 JSON（以 { } 或 [ ] 包围）。"""
+    return (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']'))
+
+
 def _format_cli_arg(arg_name: str, value) -> List[str]:
     """将单个引擎参数值格式化为 CLI 参数片段。"""
     if isinstance(value, bool):
@@ -90,8 +95,7 @@ def _format_cli_arg(arg_name: str, value) -> List[str]:
         return [arg_name, shlex.quote(json.dumps(value, ensure_ascii=False, separators=(',', ':')))]
     if isinstance(value, str):
         stripped = value.strip()
-        if (stripped.startswith('{') and stripped.endswith('}')) or \
-           (stripped.startswith('[') and stripped.endswith(']')):
+        if _is_json_like_str(stripped):
             normalized: Optional[str] = None
             try:
                 parsed = json.loads(stripped)
