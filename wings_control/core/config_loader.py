@@ -2203,8 +2203,12 @@ def _match_model_engine_config(
     """
     h20_model = _get_h20_model_hint()
 
+    lookup_names = [model_name_lower]
+    if model_name_lower.startswith("deepseek-v4-pro-") and model_name_lower.endswith("-mtp1"):
+        lookup_names.append(model_name_lower[:-1])
+
     for model, config in arch_dict.items():
-        if model_name_lower != model.lower():
+        if model.lower() not in lookup_names:
             continue
 
         if is_deepseek_sglang_nvidia and h20_model in ("H20-96G", "H20-141G"):

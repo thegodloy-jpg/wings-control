@@ -1149,7 +1149,83 @@ def _get_engine_config_platform(params: Dict[str, Any]) -> str:
     return ""
 
 
-def _resolve_deepseek_v4_flash_platform(params: Dict[str, Any]) -> str:
+_DEEPSEEK_V4_IDENTITY_CONFIG_KEYS = (
+    "_name_or_path",
+    "name_or_path",
+    "model_name",
+    "model_id",
+    "base_model_name",
+    "source_model",
+)
+
+
+def _append_identity_candidate(candidates: List[str], value: Any) -> None:
+    if value is None:
+        return
+    if isinstance(value, str):
+        if value.strip():
+            candidates.append(value)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _append_identity_candidate(candidates, item)
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _append_identity_candidate(candidates, item)
+
+
+def _load_model_identity_config(
+    params: Dict[str, Any],
+    model_info: Optional[ModelIdentifier] = None,
+) -> Dict[str, Any]:
+    config = getattr(model_info, "config", None)
+    if isinstance(config, dict):
+        return config
+
+    model_path = params.get("model_path")
+    if not model_path:
+        return {}
+    config_path = os.path.join(str(model_path), "config.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as fp:
+            loaded = json.load(fp)
+        return loaded if isinstance(loaded, dict) else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("[DeepSeek-V4] Skip model identity config %s: %s", config_path, exc)
+        return {}
+
+
+def _deepseek_v4_identity_text(
+    params: Dict[str, Any],
+    model_info: Optional[ModelIdentifier] = None,
+) -> str:
+    candidates: List[str] = []
+    for value in (
+        params.get("model_name"),
+        params.get("served_model_name"),
+        params.get("model_path"),
+    ):
+        _append_identity_candidate(candidates, value)
+
+    engine_config = params.get("engine_config") or {}
+    for value in (
+        engine_config.get("served_model_name"),
+        engine_config.get("model"),
+    ):
+        _append_identity_candidate(candidates, value)
+
+    config = _load_model_identity_config(params, model_info)
+    for key in _DEEPSEEK_V4_IDENTITY_CONFIG_KEYS:
+        _append_identity_candidate(candidates, config.get(key))
+
+    return " ".join(str(item).lower() for item in candidates if item)
+
+
+def _resolve_deepseek_v4_flash_platform(
+    params: Dict[str, Any],
+    model_info: Optional[ModelIdentifier] = None,
+) -> str:
     """Resolve DeepSeek-V4-Flash vLLM-Ascend package flavor: a2 or a3.
 
     优先级:
@@ -1158,7 +1234,8 @@ def _resolve_deepseek_v4_flash_platform(params: Dict[str, Any]) -> str:
          config_loader 注入到 params['device_details'])
       3. ASCEND_A3_ENABLE 环境变量 (legacy)
       4. WINGS_DEVICE_NAME 环境变量 (device_utils 回退路径)
-      5. 默认 a2
+      5. V4-Pro 模型需求兜底为 a3（显式 A2 仍优先）
+      6. 默认 a2
     """
     declared = _get_engine_config_platform(params)
     if declared in {"a2", "atlas-a2", "atlas_a2", "910b"}:
@@ -1183,6 +1260,9 @@ def _resolve_deepseek_v4_flash_platform(params: Dict[str, Any]) -> str:
         return "a3"
     if "a2" in device_name or "910b" in device_name:
         return "a2"
+    if _is_deepseek_v4_pro_params(params, model_info):
+        logger.info("[DeepSeek-V4-Pro] Ascend platform not detected; assuming A3 from model identity")
+        return "a3"
     return "a2"
 
 
@@ -1191,15 +1271,7 @@ def _is_deepseek_v4_flash_params(
     model_info: Optional[ModelIdentifier] = None,
 ) -> bool:
     """Return True for DeepSeek-V4-Flash launch params without affecting other DeepSeek models."""
-    candidates = [
-        params.get("model_name"),
-        params.get("served_model_name"),
-        params.get("model_path"),
-    ]
-    engine_config = params.get("engine_config") or {}
-    candidates.append(engine_config.get("served_model_name"))
-    candidates.append(engine_config.get("model"))
-    text = " ".join(str(item).lower() for item in candidates if item)
+    text = _deepseek_v4_identity_text(params, model_info)
     if "deepseek-v4-flash" in text or "deepseek_v4_flash" in text or "deepseekv4flash" in text:
         return True
     if model_info and model_info.model_architecture in _DEEPSEEK_V4_FLASH_ARCHES:
@@ -1219,7 +1291,7 @@ def _is_deepseek_v4_pro_adapted_scope(
         return False
     if not _is_deepseek_v4_pro_params(params, model_info):
         return False
-    if _resolve_deepseek_v4_flash_platform(params) != "a3":
+    if _resolve_deepseek_v4_flash_platform(params, model_info) != "a3":
         return False
     if not bool(params.get("distributed")):
         return False
@@ -1227,27 +1299,54 @@ def _is_deepseek_v4_pro_adapted_scope(
     return nnodes == 2
 
 
+def _extract_quantize_from_config(config: Dict[str, Any]) -> Optional[str]:
+    """从 config.json 提取量化字段，等价于 ``ModelIdentifier.identify_model_quantize``。
+
+    单独抽出来给 ``_is_deepseek_v4_pro_params`` 在 ``model_info`` 缺席时使用，
+    避免在每个 caller 处重新构造 ``ModelIdentifier``。
+    """
+    if not isinstance(config, dict):
+        return None
+    if "quantize" in config and config["quantize"]:
+        return str(config["quantize"])
+    quant_cfg = config.get("quantization_config")
+    if isinstance(quant_cfg, dict):
+        method = quant_cfg.get("quant_method")
+        if method:
+            return str(method)
+    return None
+
+
 def _is_deepseek_v4_pro_params(
     params: Dict[str, Any],
     model_info: Optional[ModelIdentifier] = None,
 ) -> bool:
     """Return True for DeepSeek-V4-Pro (w4a8-mtp) launch params; strictly exclusive with V4-Flash."""
-    candidates = [
-        params.get("model_name"),
-        params.get("served_model_name"),
-        params.get("model_path"),
-    ]
-    engine_config = params.get("engine_config") or {}
-    candidates.append(engine_config.get("served_model_name"))
-    candidates.append(engine_config.get("model"))
-    text = " ".join(str(item).lower() for item in candidates if item)
+    text = _deepseek_v4_identity_text(params, model_info)
     # V4-Flash 与 V4-Pro 必须互斥：名字中带 flash 一律视为 V4-Flash，由专用路径处理。
     if "flash" in text:
         return False
     if "deepseek-v4-pro" in text or "deepseek_v4_pro" in text or "deepseekv4pro" in text:
         return True
+
     if model_info and model_info.model_architecture in _DEEPSEEK_V4_FLASH_ARCHES:
-        return "v4" in text and "pro" in text
+        arch_is_deepseek_v4 = True
+    else:
+        archs = _load_model_identity_config(params, model_info).get("architectures") or []
+        arch_is_deepseek_v4 = bool(archs) and archs[0] in _DEEPSEEK_V4_FLASH_ARCHES
+    if arch_is_deepseek_v4 and "v4" in text and "pro" in text:
+        return True
+    if arch_is_deepseek_v4:
+        # 权重指纹兜底：V4-Pro 是 w4a8 量化的 DeepSeek-V4，V4-Flash 是 w8a8。
+        # 当用户改名 / 把权重塞进通用路径以至于 identity text 丢失 "pro" 标记时，
+        # 仍可由 config.json 的 quantize / quantization_config.quant_method 字段识别。
+        # 这能阻止 V4-Pro 在 hardware_info.json 缺失 details 字段时被误判为 A2 →
+        # 闸门拒绝注入 TP/DP → 抛 "DeepSeek Ascend DP requires positive TP" 的崩溃。
+        quantize = getattr(model_info, "model_quantize", None) if model_info else None
+        if not quantize:
+            quantize = _extract_quantize_from_config(_load_model_identity_config(params, model_info))
+        if _is_w4a8_quantize(quantize):
+            return True
     return False
 
 
@@ -2011,6 +2110,27 @@ def _is_w8a8_quantize(quantize: Optional[str]) -> bool:
         return True
     # 子串匹配：覆盖未来可能出现的 ascend-w8a8-int8 / xxx_w8a8_yyy 等命名
     return "w8a8" in q
+
+
+_W4A8_QUANT_METHOD_ALIASES = {
+    "w4a8", "w4a8_int8", "w4a8int8",
+    "ascend_w4a8", "ascend-w4a8",
+}
+
+
+def _is_w4a8_quantize(quantize: Optional[str]) -> bool:
+    """判定模型是否为 W4A8 量化变体（容忍命名差异）。
+
+    用于 DeepSeek-V4-Pro 的权重指纹兜底：V4-Pro 是 w4a8 + MTP，V4-Flash 是 w8a8。
+    """
+    if not quantize:
+        return False
+    q = str(quantize).strip().lower()
+    if not q:
+        return False
+    if q in _W4A8_QUANT_METHOD_ALIASES:
+        return True
+    return "w4a8" in q
 
 
 def _deep_merge_user_priority(user: Any, default: Any) -> Any:

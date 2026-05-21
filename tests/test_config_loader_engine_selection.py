@@ -766,6 +766,45 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
         self.assertIn("--tensor-parallel-size 8", exec_line)
 
+    def test_deepseek_v4_pro_mtp1_matches_mtp_defaults_during_config_merge(self):
+        """mtp1 变体应复用 V4-Pro mtp 默认，避免落到 DeepseekV4 架构默认。"""
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["DeepseekV4ForCausalLM"],
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "DeepSeek-V4-Pro-w4a8-mtp1",
+                "--model-path", model_dir,
+                "--device-count", "16",
+                "--trust-remote-code",
+                "--distributed",
+                "--nnodes", "2",
+                "--node-rank", "0",
+                "--node-ips", "10.0.0.1,10.0.0.2",
+                "--master-ip", "10.0.0.1",
+            ]
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {"RANK_IP": "10.0.0.1"}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "ascend", "count": 16, "details": []},
+                        launch_args.to_namespace(),
+                    )
+
+        engine_config = merged["engine_config"]
+        self.assertEqual(engine_config.get("max_model_len"), 135000, engine_config)
+        self.assertEqual(engine_config.get("tensor_parallel_size"), 16, engine_config)
+        self.assertEqual(engine_config.get("data_parallel_size"), 2, engine_config)
+        self.assertIn("speculative_config", engine_config)
+        self.assertIn("additional_config", engine_config)
+
     def test_deepseek_v4_pro_flash_name_does_not_match_pro(self):
         """名称含 flash 严格视为 V4-Flash，不应进入 V4-Pro 分支。"""
         from engines.vllm_adapter import (
