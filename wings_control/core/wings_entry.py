@@ -28,11 +28,14 @@ from core.port_plan import PortPlan
 from core.start_args_compat import LaunchArgs
 from core.version_util import normalize_engine_version
 from engines.vllm_adapter import (
-    build_modelslim_quarot_patch_preamble,
-    build_triton_patch_preamble,
     resolve_speculative_strategy,
     _is_deepseek_v4_cpu_offload_params,
     _inject_env_echo,
+    _need_triton_patch,
+)
+from utils.vllm_helpers import (
+    build_modelslim_quarot_patch_preamble,
+    build_triton_patch_preamble,
 )
 from utils.env_utils import get_local_ip, get_master_ip, validate_ip
 from utils.model_utils import ModelIdentifier, INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51
@@ -1401,7 +1404,7 @@ def _assemble_startup_command(
     """
     analyzer_preamble = _build_analyzer_preamble(engine, merged, hardware)
     faulthandler_patch = _build_faulthandler_patch_preamble(engine)
-    triton_patch = build_triton_patch_preamble(engine)
+    triton_patch = build_triton_patch_preamble(engine, _need_triton_patch)
     modelslim_patch = build_modelslim_quarot_patch_preamble(engine)
     accel_preamble = _build_accel_preamble(engine, merged)
     env_overrides = _build_env_overrides_preamble()
