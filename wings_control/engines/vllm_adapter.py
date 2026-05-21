@@ -118,6 +118,11 @@ def _get_ray_resource_flag(engine: str, params: dict) -> str:
         return f"--num-gpus={tp_size}"
 
 
+def get_ray_resource_flag(engine: str, params: dict) -> str:
+    """Return the Ray resource flag for distributed vLLM scripts."""
+    return _get_ray_resource_flag(engine, params)
+
+
 def _need_triton_patch(engine: str) -> bool:
     """判断是否需要 Triton NPU 驱动补丁。
 
@@ -144,6 +149,11 @@ def _need_enforce_eager(engine: str) -> bool:
     if engine != "vllm_ascend":
         return False
     return os.getenv("ASCEND_ENFORCE_EAGER", "").lower() in ("true", "1", "yes")
+
+
+def need_enforce_eager(engine: str) -> bool:
+    """Return whether the start command should append --enforce-eager."""
+    return _need_enforce_eager(engine)
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -180,6 +190,19 @@ def _default_deepseek_ascend_dp_tensor_parallel_size(
     return None
 
 
+def default_deepseek_ascend_dp_tensor_parallel_size(
+    model_architecture: str,
+    device_count: Optional[int],
+) -> Optional[int]:
+    """Return the default TP size for Ascend DP architectures."""
+    return _default_deepseek_ascend_dp_tensor_parallel_size(model_architecture, device_count)
+
+
+def is_deepseek_ascend_dp_architecture(model_architecture: Optional[str]) -> bool:
+    """Return whether the model architecture uses Ascend DP topology rules."""
+    return model_architecture in _DEEPSEEK_ASCEND_DP_ARCHES
+
+
 def _get_deepseek_ascend_dp_model_architecture(params: Dict[str, Any]) -> Optional[str]:
     """Return DeepSeek Ascend dp_deployment architecture, otherwise None."""
     if params.get("engine") != "vllm_ascend":
@@ -197,6 +220,11 @@ def _get_deepseek_ascend_dp_model_architecture(params: Dict[str, Any]) -> Option
     if model_info.model_architecture in _DEEPSEEK_ASCEND_DP_ARCHES:
         return model_info.model_architecture
     return None
+
+
+def get_deepseek_ascend_dp_model_architecture(params: Dict[str, Any]) -> Optional[str]:
+    """Return the Ascend dp_deployment model architecture, otherwise None."""
+    return _get_deepseek_ascend_dp_model_architecture(params)
 
 
 def _need_triton_patch_and_eager(engine: str) -> bool:
@@ -297,18 +325,6 @@ def _build_ascend_fallback_env(engine: str) -> List[str]:
     if engine not in ("vllm_ascend", "mindie"):
         return []
     return [
-        # "set +u",
-        # (
-        #     "[ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] "
-        #     "&& source /usr/local/Ascend/ascend-toolkit/set_env.sh "
-        #     "|| echo 'WARN: ascend-toolkit/set_env.sh not found'"
-        # ),
-        # (
-        #     "[ -f /usr/local/Ascend/nnal/atb/set_env.sh ] "
-        #     "&& source /usr/local/Ascend/nnal/atb/set_env.sh "
-        #     "|| echo 'WARN: nnal/atb/set_env.sh not found'"
-        # ),
-        # "set -u",
         "export LD_LIBRARY_PATH=\"/usr/local/Ascend/driver/lib64/driver"
         ":/usr/local/Ascend/driver/lib64/common:${LD_LIBRARY_PATH:-}\"",
     ]
@@ -2108,6 +2124,9 @@ def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
     return _get_deepseek_ascend_dp_model_architecture(params) is not None
 
 
+def is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
+    """Return True when params target an Ascend dp_deployment architecture."""
+    return _is_deepseek_ascend_dp_deployment(params)
 
 
 # ── GLM-4.7-W8A8 引擎参数注入（仅针对量化变体，避免污染同架构 BF16 模型）──
@@ -2510,6 +2529,11 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
     return ""
 
 
+def build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
+    """Build the speculative decoding CLI fragment."""
+    return _build_speculative_cmd(params, engine)
+
+
 def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
     """Return True when launcher should synthesize speculative_config itself."""
     if not params.get("enable_speculative_decode"):
@@ -2518,6 +2542,11 @@ def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
     if _is_deepseek_v4_flash_params(params):
         return False
     return not bool(engine_config.get("speculative_config"))
+
+
+def should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
+    """Return True when launcher should synthesize speculative_config itself."""
+    return _should_append_auto_speculative_config(params)
 
 
 # ── KV Sparse（IndexCache / FP8 KV CACHE）───────────────────────────────
