@@ -79,7 +79,66 @@
             "mindie_tool_call_parser": "deepseekv3"
           }
         },
+        "DeepSeek-R1": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3",
+            "reasoning_parser": "deepseek_r1"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3",
+            "reasoning_parser": "deepseek_r1"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseekv3"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 16384,
+            "maxInputTokenLen": 8192,
+            "maxPrefillBatchSize": 10,
+            "maxPrefillTokens": 8192,
+            "maxBatchSize": 130,
+            "maxIterTimes": 8192,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseekv3"
+          }
+        },
         "DeepSeek-V3.1-w8a8": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v31",
+            "reasoning_parser": "deepseek_v3"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v31",
+            "reasoning_parser": "deepseek_v3"
+          },
+          "mindie": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseek_v31"
+          },
+          "mindie_distributed": {
+            "maxSeqLen": 4096,
+            "maxInputTokenLen": 2048,
+            "maxIterTimes": 2048,
+            "mindie_model_type": "deepseekv2",
+            "mindie_tool_call_parser": "deepseek_v31"
+          }
+        },
+        "DeepSeek-V3.1": {
           "vllm_ascend": {
             "trust_remote_code": true,
             "max_model_len": 4096,

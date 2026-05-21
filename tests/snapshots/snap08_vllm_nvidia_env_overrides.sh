@@ -140,10 +140,10 @@ else
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-    echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser llama3_json --host 10.0.0.1 --port 17000 --served-model-name Llama-3-70B --model /models/Llama-3-70B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8'
-    python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser llama3_json --host 10.0.0.1 --port 17000 --served-model-name Llama-3-70B --model /models/Llama-3-70B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8 &
-    ENGINE_PID=$!
-    echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser llama3_json --host 10.0.0.1 --port 17000 --served-model-name Llama-3-70B --model /models/Llama-3-70B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser llama3_json --host 10.0.0.1 --port 17000 --served-model-name Llama-3-70B --model /models/Llama-3-70B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8 &
+ENGINE_PID=$!
+echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
   if wait "$ENGINE_PID"; then
     echo "[Engine] Engine process exited normally (retry mode)"

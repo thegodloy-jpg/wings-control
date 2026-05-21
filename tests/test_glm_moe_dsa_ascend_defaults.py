@@ -29,7 +29,13 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
         cfg = self._glm_cfg()
 
         self.assertEqual(cfg["quantization"], "ascend")
-        self.assertTrue(cfg["enable_expert_parallel"])
+        # GLM-5.1 在 Ascend 上必须 force-off EP（生产 MTE OOB / 507011 真因），
+        # JSON 故意不写 ``enable_expert_parallel`` 键 —— 由 vLLM 默认行为决定。
+        # 若有人误把它打开，必须显式为 False。
+        self.assertFalse(
+            cfg.get("enable_expert_parallel", False),
+            "GLM-5.1 on Ascend must force-off EP (MTE OOB / 507011)",
+        )
         self.assertEqual(cfg["seed"], 1024)
         self.assertEqual(cfg["max_num_seqs"], 8)
         self.assertEqual(cfg["max_model_len"], 4096)

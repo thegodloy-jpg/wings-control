@@ -150,10 +150,10 @@ else
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-    echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --context-length 8192 --tp-size 4'
-    python3 -m sglang.launch_server --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --context-length 8192 --tp-size 4 &
-    ENGINE_PID=$!
-    echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
+echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --context-length 8192 --tp-size 4'
+python3 -m sglang.launch_server --host 10.0.0.1 --port 17000 --served-model-name Qwen3-Embedding --model-path /models/Qwen3-Embedding --trust-remote-code --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --context-length 8192 --tp-size 4 &
+ENGINE_PID=$!
+echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
   if wait "$ENGINE_PID"; then
     echo "[Engine] Engine process exited normally (retry mode)"

@@ -1521,6 +1521,22 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("[vLLM] Mapping deprecated task=%s to --runner pooling", removed_task)
         engine_config.setdefault("runner", "pooling")
 
+    # DP 拓扑键回写：appliers / 通用 DP 块只写本函数返回的局部 engine_config，
+    # 但 _resolve_dp_deployment_topology 后续从 params["engine_config"] 读取 TP，
+    # 不回写会导致 V4-Flash/Pro 等 _DEEPSEEK_ASCEND_DP_ARCHES 模型在 dp_deployment
+    # 路径下读不到 TP → 抛 "DeepSeek Ascend DP requires a positive tensor_parallel_size"。
+    # V3/V32/GLM-5 此前未崩是因为 _default_deepseek_ascend_dp_tensor_parallel_size
+    # 兜底表覆盖了它们；V4 不在表里，直接暴露此缺陷。
+    params_engine_config = params.setdefault("engine_config", {})
+    for _dp_key in (
+        "tensor_parallel_size",
+        "data_parallel_size",
+        "data_parallel_size_local",
+        "data_parallel_start_rank",
+    ):
+        if _dp_key in engine_config:
+            params_engine_config[_dp_key] = engine_config[_dp_key]
+
     return engine_config
 
 

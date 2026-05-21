@@ -160,36 +160,36 @@ else
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-    export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
-    echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
-    export NCCL_SOCKET_IFNAME=eth0
-    echo "[wings-env] export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-}"
-    export TP_SOCKET_IFNAME=eth0
-    echo "[wings-env] export TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME:-}"
-    export GLOO_SOCKET_IFNAME=$(awk '$2=="00000000"{print $1;exit}' /proc/net/route 2>/dev/null || echo eth0)
-    echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
+export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
+echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
+export NCCL_SOCKET_IFNAME=eth0
+echo "[wings-env] export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-}"
+export TP_SOCKET_IFNAME=eth0
+echo "[wings-env] export TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME:-}"
+export GLOO_SOCKET_IFNAME=$(awk '$2=="00000000"{print $1;exit}' /proc/net/route 2>/dev/null || echo eth0)
+echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
 
-    echo "[ray] head start command: ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP"
-    echo '[wings-cmd] >>> ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP'
-    ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP
+echo "[ray] head start command: ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP"
+echo '[wings-cmd] >>> ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP'
+ray start --head --port=28020 --node-ip-address=$VLLM_HOST_IP --num-gpus=1 --dashboard-host=$VLLM_HOST_IP
 
-    RAY_WAIT_OK=0
-    for i in $(seq 1 60); do
-      COUNT=$(python3 -c "import ray; ray.init(address='auto',ignore_reinit_error=True); print(len([n for n in ray.nodes() if n['alive']])); ray.shutdown()" 2>/dev/null || echo 0)
-      if [ "$COUNT" -ge "2" ]; then RAY_WAIT_OK=1; break; fi
-      echo "[ray-wait] iter=$i count=$COUNT expected=2, sleep 5s..."
-      sleep 5
-    done
-    if [ "$RAY_WAIT_OK" != "1" ]; then
-      echo "[ray-wait] FATAL: only $COUNT/2 ray nodes joined after 300s. Check worker pod status / network / RAY_PORT reachability." >&2
-      exit 1
-    fi
-    echo "[ray-wait] OK: $COUNT ray nodes joined."
+RAY_WAIT_OK=0
+for i in $(seq 1 60); do
+  COUNT=$(python3 -c "import ray; ray.init(address='auto',ignore_reinit_error=True); print(len([n for n in ray.nodes() if n['alive']])); ray.shutdown()" 2>/dev/null || echo 0)
+  if [ "$COUNT" -ge "2" ]; then RAY_WAIT_OK=1; break; fi
+  echo "[ray-wait] iter=$i count=$COUNT expected=2, sleep 5s..."
+  sleep 5
+done
+if [ "$RAY_WAIT_OK" != "1" ]; then
+  echo "[ray-wait] FATAL: only $COUNT/2 ray nodes joined after 300s. Check worker pod status / network / RAY_PORT reachability." >&2
+  exit 1
+fi
+echo "[ray-wait] OK: $COUNT ray nodes joined."
 
-    echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
-    python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
-    ENGINE_PID=$!
-    echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
+ENGINE_PID=$!
+echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
   if wait "$ENGINE_PID"; then
     echo "[Engine] Engine process exited normally (retry mode)"
