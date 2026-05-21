@@ -24,7 +24,7 @@ import re
 import shlex
 import stat
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, NamedTuple, Optional
 
 import yaml
 
@@ -1105,6 +1105,11 @@ def _build_glm5_ascend_env(arch: str, platform: str = "") -> List[str]:
     return env
 
 
+# DeepSeek-V4 专属路径必须以真实架构为边界，而不是只看 model_name。
+# 这里刻意不包含 DeepseekV3ForCausalLM：部分启动参数可能把 V3 权重改名成
+# V4-Flash/Pro，但那不能触发 V4 的 MTP、TP/DP、CPUOffloadingConnector 默认值。
+# 如果后续确有真实 V4 权重沿用 V3 架构名，必须先用真实 config.json 证据和
+# 负向测试补齐，再调整白名单，避免把 V3 路径误导入 V4 特例。
 _DEEPSEEK_V4_FLASH_ARCHES = {
     "DeepseekV4ForCausalLM",
     "DeepSeekV4ForCausalLM",
@@ -1156,6 +1161,11 @@ _DEEPSEEK_V4_IDENTITY_CONFIG_KEYS = (
 
 
 def _append_identity_candidate(candidates: List[str], value: Any) -> None:
+    """把模型身份候选值扁平化进 candidates。
+
+    identity 来源可能是字符串、列表或 config.json 中的嵌套字段。这里不做语义判断，
+    只负责收集可搜索文本，真正的 V4/V4-Pro/V4-Flash 判定留给后续 gate。
+    """
     if value is None:
         return
     if isinstance(value, str):
@@ -1175,6 +1185,12 @@ def _load_model_identity_config(
     params: Dict[str, Any],
     model_info: Optional[ModelIdentifier] = None,
 ) -> Dict[str, Any]:
+    """读取模型 config.json，用作 V4 身份和架构证据。
+
+    优先复用已构造的 ModelIdentifier.config，避免重复读文件；只有调用方没有
+    model_info 时才从 model_path/config.json 兜底读取。读取失败只返回空字典，
+    因为模型身份识别是默认值注入的守卫，不应该阻断非 V4 模型启动。
+    """
     config = getattr(model_info, "config", None)
     if isinstance(config, dict):
         return config
@@ -1196,6 +1212,12 @@ def _deepseek_v4_identity_text(
     params: Dict[str, Any],
     model_info: Optional[ModelIdentifier] = None,
 ) -> str:
+    """拼接可用于识别 DeepSeek-V4 变体的身份文本。
+
+    取值范围覆盖 CLI model_name、served_model_name、模型路径、engine_config 中
+    的模型字段，以及 config.json 里的常见来源字段。这样可以兼容用户改名、
+    上层只传 served_model_name、或权重目录中保留原始 _name_or_path 的场景。
+    """
     candidates: List[str] = []
     for value in (
         params.get("model_name"),
@@ -1266,7 +1288,13 @@ def _is_deepseek_v4_flash_params(
     params: Dict[str, Any],
     model_info: Optional[ModelIdentifier] = None,
 ) -> bool:
-    """Return True for DeepSeek-V4-Flash launch params without affecting other DeepSeek models."""
+    """Return True for DeepSeek-V4-Flash launch params without affecting other DeepSeek models.
+
+    判定顺序是“名称证据 + 架构否决”：
+    - 名称出现 V4-Flash 时，如果存在 config 架构且不是 V4，直接否决；
+    - 名称缺失但架构是 V4 时，仅在身份文本同时包含 v4/flash 时兜底命中。
+    这样可以覆盖用户改名场景，同时避免 V3 架构因名称相似误入 V4-Flash 路径。
+    """
     text = _deepseek_v4_identity_text(params, model_info)
     arch_match = _deepseek_v4_arch_matches(params, model_info)
     if "deepseek-v4-flash" in text or "deepseek_v4_flash" in text or "deepseekv4flash" in text:
@@ -1318,7 +1346,13 @@ def _deepseek_v4_arch_matches(
     params: Dict[str, Any],
     model_info: Optional[ModelIdentifier] = None,
 ) -> Optional[bool]:
-    """Return V4 architecture match when config evidence exists, otherwise None."""
+    """Return V4 architecture match when config evidence exists, otherwise None.
+
+    返回三态而不是 bool：
+    - True：明确是 V4 架构；
+    - False：明确不是 V4 架构，应否决 V4 特例；
+    - None：没有架构证据，只能让名称/量化等弱信号继续判断。
+    """
     arch = getattr(model_info, "model_architecture", None)
     if arch:
         return arch in _DEEPSEEK_V4_FLASH_ARCHES
@@ -1333,7 +1367,12 @@ def _is_deepseek_v4_pro_params(
     params: Dict[str, Any],
     model_info: Optional[ModelIdentifier] = None,
 ) -> bool:
-    """Return True for DeepSeek-V4-Pro (w4a8-mtp) launch params; strictly exclusive with V4-Flash."""
+    """Return True for DeepSeek-V4-Pro launch params; strictly exclusive with V4-Flash.
+
+    Pro 的名称可能被上层省略或改写，因此除显式 ``DeepSeek-V4-Pro`` 名称外，
+    还允许“V4 架构 + w4a8 量化指纹”兜底。任何包含 flash 的文本都优先交给
+    Flash 分支，防止 Pro 默认覆盖 Flash 的 TP=8 / DP 推导。
+    """
     text = _deepseek_v4_identity_text(params, model_info)
     # V4-Flash 与 V4-Pro 必须互斥：名字中带 flash 一律视为 V4-Flash，由专用路径处理。
     if "flash" in text:
@@ -1368,6 +1407,10 @@ def _is_deepseek_v4_cpu_offload_params(
     DeepSeek-V4 Flash/Pro on vLLM-Ascend does not use LMCache for KV offload:
     the legacy ``LMCACHE_OFFLOAD=true`` switch maps to a direct
     ``kv_transfer_config`` injection instead.
+
+    注意：config_loader 中的 kv_transfer_config 是合并后配置的来源；adapter
+    这里保留同样的判断是二级守卫，确保脚本生成阶段不会重新导出 LMCache
+    环境或把 CPUOffloadingConnector 覆盖回 LMCacheConnectorV1。
     """
     effective_engine = engine or params.get("engine")
     if effective_engine != "vllm_ascend":
@@ -1558,7 +1601,14 @@ _DP_TOPOLOGY_KEYS = (
 
 
 def _strip_internal_engine_config_keys(params: Dict[str, Any], engine_config: Dict[str, Any]) -> None:
-    """Remove internal/non-CLI fields and apply the GLM-5.1 NVIDIA kv_transfer purge."""
+    """清理 adapter 内部字段，并应用必须在 CLI 渲染前完成的硬约束。
+
+    这里处理的是“不应该出现在 vLLM CLI 中”的字段：
+    - use_kunlun_atb / enable_sparse 等由 adapter 自己消费；
+    - ascend_platform / hardware_platform 只用于平台判断；
+    - GLM-5.1 NVIDIA/vLLM 不允许 KV offload，即使上游合并了 kv_transfer_config
+      也要在脚本生成前删除，避免运行时加载不兼容 connector。
+    """
     if _is_glm51_nvidia_vllm_params(params, params.get("engine", "vllm")):
         removed = engine_config.pop("kv_transfer_config", None)
         if removed is not None:
@@ -1578,7 +1628,12 @@ def _apply_generic_deepseek_ascend_dp_defaults(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """Generic DeepSeek-Ascend DP defaults; skipped for V4-Flash/V4-Pro (which have full appliers)."""
+    """通用 DeepSeek Ascend dp_deployment 默认值。
+
+    V3/V3.1/V3.2 等普通 DeepSeek DP 走这里：自动推 TP、关闭 prefix cache、
+    开 EP/async。V4-Flash 与 V4-Pro 各自有完整默认值注入函数，必须提前跳过，
+    否则通用 DP 逻辑会覆盖 V4 专属的 prefix cache、TP/DP 和 MTP 配置。
+    """
     if not _is_deepseek_ascend_dp_deployment(params):
         return
     if _is_deepseek_v4_pro_params(params) or _is_deepseek_v4_flash_params(params):
@@ -1633,7 +1688,15 @@ def _writeback_dp_topology_to_params(params: Dict[str, Any], engine_config: Dict
 
 
 def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
-    """准备 engine_config：移除内部参数、处理弃用字段、避免参数冲突。"""
+    """准备最终传给 ``_build_vllm_cmd_parts`` 的 engine_config。
+
+    执行顺序不能随意调整：
+    1. 先删除内部字段，避免它们被格式化成 vLLM CLI；
+    2. 再注入 V4/GLM/DeepSeek DP 等模型专属默认；
+    3. 最后处理旧版 ``task`` 字段和 DP 拓扑回写。
+    DP 回写必须在返回前完成，因为分布式脚本拓扑计算后续读取的是
+    ``params["engine_config"]``，而不是本函数局部变量。
+    """
     engine_config = dict(params.get("engine_config", {}))
     _strip_internal_engine_config_keys(params, engine_config)
     explicit_keys = set(params.get("_explicit_cli_keys") or [])
@@ -1739,7 +1802,12 @@ def _force_set_if_not_explicit(
 
 
 def _compute_deepseek_v4_flash_data_parallel_size(params: Dict[str, Any]) -> int:
-    """TP=8 锁定后，按整集群剩余卡拉满 DP（A2 单机→1，A3 单机→2，A3 双机→4）。"""
+    """TP=8 锁定后，按整集群剩余卡拉满 DP。
+
+    典型结果：A2 单机 8 卡 -> DP=1；A3 单机 16 卡 -> DP=2；
+    A3 双机 16x2 卡 -> DP=4。这里只负责计算 Flash 的推荐 DP，
+    显式 CLI/ENV 覆盖仍由调用方的 explicit_keys 判断保护。
+    """
     device_count = _safe_int(params.get("device_count")) or 8
     is_distributed = bool(params.get("distributed"))
     nnodes = _safe_int(params.get("nnodes")) or (2 if is_distributed else 1)
@@ -1752,7 +1820,12 @@ def _apply_deepseek_v4_flash_capacity_and_topology(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """V4-Flash 容量与 TP/DP 拓扑强制覆盖。直接覆盖以穿透 vllm_default.json 的非空值。"""
+    """V4-Flash 容量与 TP/DP 拓扑强制覆盖。
+
+    这些默认值来自 vllm-ascend Flash W8A8 启动模板。之所以直接覆盖而不是
+    只填空值，是因为通用 vllm_default.json 已经带有非空默认（如 4096 上下文、
+    EP=False），保留它们会让 Flash 的 MTP+MoE 路径在运行时崩溃。
+    """
     for key, value in _DEEPSEEK_V4_FLASH_CAPACITY_DEFAULTS.items():
         _force_set_if_not_explicit(engine_config, explicit_keys, key, value)
     # TP=8 锁定：TP=16 会把 MTP/sparse 小层切到 0 维（shape '[0,1024,-1]' 崩溃）。
@@ -1769,7 +1842,11 @@ def _apply_deepseek_v4_flash_runtime_defaults(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """V4-Flash 运行时 / 解析器默认值。"""
+    """V4-Flash 运行时 / 解析器默认值。
+
+    这里仅处理与 vLLM CLI 直接对应的运行参数；平台相关 additional_config
+    和 MTP/compile JSON 放在上层入口集中合并，便于保护用户显式配置。
+    """
     _set_if_not_explicit(engine_config, explicit_keys, "quantization", "ascend")
     _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
     _set_if_not_explicit(engine_config, explicit_keys, "chat_template", "/usr/local/serving/models/chat_template.jinja")
@@ -1788,7 +1865,12 @@ def _apply_deepseek_v4_flash_engine_defaults(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """Apply DeepSeek-V4-Flash vLLM-Ascend launch defaults without touching other models."""
+    """Apply DeepSeek-V4-Flash vLLM-Ascend launch defaults without touching other models.
+
+    Gate 条件必须同时满足：engine 是 vllm_ascend，且身份/架构判定为 V4-Flash。
+    函数体按“容量拓扑 -> 运行参数 -> platform additional_config -> JSON 配置”
+    的顺序写入，方便定位最终脚本里每类参数的来源。
+    """
     if params.get("engine") != "vllm_ascend":
         return
     if not _is_deepseek_v4_flash_params(params):
@@ -1842,7 +1924,13 @@ def _apply_deepseek_v4_pro_topology(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """V4-Pro 双机 A3：TP=16 锁定 + DP=2（每机 1 个 DP rank，start_rank=node_rank）。"""
+    """V4-Pro 双机 A3：TP=16 锁定 + DP=2。
+
+    V4-Pro 官方形态是双机、每机 1 个 DP rank，因此这里显式写
+    data_parallel_size_local=1 和 start_rank=node_rank。不要复用通用
+    DeepSeek DP 的 device_count/tp 推导，否则 16 卡 A3 会得到错误的
+    本地 DP 数。
+    """
     if "tensor_parallel_size" not in explicit_keys:
         engine_config["tensor_parallel_size"] = 16
         params["tensor_parallel_size"] = 16
@@ -1903,6 +1991,9 @@ def _apply_deepseek_v4_cpu_offload(
 
     与 LMCache 互斥：``_build_cache_env_commands`` 在 V4 Flash/Pro 路径已跳过 LMCache env
     导出与 YAML 生成。两者不会同时生效。
+
+    explicit_keys 中如果已有 kv_transfer_config，说明用户或上游显式声明了 connector，
+    adapter 不再覆盖，避免把调试场景或未来 vLLM 原生配置强行改成 CPUOffloadingConnector。
     """
     if not get_lmcache_env():
         return
@@ -2717,6 +2808,12 @@ def build_start_command(params: Dict[str, Any]) -> str:
 
 
 # ── Distributed script helpers ─────────────────────────────────────────────
+# 分布式脚本仍保留在 adapter 内，便于 start script 的所有拼装逻辑集中审查。
+# 这一区域分成三层：
+#   1. shell 片段常量：只描述容器内运行时需要的探测/patch 脚本；
+#   2. Ray helper：负责 ray head/worker 的启动、等待和 executor CLI；
+#   3. dp_deployment helper：负责把 api_server 命令转换成 vllm serve，并追加 DP 拓扑。
+# 注意：这些函数只返回 shell 文本，不执行本机命令；网络探测发生在 engine 容器运行脚本时。
 _SH_DETECT_IP = (
     "$(python3 -c \"import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);"
     "s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()\""
@@ -2728,7 +2825,11 @@ _SH_IF_DETECT = "$(awk '$2==\"00000000\"{print $1;exit}' /proc/net/route 2>/dev/
 
 @dataclass
 class DistScriptCtx:
-    """分布式脚本生成共用上下文。"""
+    """分布式脚本生成共用上下文。
+
+    cmd 是已经由 ``_build_vllm_cmd_parts`` 格式化过的基础 vLLM 命令；
+    后续 Ray/dp_deployment helper 只在这个命令上追加或移除分布式相关参数。
+    """
 
     engine: str
     cmd: str
@@ -2738,6 +2839,18 @@ class DistScriptCtx:
     head_addr: str
     ray_port: str
     node_ips: str
+
+
+class DpDeploymentTopology(NamedTuple):
+    """dp_deployment 拓扑参数。
+
+    全部用字符串保存，方便直接拼接到 shell 命令；计算阶段仍使用 int，
+    只在返回前统一转成 CLI 需要的文本。
+    """
+
+    dp_size: str
+    dp_size_local: str
+    dp_start_rank: str
 
 
 _TRITON_PATCH_LINES = (
@@ -2758,7 +2871,8 @@ _TRITON_PATCH_LINES = (
     "            def get_device_capability(self, *a): return (0, 0)",
     "            def get_device_properties(self, device=0):",
     "                try:",
-    "                    import torch_npu; n = torch_npu.npu.get_device_name(device); c = 20 if '910B' in str(n) else 30",
+    "                    import torch_npu; n = torch_npu.npu.get_device_name(device); "
+    "c = 20 if '910B' in str(n) else 30",
     "                except Exception: c = 20",
     "                return {'num_aicore': c, 'num_vectorcore': c}",
     "            def __getattr__(self, name): return _NpuDummyDrv()",
@@ -2768,7 +2882,8 @@ _TRITON_PATCH_LINES = (
     "            def __bool__(self): return False",
     "        return _NpuDummyDrv()'''",
     "        src = src.replace(",
-    '            \'raise RuntimeError(f"{len(active_drivers)} active drivers ({active_drivers}). There should only be one.")\',',
+    '            \'raise RuntimeError(f"{len(active_drivers)} active drivers ({active_drivers}). '
+    'There should only be one.")\',',
     "            patch.strip()",
     "        )",
     "        with open(drv_path, 'w') as f:",
@@ -2783,12 +2898,21 @@ _TRITON_PATCH_LINES = (
 
 
 def build_triton_patch_preamble(engine: str) -> str:
-    """返回 Triton NPU 补丁的 shell 脚本片段。"""
+    """返回 Triton NPU 补丁的 shell 脚本片段。
+
+    补丁放在 start_command.sh preamble 层执行一次，避免 retry/fallback 命令
+    重复嵌入 heredoc 导致 bash 语法或缩进问题。非 vllm_ascend/低版本直接返回空串。
+    """
     return "" if not _need_triton_patch(engine) else "\n".join(_TRITON_PATCH_LINES) + "\n"
 
 
 def build_modelslim_quarot_patch_preamble(engine: str) -> str:
-    """为 QuaRot 等非 modelslim 量化格式注入 modelslim_config.py 兼容性补丁。"""
+    """为 QuaRot 等非 modelslim 量化格式注入 modelslim_config.py 兼容性补丁。
+
+    vllm-ascend 的 modelslim_config 在部分 QuaRot 权重上会直接 dict[] 访问缺失 key。
+    这里把访问改成 dict.get()，缺失时按“不跳过该层”处理；补丁只在 engine 容器
+    内运行，且 pattern 不存在时只打印日志不阻断启动。
+    """
     if engine != "vllm_ascend":
         return ""
     return (
@@ -2804,7 +2928,8 @@ def build_modelslim_quarot_patch_preamble(engine: str) -> str:
         "        new = 'self.quant_description.get(shard_prefix + ' + '\"' + '.weight' + '\"' + ')'\n"
         "        if old in txt:\n"
         "            p.write_text(txt.replace(old, new))\n"
-        "            print('[modelslim-patch] Patched modelslim_config.py: dict[] -> dict.get() for QuaRot compatibility')\n"
+        "            print('[modelslim-patch] Patched modelslim_config.py: dict[] -> dict.get() "
+        "for QuaRot compatibility')\n"
         "        else:\n"
         "            print('[modelslim-patch] Already patched or pattern not found')\n"
         "    else:\n"
@@ -2817,7 +2942,7 @@ def build_modelslim_quarot_patch_preamble(engine: str) -> str:
 
 
 def _build_comm_env_commands(is_ascend: bool) -> List[str]:
-    """返回 HCCL/NCCL 通信环境变量设置命令。"""
+    """返回 Ray 分布式模式的 HCCL/NCCL 通信环境变量设置命令。"""
     if not is_ascend:
         nccl_if = os.getenv('NCCL_SOCKET_IFNAME', 'eth0')
         return [f"export NCCL_SOCKET_IFNAME={nccl_if}", f"export TP_SOCKET_IFNAME={nccl_if}"]
@@ -2835,17 +2960,23 @@ def _build_comm_env_commands(is_ascend: bool) -> List[str]:
 
 
 def _build_ray_wait_loop(nnodes: int) -> List[str]:
-    """返回等待所有 Ray 节点加入的 shell 循环命令。"""
+    """返回等待所有 Ray 节点加入的 shell 循环命令。
+
+    head 节点最多等待 60*5s。超时后直接 exit 1，让 K8s 明确重启/报错，
+    避免 vLLM 在 Ray 集群未就绪时进入更难定位的编译或初始化卡死。
+    """
     return [
         "RAY_WAIT_OK=0",
         "for i in $(seq 1 60); do",
-        "  COUNT=$(python3 -c \"import ray; ray.init(address='auto',ignore_reinit_error=True); print(len([n for n in ray.nodes() if n['alive']])); ray.shutdown()\" 2>/dev/null || echo 0)",
+        "  COUNT=$(python3 -c \"import ray; ray.init(address='auto',ignore_reinit_error=True); "
+        "print(len([n for n in ray.nodes() if n['alive']])); ray.shutdown()\" 2>/dev/null || echo 0)",
         f"  if [ \"$COUNT\" -ge \"{nnodes}\" ]; then RAY_WAIT_OK=1; break; fi",
         f"  echo \"[ray-wait] iter=$i count=$COUNT expected={nnodes}, sleep 5s...\"",
         "  sleep 5",
         "done",
         "if [ \"$RAY_WAIT_OK\" != \"1\" ]; then",
-        f"  echo \"[ray-wait] FATAL: only $COUNT/{nnodes} ray nodes joined after 300s. Check worker pod status / network / RAY_PORT reachability.\" >&2",
+        f"  echo \"[ray-wait] FATAL: only $COUNT/{nnodes} ray nodes joined after 300s. "
+        "Check worker pod status / network / RAY_PORT reachability.\" >&2",
         "  exit 1",
         "fi",
         "echo \"[ray-wait] OK: $COUNT ray nodes joined.\"\n",
@@ -2853,6 +2984,7 @@ def _build_ray_wait_loop(nnodes: int) -> List[str]:
 
 
 def _build_ray_head_start_commands(params: Dict[str, Any], ctx: DistScriptCtx) -> List[str]:
+    """构造 Ray head 启动命令和对应 echo 日志。"""
     ray_head_cmd = (
         f"ray start --head --port={ctx.ray_port} --node-ip-address=$VLLM_HOST_IP "
         f"{_get_ray_resource_flag(ctx.engine, params)} --dashboard-host=$VLLM_HOST_IP\n"
@@ -2862,7 +2994,11 @@ def _build_ray_head_start_commands(params: Dict[str, Any], ctx: DistScriptCtx) -
 
 
 def _build_ray_parallel_overrides(params: Dict[str, Any], ctx: DistScriptCtx) -> tuple[str, str]:
-    """Override TP/PP for Ray MoE architectures that need per-node TP."""
+    """为 Ray MoE 架构覆盖 TP/PP。
+
+    Qwen3/MiniMax 等 MoE Ray 路径需要按节点数推 pipeline_parallel_size，并把
+    tensor_parallel_size 固定为本机 device_count。普通架构返回原始命令和空追加参数。
+    """
     model_info_ray = ModelIdentifier(params.get("model_name"), params.get("model_path"), params.get("model_type"))
     ray_auto_pp_archs = {"Qwen3MoeForCausalLM", "Qwen3_5MoeForConditionalGeneration", "MiniMaxM2ForCausalLM"}
     if getattr(model_info_ray, "model_architecture", None) not in ray_auto_pp_archs:
@@ -2875,8 +3011,11 @@ def _build_ray_parallel_overrides(params: Dict[str, Any], ctx: DistScriptCtx) ->
 
 
 def _build_ray_head_exec_command(params: Dict[str, Any], ctx: DistScriptCtx, sparse_args: str) -> str:
+    """构造 Ray head 节点最终 exec 命令。"""
     eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
-    speculative_extra = _build_speculative_cmd(params, ctx.engine) if _should_append_auto_speculative_config(params) else ""
+    speculative_extra = ""
+    if _should_append_auto_speculative_config(params):
+        speculative_extra = _build_speculative_cmd(params, ctx.engine)
     cmd_for_exec, ray_pp_extra = _build_ray_parallel_overrides(params, ctx)
     if params.get("distributed_executor_backend", "ray") == "ray":
         cmd_for_exec = _strip_cli_flag(cmd_for_exec, "--distributed-executor-backend")
@@ -2887,6 +3026,7 @@ def _build_ray_head_exec_command(params: Dict[str, Any], ctx: DistScriptCtx, spa
 
 
 def _build_ray_head_commands(params: Dict[str, Any], ctx: DistScriptCtx, sparse_args: str) -> List[str]:
+    """组装 Ray head 节点脚本片段：host IP、通信环境、Ray start、节点等待和 exec。"""
     parts: List[str] = [_SH_VLLM_HOST]
     parts.extend(_build_comm_env_commands(ctx.is_ascend))
     parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
@@ -2897,6 +3037,11 @@ def _build_ray_head_commands(params: Dict[str, Any], ctx: DistScriptCtx, sparse_
 
 
 def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = "") -> List[str]:
+    """构造 Ascend Ray worker 的 head 探测与通信环境。
+
+    有 master/head_addr 时优先探测该地址，再扫描 node_ips；这样兼容 K8s service
+    DNS、上层显式 IP 和多节点裸 IP 三种部署方式。
+    """
     if head_addr:
         ip_list_expr = (f"KNOWN_HEAD=\"{head_addr}\"\nNODE_IPS_LIST=\"{node_ips}\"\n"
                         "# 优先尝试已知 head，再扫描其余节点\n"
@@ -2911,7 +3056,8 @@ def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = 
         f"echo \"[worker] Scanning for Ray head on port {ray_port}...\"",
         "for attempt in $(seq 1 120); do",
         "  for ip in $CANDIDATE_IPS; do",
-        f"    if python3 -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('$ip',{ray_port})); s.close()\" 2>/dev/null; then",
+        f"    if python3 -c \"import socket; s=socket.socket(); s.settimeout(2); "
+        f"s.connect(('$ip',{ray_port})); s.close()\" 2>/dev/null; then",
         "      HEAD_IP=$ip",
         f"      echo \"[worker] Found Ray head at $HEAD_IP:{ray_port}\"",
         "      break 2",
@@ -2930,6 +3076,7 @@ def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = 
 
 
 def _build_ray_worker_commands(params: Dict[str, Any], ctx: DistScriptCtx) -> List[str]:
+    """构造 Ray worker 节点脚本片段。"""
     if ctx.is_ascend:
         parts = _build_ascend_ray_worker_env(ctx.ray_port, ctx.node_ips, ctx.head_addr)
     else:
@@ -2937,7 +3084,8 @@ def _build_ray_worker_commands(params: Dict[str, Any], ctx: DistScriptCtx) -> Li
         parts = [
             f"export NCCL_SOCKET_IFNAME={nccl_if}", f"export TP_SOCKET_IFNAME={nccl_if}", _SH_VLLM_HOST,
             "for i in $(seq 1 60); do",
-            f"  python3 -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('{ctx.head_addr}',{ctx.ray_port})); s.close()\" 2>/dev/null && break",
+            f"  python3 -c \"import socket; s=socket.socket(); s.settimeout(2); "
+            f"s.connect(('{ctx.head_addr}',{ctx.ray_port})); s.close()\" 2>/dev/null && break",
             "  sleep 5", "done", f"HEAD_IP=\"{ctx.head_addr}\"",
         ]
     parts.append("export GLOO_SOCKET_IFNAME=" + _SH_IF_DETECT + "\n")
@@ -2951,6 +3099,11 @@ def _build_ray_worker_commands(params: Dict[str, Any], ctx: DistScriptCtx) -> Li
 
 
 def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[str]:
+    """构造 Ascend dp_deployment 通信环境。
+
+    GLM-5 与 DeepSeek DP 对 OMP/HCCL 默认值不同；DeepSeek V3/V3.2 还需要
+    custom OPP/LD_LIBRARY_PATH。这里仅输出环境命令，不改变 CLI 拓扑。
+    """
     dp_arch = _get_deepseek_ascend_dp_model_architecture(params)
     is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
     env_commands = [
@@ -2970,8 +3123,10 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
     ]
     if dp_arch in ("DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"):
         env_commands.extend([
-            "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/latest/opp/deepseek-v32/vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
-            "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/opp/vendors/customize/op_api/lib/:${LD_LIBRARY_PATH:-}",
+            "export ASCEND_CUSTOM_OPP_PATH=/usr/local/Ascend/ascend-toolkit/latest/opp/deepseek-v32/"
+            "vendors/customize:${ASCEND_CUSTOM_OPP_PATH:-}",
+            "export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/opp/vendors/customize/"
+            "op_api/lib/:${LD_LIBRARY_PATH:-}",
         ])
     if is_glm5_dp:
         env_commands.extend(["export HCCL_OP_EXPANSION_MODE=AIV", "export VLLM_ASCEND_BALANCE_SCHEDULING=1"])
@@ -2981,11 +3136,13 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
 
 
 def _build_nvidia_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[str]:
+    """构造 NVIDIA dp_deployment 通信环境。"""
+    nixl_port = params.get("nixl_port", os.getenv("VLLM_NIXL_SIDE_CHANNEL_PORT", "12345"))
     return [
         f"export GLOO_SOCKET_IFNAME={net_if}",
         f"export TP_SOCKET_IFNAME={net_if}",
         f"export NCCL_SOCKET_IFNAME={net_if}",
-        f"export VLLM_NIXL_SIDE_CHANNEL_PORT={params.get('nixl_port', os.getenv('VLLM_NIXL_SIDE_CHANNEL_PORT', '12345'))}",
+        f"export VLLM_NIXL_SIDE_CHANNEL_PORT={nixl_port}",
         "export NCCL_IB_DISABLE=0",
         "export NCCL_CUMEM_ENABLE=0",
         "export NCCL_NET_GDR_LEVEL=SYS",
@@ -2999,6 +3156,7 @@ def _build_dp_env_commands(is_ascend: bool, params: Dict[str, Any]) -> List[str]
 
 
 def _transform_dp_cmd(cmd: str) -> str:
+    """把 OpenAI api_server 命令转换为 dp_deployment 需要的 ``vllm serve`` 命令。"""
     _model_match = re.search(r"--model\s+('(?:[^']*)'|\S+)", cmd)
     if not _model_match:
         return cmd
@@ -3008,16 +3166,27 @@ def _transform_dp_cmd(cmd: str) -> str:
 
 
 def _strip_dp_cli_flags(cmd: str) -> str:
+    """移除基础命令中已有的 DP 参数，避免追加拓扑时产生重复 CLI。"""
     for flag in ("--data-parallel-address", "--data-parallel-rpc-port", "--data-parallel-size",
                  "--data-parallel-size-local", "--data-parallel-rank", "--data-parallel-start-rank"):
         cmd = _strip_cli_flag(cmd, flag)
     return re.sub(r"\s+--headless\b", "", re.sub(r"\s+--data-parallel-external-lb\b", "", cmd))
 
 
-def _resolve_dp_deployment_topology(params: Dict[str, Any], ctx: DistScriptCtx, model_info: ModelIdentifier) -> tuple[str, str, str]:
-    """Resolve dp_deployment topology; DeepSeek Ascend DP derives DP from TP."""
+def _resolve_dp_deployment_topology(
+    params: Dict[str, Any],
+    ctx: DistScriptCtx,
+    model_info: ModelIdentifier,
+) -> DpDeploymentTopology:
+    """Resolve dp_deployment topology.
+
+    普通架构按“每节点 1 个 DP rank”处理；DeepSeek Ascend DP 按
+    device_count / tensor_parallel_size 推导本机 DP 数，再乘 nnodes 得到全局 DP。
+    V4-Flash/Pro 的 TP/DP 已在 ``_prepare_engine_config`` 中写回 params，
+    因此这里读取 engine_config 即可得到一致拓扑。
+    """
     if not (model_info.model_architecture in _DEEPSEEK_ASCEND_DP_ARCHES and ctx.engine == "vllm_ascend"):
-        return str(ctx.nnodes), "1", str(ctx.node_rank)
+        return DpDeploymentTopology(str(ctx.nnodes), "1", str(ctx.node_rank))
     device_count = _safe_int(params.get("device_count"))
     engine_config = params.get("engine_config") or {}
     tp_size = _safe_int(engine_config.get("tensor_parallel_size")) or _default_deepseek_ascend_dp_tensor_parallel_size(
@@ -3030,36 +3199,49 @@ def _resolve_dp_deployment_topology(params: Dict[str, Any], ctx: DistScriptCtx, 
         raise ValueError("DeepSeek Ascend DP requires device_count to be divisible by tensor_parallel_size: "
                          f"device_count={device_count}, tensor_parallel_size={tp_size}")
     dp_size_local = device_count // tp_size
-    return str(dp_size_local * int(ctx.nnodes)), str(dp_size_local), str(int(ctx.node_rank) * dp_size_local)
+    return DpDeploymentTopology(
+        str(dp_size_local * int(ctx.nnodes)),
+        str(dp_size_local),
+        str(int(ctx.node_rank) * dp_size_local),
+    )
 
 
-def _build_dp_exec_command(ctx: DistScriptCtx, dp_cmd: str, dp_rpc_port: str,
-                           dp_size: str, dp_size_local: str, dp_start_rank: str) -> str:
+def _build_dp_exec_command(
+    ctx: DistScriptCtx,
+    dp_cmd: str,
+    dp_rpc_port: str,
+    topology: DpDeploymentTopology,
+) -> str:
+    """根据 node_rank 构造 dp_deployment head/worker 的最终 exec 行。"""
     common = (
         f" --data-parallel-address {shlex.quote(ctx.head_addr)}"
         f" --data-parallel-rpc-port {dp_rpc_port}"
-        f" --data-parallel-size {dp_size}"
-        f" --data-parallel-size-local {dp_size_local}"
+        f" --data-parallel-size {topology.dp_size}"
+        f" --data-parallel-size-local {topology.dp_size_local}"
     )
     if ctx.node_rank == 0:
         return f"exec {dp_cmd}{common}"
     dp_cmd_headless = re.sub(r"\s*--port\s+(?:'[^']*'|\S+)", "", re.sub(r"\s*--host\s+(?:'[^']*'|\S+)", "", dp_cmd))
-    return f"exec {dp_cmd_headless}{common} --headless --data-parallel-start-rank {dp_start_rank}"
+    return f"exec {dp_cmd_headless}{common} --headless --data-parallel-start-rank {topology.dp_start_rank}"
 
 
 def _build_dp_deployment_commands(params: Dict[str, Any], ctx: DistScriptCtx, sparse_args: str = "") -> List[str]:
+    """组装 dp_deployment 脚本片段：环境、命令转换、speculative/sparse 参数和拓扑 CLI。"""
     dp_rpc_port = str(params.get("rpc_port", os.getenv('VLLM_DP_RPC_PORT', '13355')))
     model_info = ModelIdentifier(params.get("model_name"), params.get("model_path"), params.get("model_type"))
-    dp_size, dp_size_local, dp_start_rank = _resolve_dp_deployment_topology(params, ctx, model_info)
+    topology = _resolve_dp_deployment_topology(params, ctx, model_info)
     dp_cmd = _strip_dp_cli_flags(_transform_dp_cmd(ctx.cmd))
-    speculative_extra = _build_speculative_cmd(params, ctx.engine) if _should_append_auto_speculative_config(params) else ""
+    speculative_extra = ""
+    if _should_append_auto_speculative_config(params):
+        speculative_extra = _build_speculative_cmd(params, ctx.engine)
     parts = _build_dp_env_commands(ctx.is_ascend, params)
     parts.append(_build_dp_exec_command(ctx, f"{dp_cmd}{speculative_extra}{sparse_args}",
-                                       dp_rpc_port, dp_size, dp_size_local, dp_start_rank))
+                                       dp_rpc_port, topology))
     return parts
 
 
 def _resolve_vllm_dist_params(params: Dict[str, Any]) -> tuple[str, str, str]:
+    """解析分布式 head 地址、节点列表和 Ray 端口。"""
     head_addr = params.get("ray_head_ip") or params.get("master_ip") or params.get("head_node_addr", "infer-0.infer-hl")
     node_ips = params.get("node_ips") or params.get("nodes") or os.getenv("NODE_IPS", head_addr)
     return head_addr, node_ips, str(params.get("ray_head_port", os.getenv("RAY_PORT", "28020")))
@@ -3067,6 +3249,11 @@ def _resolve_vllm_dist_params(params: Dict[str, Any]) -> tuple[str, str, str]:
 
 def _build_vllm_distributed_script(params: Dict[str, Any], cmd: str, common_env_cmds: List[str],
                                    engine: str, sparse_args: str) -> str:
+    """组装分布式脚本主体。
+
+    ``common_env_cmds`` 已包含基础环境、KV offload、QAT、模型专属 env 等公共片段；
+    本函数只根据 backend 分派 Ray 或 dp_deployment 分支，最后统一拼成 start script。
+    """
     node_rank = params.get("node_rank", 0)
     head_addr, node_ips, ray_port = _resolve_vllm_dist_params(params)
     ctx = DistScriptCtx(engine=engine, cmd=cmd, is_ascend=(engine == "vllm_ascend"), node_rank=node_rank,
@@ -3078,6 +3265,7 @@ def _build_vllm_distributed_script(params: Dict[str, Any], cmd: str, common_env_
     else:
         script_parts.extend(_build_dp_deployment_commands(params, ctx, sparse_args))
     return "\n".join(script_parts) + "\n"
+
 
 def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str]:
     """构建 vLLM 公共环境变量命令链（对所有部署模式均适用）。"""
