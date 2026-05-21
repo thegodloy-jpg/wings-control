@@ -84,6 +84,31 @@ def _is_json_like_str(s: str) -> bool:
     return (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']'))
 
 
+def _try_parse_json_like_str(stripped: str, arg_name: str) -> Optional[str]:
+    """尝试解析 JSON 或 Python literal 格式的字符串，返回规范化的 JSON 字符串。"""
+    try:
+        parsed = json.loads(stripped)
+        return json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+    except ValueError:
+        pass
+
+    try:
+        parsed = ast.literal_eval(stripped)
+        logger.warning(
+            "[vLLM] %s value is Python-repr str (single-quoted keys); "
+            "auto-normalized to JSON. Upstream stringification suspected.",
+            arg_name,
+        )
+        return json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+    except (ValueError, SyntaxError):
+        logger.warning(
+            "[vLLM] %s value looks like dict/list but neither JSON nor "
+            "Python literal; passing through as-is: %r",
+            arg_name, stripped[:120],
+        )
+        return None
+
+
 def _format_cli_arg(arg_name: str, value) -> List[str]:
     """将单个引擎参数值格式化为 CLI 参数片段。"""
     if isinstance(value, bool):
@@ -96,25 +121,7 @@ def _format_cli_arg(arg_name: str, value) -> List[str]:
     if isinstance(value, str):
         stripped = value.strip()
         if _is_json_like_str(stripped):
-            normalized: Optional[str] = None
-            try:
-                parsed = json.loads(stripped)
-                normalized = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
-            except ValueError:
-                try:
-                    parsed = ast.literal_eval(stripped)
-                    normalized = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
-                    logger.warning(
-                        "[vLLM] %s value is Python-repr str (single-quoted keys); "
-                        "auto-normalized to JSON. Upstream stringification suspected.",
-                        arg_name,
-                    )
-                except (ValueError, SyntaxError):
-                    logger.warning(
-                        "[vLLM] %s value looks like dict/list but neither JSON nor "
-                        "Python literal; passing through as-is: %r",
-                        arg_name, stripped[:120],
-                    )
+            normalized = _try_parse_json_like_str(stripped, arg_name)
             if normalized is not None:
                 return [arg_name, shlex.quote(normalized)]
             return [arg_name, shlex.quote(value)]
