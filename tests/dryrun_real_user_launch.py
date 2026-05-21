@@ -38,13 +38,26 @@ from snapshot_framework import (  # noqa: E402
 
 SEP = "=" * 88
 
+OUTPUT_PATH = TESTS_DIR / "dryrun_real_user_launch_output.txt"
+_OUT_FP = None
+
+
+def _emit(line: str = "") -> None:
+    if _OUT_FP is not None:
+        _OUT_FP.write(line + "\n")
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        # Windows console (gbk) can't encode some chars; fall back to safe ascii.
+        print(line.encode("ascii", errors="replace").decode("ascii"))
+
 
 def _print_command(label: str, command: str) -> None:
-    print("\n" + SEP)
-    print(f" {label}")
-    print(SEP)
-    print(command)
-    print(SEP + "\n")
+    _emit("\n" + SEP)
+    _emit(f" {label}")
+    _emit(SEP)
+    _emit(command)
+    _emit(SEP + "\n")
 
 
 def _print_meta(label: str, plan) -> None:
@@ -60,13 +73,13 @@ def _print_meta(label: str, plan) -> None:
         "enable_speculative_decode", "enable_chunked_prefill",
         "enable_prefix_caching",
     )
-    print(f"\n[{label}] merged_params 关键字段:")
+    _emit(f"\n[{label}] merged_params key fields:")
     for k in keys:
         if k in merged:
-            print(f"  {k:35s} = {merged[k]!r}")
-    print(f"  hardware.device                     = {plan.hardware_env.get('device')!r}")
-    print(f"  hardware.count                      = {plan.hardware_env.get('count')!r}")
-    print(f"  command_bytes                       = {len(plan.command)}")
+            _emit(f"  {k:35s} = {merged[k]!r}")
+    _emit(f"  hardware.device                     = {plan.hardware_env.get('device')!r}")
+    _emit(f"  hardware.count                      = {plan.hardware_env.get('count')!r}")
+    _emit(f"  command_bytes                       = {len(plan.command)}")
 
 
 # ---------------------------------------------------------------------------
@@ -204,34 +217,41 @@ def _assert_invariants(label: str, command: str, *, expect_distributed: bool):
             errors.append("分布式场景缺少 head_node_addr=10.254.124.178")
         if ("dp_deployment" not in command) and ("--data-parallel-size" not in command):
             errors.append("分布式场景缺少 dp_deployment / data-parallel-size 痕迹")
-    print(f"\n[{label}] 不变式检查:", "PASS" if not errors else "FAIL")
+    _emit(f"\n[{label}] invariant check: " + ("PASS" if not errors else "FAIL"))
     for e in errors:
-        print("    -", e)
+        _emit("    - " + e)
     return not errors
 
 
 def main() -> int:
-    ok_all = True
+    global _OUT_FP
+    _OUT_FP = open(OUTPUT_PATH, "w", encoding="utf-8")
+    try:
+        ok_all = True
 
-    plan_a = case_single_node_qwen3()
-    ok_all &= _assert_invariants(
-        "CASE-A  Qwen3 单机", plan_a.command, expect_distributed=False,
-    )
+        plan_a = case_single_node_qwen3()
+        ok_all &= _assert_invariants(
+            "CASE-A  Qwen3 single-node", plan_a.command, expect_distributed=False,
+        )
 
-    plan_b0 = case_dual_node_glm51(node_rank=0)
-    ok_all &= _assert_invariants(
-        "CASE-B  rank0", plan_b0.command, expect_distributed=True,
-    )
+        plan_b0 = case_dual_node_glm51(node_rank=0)
+        ok_all &= _assert_invariants(
+            "CASE-B  rank0", plan_b0.command, expect_distributed=True,
+        )
 
-    plan_b1 = case_dual_node_glm51(node_rank=1)
-    ok_all &= _assert_invariants(
-        "CASE-B  rank1", plan_b1.command, expect_distributed=True,
-    )
+        plan_b1 = case_dual_node_glm51(node_rank=1)
+        ok_all &= _assert_invariants(
+            "CASE-B  rank1", plan_b1.command, expect_distributed=True,
+        )
 
-    print("\n" + SEP)
-    print(f" 总体结果: {'ALL PASS' if ok_all else 'HAS FAILURES'}")
-    print(SEP)
-    return 0 if ok_all else 1
+        _emit("\n" + SEP)
+        _emit(f" Overall result: {'ALL PASS' if ok_all else 'HAS FAILURES'}")
+        _emit(f" Output written to: {OUTPUT_PATH}")
+        _emit(SEP)
+        return 0 if ok_all else 1
+    finally:
+        if _OUT_FP is not None:
+            _OUT_FP.close()
 
 
 if __name__ == "__main__":

@@ -18,6 +18,15 @@ from utils.vllm_helpers import (
 logger = logging.getLogger(__name__)
 
 
+def _import_vllm_adapter():
+    """Import vllm_adapter in both package and script-style layouts."""
+    try:
+        from engines import vllm_adapter
+    except ImportError:
+        import vllm_adapter  # type: ignore
+    return vllm_adapter
+
+
 def _build_comm_env_commands(is_ascend: bool) -> List[str]:
     """返回 Ray 分布式模式的 HCCL/NCCL 通信环境变量设置命令。"""
     if not is_ascend:
@@ -62,7 +71,7 @@ def _build_ray_wait_loop(nnodes: int) -> List[str]:
 
 def _build_ray_head_start_commands(params: Dict[str, Any], ctx: DistScriptCtx) -> List[str]:
     """构造 Ray head 启动命令和对应 echo 日志。"""
-    from vllm_adapter import _get_ray_resource_flag
+    _get_ray_resource_flag = _import_vllm_adapter()._get_ray_resource_flag
     ray_head_cmd = (
         f"ray start --head --port={ctx.ray_port} --node-ip-address=$VLLM_HOST_IP "
         f"{_get_ray_resource_flag(ctx.engine, params)} --dashboard-host=$VLLM_HOST_IP\n"
@@ -90,7 +99,10 @@ def _build_ray_parallel_overrides(params: Dict[str, Any], ctx: DistScriptCtx) ->
 
 def _build_ray_head_exec_command(params: Dict[str, Any], ctx: DistScriptCtx, sparse_args: str) -> str:
     """构造 Ray head 节点最终 exec 命令。"""
-    from vllm_adapter import _need_enforce_eager, _should_append_auto_speculative_config, _build_speculative_cmd
+    vllm_adapter = _import_vllm_adapter()
+    _need_enforce_eager = vllm_adapter._need_enforce_eager
+    _should_append_auto_speculative_config = vllm_adapter._should_append_auto_speculative_config
+    _build_speculative_cmd = vllm_adapter._build_speculative_cmd
     eager_flag = " --enforce-eager" if _need_enforce_eager(ctx.engine) else ""
     speculative_extra = ""
     if _should_append_auto_speculative_config(params):
@@ -156,7 +168,7 @@ def _build_ascend_ray_worker_env(ray_port: str, node_ips: str, head_addr: str = 
 
 def _build_ray_worker_commands(params: Dict[str, Any], ctx: DistScriptCtx) -> List[str]:
     """构造 Ray worker 节点脚本片段。"""
-    from vllm_adapter import _get_ray_resource_flag
+    _get_ray_resource_flag = _import_vllm_adapter()._get_ray_resource_flag
     if ctx.is_ascend:
         parts = _build_ascend_ray_worker_env(ctx.ray_port, ctx.node_ips, ctx.head_addr)
     else:
@@ -184,7 +196,9 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
     GLM-5 与 DeepSeek DP 对 OMP/HCCL 默认值不同；DeepSeek V3/V3.2 还需要
     custom OPP/LD_LIBRARY_PATH。这里仅输出环境命令，不改变 CLI 拓扑。
     """
-    from vllm_adapter import _get_deepseek_ascend_dp_model_architecture, _is_deepseek_ascend_dp_deployment
+    vllm_adapter = _import_vllm_adapter()
+    _get_deepseek_ascend_dp_model_architecture = vllm_adapter._get_deepseek_ascend_dp_model_architecture
+    _is_deepseek_ascend_dp_deployment = vllm_adapter._is_deepseek_ascend_dp_deployment
     dp_arch = _get_deepseek_ascend_dp_model_architecture(params)
     is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
     env_commands = [
@@ -256,7 +270,9 @@ def _resolve_dp_deployment_topology(
     V4-Flash/Pro 的 TP/DP 已在 ``_prepare_engine_config`` 中写回 params，
     因此这里读取 engine_config 即可得到一致拓扑。
     """
-    from vllm_adapter import _DEEPSEEK_ASCEND_DP_ARCHES, _default_deepseek_ascend_dp_tensor_parallel_size
+    vllm_adapter = _import_vllm_adapter()
+    _DEEPSEEK_ASCEND_DP_ARCHES = vllm_adapter._DEEPSEEK_ASCEND_DP_ARCHES
+    _default_deepseek_ascend_dp_tensor_parallel_size = vllm_adapter._default_deepseek_ascend_dp_tensor_parallel_size
     if not (model_info.model_architecture in _DEEPSEEK_ASCEND_DP_ARCHES and ctx.engine == "vllm_ascend"):
         return DpDeploymentTopology(str(ctx.nnodes), "1", str(ctx.node_rank))
     device_count = _safe_int(params.get("device_count"))
@@ -299,7 +315,9 @@ def _build_dp_exec_command(
 
 def _build_dp_deployment_commands(params: Dict[str, Any], ctx: DistScriptCtx, sparse_args: str = "") -> List[str]:
     """组装 dp_deployment 脚本片段：环境、命令转换、speculative/sparse 参数和拓扑 CLI。"""
-    from vllm_adapter import _should_append_auto_speculative_config, _build_speculative_cmd
+    vllm_adapter = _import_vllm_adapter()
+    _should_append_auto_speculative_config = vllm_adapter._should_append_auto_speculative_config
+    _build_speculative_cmd = vllm_adapter._build_speculative_cmd
     dp_rpc_port = str(params.get("rpc_port", os.getenv('VLLM_DP_RPC_PORT', '13355')))
     model_info = ModelIdentifier(params.get("model_name"), params.get("model_path"), params.get("model_type"))
     topology = _resolve_dp_deployment_topology(params, ctx, model_info)

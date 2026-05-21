@@ -17,6 +17,7 @@ vLLM 引擎适配器。
 """
 
 import logging
+import json
 import os
 import shlex
 import stat
@@ -34,9 +35,13 @@ from utils.file_utils import safe_write_file, WriteOptions
 from utils.vllm_helpers import (
     _format_cli_arg, _safe_int, _is_w8a8_quantize, _is_w4a8_quantize, _deep_merge_user_priority,
     _is_empty_engine_config_value, _parse_dict_like_config, Glm47DefaultMergeResult, Glm47InjectionStats,
+    DistScriptCtx, DpDeploymentTopology,
 )
 
-from vllm_distributed import _build_vllm_distributed_script
+try:
+    from engines.vllm_distributed import _build_vllm_distributed_script, _resolve_dp_deployment_topology
+except ImportError:
+    from vllm_distributed import _build_vllm_distributed_script, _resolve_dp_deployment_topology  # noqa: F401
 
 try:
     from wings_control.core.version_util import parse_engine_version_tuple
