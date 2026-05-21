@@ -236,7 +236,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertEqual(kv_config["kv_connector_extra_config"]["swap_in_threshold"], 1)
         self.assertEqual(kv_config["kv_connector_extra_config"]["cpu_swap_space_gb"], 100)
 
-    def test_deepseek_v4_flash_name_with_v3_arch_script_uses_cpu_offload_path(self):
+    def test_deepseek_v4_flash_name_with_v3_arch_keeps_lmcache_path(self):
         from core.start_args_compat import parse_launch_args  # noqa: E402
         from core.wings_entry import _build_lmcache_install_snippet  # noqa: E402
         from engines.vllm_adapter import build_start_script  # noqa: E402
@@ -274,10 +274,10 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         kv_config = json.loads(merged["engine_config"]["kv_transfer_config"])
         self.assertEqual(kv_config["kv_connector"], "LMCacheConnectorV1")
-        self.assertIn("CPUOffloadingConnector", script)
-        self.assertNotIn("LMCacheConnectorV1", script)
-        self.assertNotIn("export LMCACHE_OFFLOAD=true", script)
-        self.assertEqual(lmcache_patch, "")
+        self.assertNotIn("CPUOffloadingConnector", script)
+        self.assertIn("LMCacheConnectorV1", script)
+        self.assertIn("export LMCACHE_OFFLOAD=true", script)
+        self.assertIn("--lmcache-target", lmcache_patch)
 
     def test_nvidia_sparse_auto_selects_vllm(self):
         model_info = _FakeModelInfo(supported=True)
@@ -638,6 +638,39 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertIn("\"cpu_swap_space_gb\":200", exec_line)
 
+    def test_deepseek_v4_flash_short_config_key_matches_w8a8_variant(self):
+        """DeepSeek-V4-Flash 短配置键应覆盖 w8a8 等 Flash 变体。"""
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["DeepseekV4ForCausalLM"],
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "DeepSeek-V4-Flash-w8a8",
+                "--model-path", model_dir,
+                "--device-count", "8",
+                "--trust-remote-code",
+            ]
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {"WINGS_ASCEND_PLATFORM": "A2"}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "ascend", "count": 8, "details": []},
+                        launch_args.to_namespace(),
+                    )
+
+        engine_config = merged["engine_config"]
+        self.assertEqual(engine_config.get("max_model_len"), 65536, engine_config)
+        self.assertEqual(engine_config.get("tensor_parallel_size"), 8, engine_config)
+        speculative_config = json.loads(engine_config["speculative_config"])
+        self.assertEqual(speculative_config["method"], "mtp")
+
     def _build_deepseek_v4_pro_script(
         self,
         device_count=16,
@@ -804,6 +837,45 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertEqual(engine_config.get("data_parallel_size"), 2, engine_config)
         self.assertIn("speculative_config", engine_config)
         self.assertIn("additional_config", engine_config)
+
+    def test_deepseek_v4_pro_short_config_key_matches_w4a8_variant(self):
+        """DeepSeek-V4-Pro 短配置键应覆盖 w4a8 等 Pro 变体。"""
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["DeepseekV4ForCausalLM"],
+                    "torch_dtype": "bfloat16",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "DeepSeek-V4-Pro-w4a8",
+                "--model-path", model_dir,
+                "--device-count", "16",
+                "--trust-remote-code",
+                "--distributed",
+                "--nnodes", "2",
+                "--node-rank", "0",
+                "--node-ips", "10.0.0.1,10.0.0.2",
+                "--master-ip", "10.0.0.1",
+            ]
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {"RANK_IP": "10.0.0.1"}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "ascend", "count": 16, "details": []},
+                        launch_args.to_namespace(),
+                    )
+
+        engine_config = merged["engine_config"]
+        self.assertEqual(engine_config.get("max_model_len"), 135000, engine_config)
+        self.assertEqual(engine_config.get("tensor_parallel_size"), 16, engine_config)
+        self.assertEqual(engine_config.get("data_parallel_size"), 2, engine_config)
+        speculative_config = json.loads(engine_config["speculative_config"])
+        self.assertEqual(speculative_config["method"], "mtp")
 
     def test_deepseek_v4_pro_flash_name_does_not_match_pro(self):
         """名称含 flash 严格视为 V4-Flash，不应进入 V4-Pro 分支。"""

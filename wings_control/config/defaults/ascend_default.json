@@ -198,7 +198,7 @@
             "mindie_tool_call_parser": "deepseek_v4"
           }
         },
-        "DeepSeek-V4-Flash-w8a8-mtp": {
+        "DeepSeek-V4-Flash": {
           "vllm_ascend": {
             "trust_remote_code": true,
             "max_model_len": 65536,
@@ -250,7 +250,7 @@
             "use_vllm_serve": true
           }
         },
-        "DeepSeek-V4-Pro-w4a8-mtp": {
+        "DeepSeek-V4-Pro": {
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
             "max_model_len": 135000,

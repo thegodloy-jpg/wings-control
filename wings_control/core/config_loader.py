@@ -2181,6 +2181,47 @@ def _handle_sglang_distributed(distributed_config: Dict[str, Any], cmd_params: D
     })
 
 
+_V4_PREFIX_MODEL_CONFIG_KEYS = {
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+}
+_MODEL_NAME_TOKEN_BOUNDARY_CHARS = set("-_./:")
+
+
+def _model_name_contains_config_token(model_name_lower: str, config_key_lower: str) -> bool:
+    """Return True when config_key appears as a token inside model_name."""
+    start = 0
+    while True:
+        index = model_name_lower.find(config_key_lower, start)
+        if index < 0:
+            return False
+
+        end = index + len(config_key_lower)
+        before_ok = (
+            index == 0
+            or model_name_lower[index - 1] in _MODEL_NAME_TOKEN_BOUNDARY_CHARS
+        )
+        after_ok = (
+            end == len(model_name_lower)
+            or model_name_lower[end] in _MODEL_NAME_TOKEN_BOUNDARY_CHARS
+        )
+        if before_ok and after_ok:
+            return True
+        start = index + 1
+
+
+def _model_config_key_matches_lookup_names(config_key_lower: str, lookup_names: list) -> bool:
+    """Match model_deploy_config keys against CLI model names."""
+    if config_key_lower in lookup_names:
+        return True
+    if config_key_lower not in _V4_PREFIX_MODEL_CONFIG_KEYS:
+        return False
+    return any(
+        _model_name_contains_config_token(name, config_key_lower)
+        for name in lookup_names
+    )
+
+
 def _match_model_engine_config(
     arch_dict: Dict[str, Any],
     model_name_lower: str,
@@ -2208,7 +2249,7 @@ def _match_model_engine_config(
         lookup_names.append(model_name_lower[:-1])
 
     for model, config in arch_dict.items():
-        if model.lower() not in lookup_names:
+        if not _model_config_key_matches_lookup_names(model.lower(), lookup_names):
             continue
 
         if is_deepseek_sglang_nvidia and h20_model in ("H20-96G", "H20-141G"):
