@@ -190,12 +190,25 @@ def _build_ray_worker_commands(params: Dict[str, Any], ctx: DistScriptCtx) -> Li
 def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[str]:
     """构造 Ascend dp_deployment 通信环境。
 
-    GLM-5 与 DeepSeek DP 对 OMP/HCCL 默认值不同；DeepSeek V3/V3.2 还需要
-    custom OPP/LD_LIBRARY_PATH。这里仅输出环境命令，不改变 CLI 拓扑。
+    GLM-5 / DeepSeek-V4-Pro / 通用 DeepSeek DP 三档默认值不同：
+    - GLM-5 DP   : OMP=1     / BUFFSIZE=200  / TIMEOUT=1800
+    - V4-Pro     : OMP=10    / BUFFSIZE=2048 / TIMEOUT=7200（与 V4-Pro 模型 env 对齐）
+    - 通用 DeepSeek DP: OMP=100 / BUFFSIZE=1024 / TIMEOUT=1800
+
+    该函数在 ``common_env_cmds`` 之后输出，会覆盖前序值，故必须在此处用正确默认值，
+    否则 V4-Pro 模型 env 设置的 HCCL_BUFFSIZE=2048 / OMP=10 / TIMEOUT=7200 都会被
+    硬编码默认覆盖回去。``os.getenv`` 仍然允许调用方通过环境变量进一步覆盖。
     """
     vllm_adapter = _import_vllm_adapter()
     dp_arch = vllm_adapter.get_deepseek_ascend_dp_model_architecture(params)
     is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
+    is_v4_pro_dp = vllm_adapter._is_deepseek_v4_pro_adapted_scope(params)
+    if is_glm5_dp:
+        omp_default, buffsize_default, connect_timeout_default = "1", "200", "1800"
+    elif is_v4_pro_dp:
+        omp_default, buffsize_default, connect_timeout_default = "10", "2048", "7200"
+    else:
+        omp_default, buffsize_default, connect_timeout_default = "100", "1024", "1800"
     env_commands = [
         _SH_VLLM_HOST,
         "export HCCL_WHITELIST_DISABLE=1",
@@ -203,11 +216,11 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
         f"export GLOO_SOCKET_IFNAME={net_if}",
         f"export TP_SOCKET_IFNAME={net_if}",
         f"export HCCL_SOCKET_IFNAME={net_if}",
-        f"export HCCL_CONNECT_TIMEOUT={os.getenv('HCCL_CONNECT_TIMEOUT', '1800')}",
+        f"export HCCL_CONNECT_TIMEOUT={os.getenv('HCCL_CONNECT_TIMEOUT', connect_timeout_default)}",
         f"export HCCL_EXEC_TIMEOUT={os.getenv('HCCL_EXEC_TIMEOUT', '7200')}",
         "export OMP_PROC_BIND=false",
-        f"export OMP_NUM_THREADS={os.getenv('OMP_NUM_THREADS', '1' if is_glm5_dp else '100')}",
-        f"export HCCL_BUFFSIZE={os.getenv('HCCL_BUFFSIZE', '200' if is_glm5_dp else '1024')}",
+        f"export OMP_NUM_THREADS={os.getenv('OMP_NUM_THREADS', omp_default)}",
+        f"export HCCL_BUFFSIZE={os.getenv('HCCL_BUFFSIZE', buffsize_default)}",
         'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
     ]

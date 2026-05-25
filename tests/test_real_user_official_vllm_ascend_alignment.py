@@ -225,6 +225,46 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
         ])
         self.assertNotIn("--api-server-count", script)
 
+    def test_deepseek_v4_pro_a3_dp_env_final_values_match_reference(self):
+        """V4-Pro DP env 的"最终值"必须与官方参考脚本一致。
+
+        ``_build_ascend_dp_env_commands`` 在 V4-Pro 模型 env 之后再次 export
+        HCCL_BUFFSIZE / OMP_NUM_THREADS / HCCL_CONNECT_TIMEOUT；本测试锁定
+        这些变量"最后一次 export" 必须命中 V4-Pro 专属默认 2048 / 10 / 7200，
+        而不是通用 DeepSeek DP 的 1024 / 100 / 1800。
+        """
+        import re as _re
+        script = self._build_script(
+            architecture="DeepseekV4ForCausalLM",
+            model_name="DeepSeek-V4-Pro-w4a8-mtp",
+            argv_extra=[
+                "--distributed",
+                "--nnodes", "2",
+                "--node-rank", "0",
+                "--node-ips", "10.0.0.1,10.0.0.2",
+                "--master-ip", "10.0.0.1",
+            ],
+            hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
+            env={"RANK_IP": "10.0.0.1", "WINGS_ASCEND_PLATFORM": "A3"},
+        )
+        finals: dict[str, str] = {}
+        for line in script.splitlines():
+            m = _re.match(r'^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=(.+)$', line.strip())
+            if m:
+                finals[m.group(1)] = m.group(2)
+        expected_finals = {
+            "HCCL_BUFFSIZE": "2048",
+            "OMP_NUM_THREADS": "10",
+            "HCCL_CONNECT_TIMEOUT": "7200",
+        }
+        for var, want in expected_finals.items():
+            got = finals.get(var, "<MISSING>")
+            self.assertEqual(
+                got, want,
+                f"V4-Pro final {var} must be {want} (got {got}); "
+                f"likely a later export in dp_deployment env overrode the model-specific value",
+            )
+
     def test_deepseek_v4_pro_a3_speculative_decode_off_by_default(self):
         """未传 --enable-speculative-decode 时 V4-Pro 不应注入 --speculative-config。"""
         script = self._build_script(
