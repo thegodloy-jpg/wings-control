@@ -1966,7 +1966,9 @@ def _apply_deepseek_v4_pro_engine_defaults(
         return
     if not _is_deepseek_v4_pro_adapted_scope(params):
         return
-    params["enable_speculative_decode"] = True
+    # MTP (enable_speculative_decode) 由上层 CLI/ENV (--enable-speculative-decode)
+    # 控制，本路径不再默认强制开启。模型权重虽含 MTP head，但 LMCache、调试场景
+    # 不一定希望同时启用投机解码，强制 True 会让用户无法关闭。
     if params.get("rpc_port") in (None, "", 13355, "13355"):
         params["rpc_port"] = 13399
     params["_force_data_parallel_start_rank_on_rank0"] = True

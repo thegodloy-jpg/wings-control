@@ -127,7 +127,11 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
         ])
 
     def test_deepseek_v4_pro_a3_real_user_launch_matches_official_two_node_rank0(self):
-        """Official DeepSeek-V4-Pro A3 rank0 example uses TP16/DP2 and A3 env."""
+        """Official DeepSeek-V4-Pro A3 rank0 example uses TP16/DP2 and A3 env.
+
+        MTP 由上层 ``--enable-speculative-decode`` 控制；官方参考脚本启用了 MTP，
+        故此测试显式传入该开关以对齐。
+        """
         script = self._build_script(
             architecture="DeepseekV4ForCausalLM",
             model_name="DeepSeek-V4-Pro-w4a8-mtp",
@@ -137,6 +141,7 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
                 "--node-rank", "0",
                 "--node-ips", "10.0.0.1,10.0.0.2",
                 "--master-ip", "10.0.0.1",
+                "--enable-speculative-decode",
             ],
             hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
             env={"RANK_IP": "10.0.0.1", "WINGS_ASCEND_PLATFORM": "A3"},
@@ -202,6 +207,7 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
                 "--node-rank", "1",
                 "--node-ips", "10.0.0.1,10.0.0.2",
                 "--master-ip", "10.0.0.1",
+                "--enable-speculative-decode",
             ],
             hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
             env={"RANK_IP": "10.0.0.2", "WINGS_ASCEND_PLATFORM": "A3"},
@@ -218,6 +224,29 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
             "--tensor-parallel-size 16",
         ])
         self.assertNotIn("--api-server-count", script)
+
+    def test_deepseek_v4_pro_a3_speculative_decode_off_by_default(self):
+        """未传 --enable-speculative-decode 时 V4-Pro 不应注入 --speculative-config。"""
+        script = self._build_script(
+            architecture="DeepseekV4ForCausalLM",
+            model_name="DeepSeek-V4-Pro-w4a8-mtp",
+            argv_extra=[
+                "--distributed",
+                "--nnodes", "2",
+                "--node-rank", "0",
+                "--node-ips", "10.0.0.1,10.0.0.2",
+                "--master-ip", "10.0.0.1",
+            ],
+            hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
+            env={"RANK_IP": "10.0.0.1", "WINGS_ASCEND_PLATFORM": "A3"},
+        )
+        self.assertNotIn(
+            "--speculative-config",
+            script,
+            "V4-Pro should NOT default-enable speculative decoding; "
+            "it must be opted in via --enable-speculative-decode",
+        )
+        self.assertNotIn("deepseek_mtp", script)
 
     def test_glm47_w8a8_real_user_launch_matches_official_single_node(self):
         """Official GLM-4.7-W8A8 single-node example uses vllm serve + MTP."""

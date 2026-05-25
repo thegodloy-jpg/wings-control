@@ -717,8 +717,15 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                     return build_start_script(merged)
 
     def test_deepseek_v4_pro_a3_two_nodes_tp16_dp2_rank0(self):
-        """V4-Pro A3 双机 16 卡：rank0 → TP=16、DP=2、dp_size_local=1、start_rank=0。"""
-        script = self._build_deepseek_v4_pro_script(node_rank=0)
+        """V4-Pro A3 双机 16 卡：rank0 → TP=16、DP=2、dp_size_local=1、start_rank=0。
+
+        MTP 由上层 ``--enable-speculative-decode`` 控制，此处显式传入以校验
+        投机解码命令行片段（``--speculative-config`` / ``deepseek_mtp``）。
+        """
+        script = self._build_deepseek_v4_pro_script(
+            node_rank=0,
+            extra_argv=["--enable-speculative-decode"],
+        )
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
         self.assertTrue(exec_line.startswith("exec vllm serve "))
         self.assertIn("--tensor-parallel-size 16", exec_line)
