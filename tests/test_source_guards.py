@@ -81,6 +81,28 @@ class TestSourceGuards(unittest.TestCase):
         self.assertIn('"vllm_ascend": "vllm_ascend"', source)
         self.assertNotIn('"vllm_ascend": "vllm"', source)
 
+    def test_v4_pro_static_engine_defaults_stay_out_of_vllm_adapter(self):
+        source = (ROOT / "wings_control" / "engines" / "vllm_adapter.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("_DEEPSEEK_V4_PRO_CAPACITY_DEFAULTS", source)
+        self.assertNotIn("_DEEPSEEK_V4_PRO_RUNTIME_DEFAULTS", source)
+        self.assertNotIn("_DEEPSEEK_V4_PRO_ADDITIONAL_CONFIG", source)
+        self.assertNotIn("engine_config[\"tensor_parallel_size\"] = 16", source)
+        self.assertNotIn("engine_config[\"data_parallel_size\"] = 2", source)
+        self.assertNotIn("engine_config[\"data_parallel_size_local\"] = 1", source)
+
+    def test_glm47_w8a8_fingerprint_defaults_do_not_carry_speculative_config(self):
+        adapter_source = (ROOT / "wings_control" / "engines" / "vllm_adapter.py").read_text(encoding="utf-8")
+        ascend_defaults = (
+            ROOT / "wings_control" / "config" / "defaults" / "ascend_default.json"
+        ).read_text(encoding="utf-8")
+
+        defaults_block = adapter_source.split("_GLM47_W8A8_ENGINE_DEFAULTS", 1)[1].split(
+            "_GLM47_W8A8_DEEP_MERGE_KEYS", 1
+        )[0]
+        self.assertNotIn("speculative_config", defaults_block)
+        self.assertNotIn("glm4_moe_mtp", ascend_defaults)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

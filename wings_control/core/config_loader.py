@@ -376,9 +376,6 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     # 对于 embedding 和 rerank 模型，强制禁用 enable_chunked_prefill 和 enable_prefix_caching
     _validate_embedding_rerank_params(params, ctx)
 
-    # NOTE: _fix_ascend_block_size 已移至 load_and_merge_configs 末尾，
-    # 在 _apply_cli_overrides 之后执行，防止 CLI 覆盖硬件硬约束。
-
     return params
 
 
@@ -407,76 +404,25 @@ def _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info) -> bool
     return True
 
 
-def _fix_ascend_block_size(params: dict, ctx: dict) -> None:
-    """Ascend 平台启用 prefix_caching 时自动修正 block_size 为 128。
-
-    vllm-ascend 要求：如果 enable_prefix_caching=True，则 block_size 必须为 128。
-    否则会在 ACL 图捕获阶段产生 INTERNAL ASSERT FAILED 错误。
-
-    此函数在配置合并的最后阶段调用，确保不会被其他 setter 覆盖。
-
-    Bug fix: 当默认配置使用 no_enable_prefix_caching=true 但用户通过
-    ENABLE_PREFIX_CACHING=true 环境变量覆盖时，engine_config 中可能不存在
-    enable_prefix_caching 键（只有 no_enable_prefix_caching）。此时需要额外
-    检查环境变量来判断 prefix caching 的最终状态。同时需要移除冲突的
-    no_enable_prefix_caching 键，避免 vLLM 同时收到互斥参数。
-
-    Args:
-        params: 引擎参数字典（原地修改）
-        ctx:    通用上下文，包含 device 信息
-    """
-    if ctx.get("device") != "ascend":
-        return
-
-    # 判断 prefix caching 最终状态：
-    # 1. 显式设置 enable_prefix_caching
-    # 2. 默认 no_enable_prefix_caching 被 ENV 覆盖
-    prefix_caching = params.get("enable_prefix_caching")
-    if prefix_caching in [None, False, "False", 0, "0"]:
-        # 检查是否存在 ENV 覆盖：defaults 中 no_enable_prefix_caching=true
-        # 但用户通过 ENABLE_PREFIX_CACHING=true 环境变量启用了 prefix caching
-        env_val = os.environ.get("ENABLE_PREFIX_CACHING", "").strip().lower()
-        if env_val in ("true", "1", "yes"):
-            logger.warning(
-                "[Ascend] Detected ENABLE_PREFIX_CACHING=%s env override "
-                "while no_enable_prefix_caching is in defaults. "
-                "Resolving conflict: enabling prefix_caching and removing "
-                "no_enable_prefix_caching.",
-                env_val,
-            )
-            params["enable_prefix_caching"] = True
-            params.pop("no_enable_prefix_caching", None)
-            prefix_caching = True
-        else:
-            return
-
-    current_block_size = params.get("block_size")
-    if current_block_size != 128:
-        logger.warning(
-            "[Ascend] prefix_caching is enabled but block_size=%s; "
-            "Ascend requires block_size=128 when prefix_caching is on. "
-            "Auto-correcting block_size to 128.",
-            current_block_size,
-        )
-        params["block_size"] = 128
-
-
 def _set_function_call(params, engine_cmd_parameter):
-    """根据用户传入的 enable_auto_tool_choice 统一启用 function call。
+    """根据用户传入或模型默认配置中的 enable_auto_tool_choice 统一启用 function call。
 
-    用户通过 enable_auto_tool_choice（唯一开关）触发所有引擎的 FC 功能。
+    触发源：CLI 显式开关 **或** model_deploy_config 中明确写 ``enable_auto_tool_choice: true``
+    （后者在 V4-Pro/V4-Flash 等模型默认中已配置，避免用户重复指定）。
     tool_call_parser / reasoning_parser 来自模型默认配置，不需要用户指定。
-    两个字段均受 enable_auto_tool_choice 统一控制，不设单独开关。
 
     逻辑：
-      - 用户传入 enable_auto_tool_choice + 模型配置了 tool_call_parser
+      - 触发源开启 + 模型配置了 tool_call_parser
         → 保留 tool_call_parser 和 reasoning_parser，注入 enable_auto_tool_choice
-      - 用户传入 enable_auto_tool_choice 但模型没有 tool_call_parser
+      - 触发源开启 但模型没有 tool_call_parser
         → 移除 enable_auto_tool_choice 和 reasoning_parser，打印警告
-      - 用户未传 enable_auto_tool_choice
+      - 触发源未开启
         → 移除 tool_call_parser 和 reasoning_parser，FC 不生效
     """
-    user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
+    user_wants_fc = (
+        engine_cmd_parameter.get("enable_auto_tool_choice")
+        or params.get("enable_auto_tool_choice")
+    )
     if user_wants_fc:
         if "tool_call_parser" in params:
             params["enable_auto_tool_choice"] = True
@@ -2187,6 +2133,79 @@ _V4_PREFIX_MODEL_CONFIG_KEYS = {
 }
 _MODEL_NAME_TOKEN_BOUNDARY_CHARS = set("-_./:")
 
+# W4A8 量化别名集 —— DeepSeek-V4-Pro 的权重指纹（与
+# ``utils.vllm_helpers._W4A8_QUANT_METHOD_ALIASES`` 保持一致，避免在 config_loader
+# 中再依赖 vllm_helpers，从而保留这层模块边界）。
+_W4A8_QUANTIZE_ALIASES = {
+    "w4a8",
+    "ascend-w4a8",
+    "ascend_w4a8",
+    "w4a8_dynamic",
+}
+
+
+def _is_w4a8_quantize_token(quantize: Any) -> bool:
+    if not quantize:
+        return False
+    q = str(quantize).strip().lower()
+    if not q:
+        return False
+    if q in _W4A8_QUANTIZE_ALIASES:
+        return True
+    return "w4a8" in q
+
+
+# V4-Pro 身份证据可能藏在 config.json 的这些字段里（与 adapter
+# ``_DEEPSEEK_V4_IDENTITY_CONFIG_KEYS`` 保持一致）。生产环境会出现 served-model
+# 改名导致 model_name 不含 "pro"，但权重目录里的 config.json 仍然保留原始名称。
+_V4_PRO_IDENTITY_CONFIG_KEYS = (
+    "_name_or_path",
+    "name_or_path",
+    "model_name",
+    "model_id",
+    "base_model_name",
+    "source_model",
+)
+
+
+def _config_value_contains_v4_pro(value: Any) -> bool:
+    if isinstance(value, str):
+        text = value.lower()
+        return "deepseek-v4-pro" in text or "deepseek_v4_pro" in text or "deepseekv4pro" in text
+    if isinstance(value, (list, tuple, set)):
+        return any(_config_value_contains_v4_pro(item) for item in value)
+    if isinstance(value, dict):
+        return any(_config_value_contains_v4_pro(item) for item in value.values())
+    return False
+
+
+def _fingerprint_model_config_keys(model_info) -> list:
+    """根据 model_info 的架构 + 量化/identity 指纹补充 model_deploy_config 查找名。
+
+    设计动机：JSON 的 ``DeepSeek-V4-Pro`` 等条目以模型名为 key，但生产环境会出现
+    匿名 served-model（CLI model_name 不含 "pro"），其身份信号要么藏在 config.json
+    的 _name_or_path 等字段，要么只能靠 w4a8 量化指纹识别。这里把这两类兜底
+    集中到一处，以替代 adapter 内部的硬编码默认。
+    """
+    if model_info is None:
+        return []
+    try:
+        architecture = model_info.identify_model_architecture()
+    except Exception:  # noqa: BLE001
+        architecture = None
+    if architecture != "DeepseekV4ForCausalLM":
+        return []
+
+    config = getattr(model_info, "config", None) or {}
+    for key in _V4_PRO_IDENTITY_CONFIG_KEYS:
+        if _config_value_contains_v4_pro(config.get(key)):
+            return ["deepseek-v4-pro"]
+
+    quantize = getattr(model_info, "model_quantize", None)
+    if _is_w4a8_quantize_token(quantize):
+        return ["deepseek-v4-pro"]
+    return []
+
 
 def _model_name_contains_config_token(model_name_lower: str, config_key_lower: str) -> bool:
     """Return True when config_key appears as a token inside model_name."""
@@ -2227,17 +2246,21 @@ def _match_model_engine_config(
     model_name_lower: str,
     engine_key: str,
     is_deepseek_sglang_nvidia: bool,
+    model_info=None,
 ) -> Dict[str, Any]:
     """在架构配置字典中按模型名查找引擎参数，支持 H20 卡型适配。
 
     遍历 arch_dict 中的模型条目，找到名称匹配项后返回对应的引擎参数。
     DeepSeek+SGLang+NVIDIA 场景下额外检测 H20 GPU 型号以选用专属配置。
+    匿名模型可通过 ``model_info`` 提供的架构 + 量化指纹补充查找名（如 w4a8
+    DeepseekV4 → ``deepseek-v4-pro``），以匹配 JSON 中的对应条目。
 
     Args:
         arch_dict:                 架构级配置（model_name → {engine_key: config}）
         model_name_lower:          待匹配的模型名（已小写化）
         engine_key:                引擎键名（如 'vllm'、'sglang_distributed'）
         is_deepseek_sglang_nvidia: 是否为 DeepSeek+SGLang+NVIDIA 特殊场景
+        model_info:                可选，模型元信息对象（提供架构 + 量化指纹）
 
     Returns:
         匹配到的引擎参数字典；未匹配则返回空字典
@@ -2247,6 +2270,9 @@ def _match_model_engine_config(
     lookup_names = [model_name_lower]
     if model_name_lower.startswith("deepseek-v4-pro-") and model_name_lower.endswith("-mtp1"):
         lookup_names.append(model_name_lower[:-1])
+    for extra in _fingerprint_model_config_keys(model_info):
+        if extra not in lookup_names:
+            lookup_names.append(extra)
 
     for model, config in arch_dict.items():
         if not _model_config_key_matches_lookup_names(model.lower(), lookup_names):
@@ -2359,7 +2385,7 @@ def _get_model_specific_config(hardware_env: Dict[str, Any],
 
         engine_specific_defaults = _match_model_engine_config(
             model_architecture_dict, model_name_lower, engine_key,
-            is_deepseek_sglang_nvidia,
+            is_deepseek_sglang_nvidia, model_info,
         )
         if not engine_specific_defaults:
             logger.info("The default deploy configuration of the "
@@ -2475,10 +2501,6 @@ def load_and_merge_configs(
     # 绕过 adapter 后续的安全归一化（例如 DeepSeek DP 关闭 prefix-cache）。
     if raw_engine_config:
         engine_config = _merge_configs(engine_config, raw_engine_config)
-
-    # 4.5 Ascend 硬约束：prefix_caching 开启时 block_size 必须为 128
-    #     放在 CLI 覆盖之后，确保硬件约束优先于用户 CLI 参数
-    _fix_ascend_block_size(engine_config, {"device": hardware_env.get("device")})
 
     # 4.6 embedding/rerank 最终守卫：移除不兼容参数
     #     必须在所有合并（user_config、raw_engine_config、CLI 覆盖）之后执行，

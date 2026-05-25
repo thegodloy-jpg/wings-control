@@ -1824,24 +1824,33 @@ def _force_set_if_not_explicit(
         engine_config[key] = value
 
 
-def _compute_deepseek_v4_flash_data_parallel_size(params: Dict[str, Any]) -> int:
-    """TP=8 锁定后，按整集群剩余卡拉满 DP。
+def _default_deepseek_v4_flash_tensor_parallel_size(platform: str) -> int:
+    """Return the platform-specific DeepSeek-V4-Flash TP default."""
+    return 4 if platform == "a3" else 8
 
-    典型结果：A2 单机 8 卡 -> DP=1；A3 单机 16 卡 -> DP=2；
-    A3 双机 16x2 卡 -> DP=4。这里只负责计算 Flash 的推荐 DP，
+
+def _compute_deepseek_v4_flash_data_parallel_size(
+    params: Dict[str, Any],
+    tensor_parallel_size: int,
+) -> int:
+    """按整集群剩余卡拉满 DP。
+
+    典型结果：A2 单机 8 卡 + TP=8 -> DP=1；A3 单机 16 卡 + TP=4 -> DP=4；
+    A3 双机 16x2 卡 + TP=4 -> DP=8。这里只负责计算 Flash 的推荐 DP，
     显式 CLI/ENV 覆盖仍由调用方的 explicit_keys 判断保护。
     """
     device_count = _safe_int(params.get("device_count")) or 8
     is_distributed = bool(params.get("distributed"))
     nnodes = _safe_int(params.get("nnodes")) or (2 if is_distributed else 1)
     total_cards = device_count * (nnodes if is_distributed else 1)
-    return max(1, total_cards // 8)
+    return max(1, total_cards // max(1, tensor_parallel_size))
 
 
 def _apply_deepseek_v4_flash_capacity_and_topology(
     params: Dict[str, Any],
     engine_config: Dict[str, Any],
     explicit_keys: set,
+    platform: str,
 ) -> None:
     """V4-Flash 容量与 TP/DP 拓扑强制覆盖。
 
@@ -1851,12 +1860,18 @@ def _apply_deepseek_v4_flash_capacity_and_topology(
     """
     for key, value in _DEEPSEEK_V4_FLASH_CAPACITY_DEFAULTS.items():
         _force_set_if_not_explicit(engine_config, explicit_keys, key, value)
-    # TP=8 锁定：TP=16 会把 MTP/sparse 小层切到 0 维（shape '[0,1024,-1]' 崩溃）。
+    default_tp = _default_deepseek_v4_flash_tensor_parallel_size(platform)
+    tp_size = _safe_int(engine_config.get("tensor_parallel_size")) or default_tp
+    # A2 保持 TP=8；A3 对齐 vllm-ascend 官方 Flash A3 模板，默认 TP=4/DP=4（16 卡）。
+    # 用户显式 TP 仍优先，避免覆盖调试或未来官方拓扑变体。
     if "tensor_parallel_size" not in explicit_keys:
-        engine_config["tensor_parallel_size"] = 8
-        params["tensor_parallel_size"] = 8
+        engine_config["tensor_parallel_size"] = default_tp
+        params["tensor_parallel_size"] = default_tp
+        tp_size = default_tp
     if "data_parallel_size" not in explicit_keys:
-        engine_config["data_parallel_size"] = _compute_deepseek_v4_flash_data_parallel_size(params)
+        engine_config["data_parallel_size"] = _compute_deepseek_v4_flash_data_parallel_size(
+            params, tp_size,
+        )
     # MoE 必须开 EP，否则 KV cache spec 形状不一致 + MTP → 'list' has no 'merge'。
     _force_set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
 
@@ -1900,69 +1915,13 @@ def _apply_deepseek_v4_flash_engine_defaults(
         return
 
     platform = _resolve_deepseek_v4_flash_platform(params)
-    _apply_deepseek_v4_flash_capacity_and_topology(params, engine_config, explicit_keys)
+    _apply_deepseek_v4_flash_capacity_and_topology(params, engine_config, explicit_keys, platform)
     _apply_deepseek_v4_flash_runtime_defaults(engine_config, explicit_keys)
     _set_deepseek_v4_flash_additional_config(engine_config, explicit_keys, platform)
-    # vLLM 0.18 推测解码 method 必须为 ``mtp``（``deepseek_mtp`` 会被静默忽略）。
-    _merge_dict_default_if_not_explicit(
-        engine_config, explicit_keys, "speculative_config",
-        {"num_speculative_tokens": 1, "method": "mtp"},
-    )
     _merge_dict_default_if_not_explicit(
         engine_config, explicit_keys, "compilation_config",
         {"cudagraph_mode": "FULL_DECODE_ONLY"},
     )
-
-
-_DEEPSEEK_V4_PRO_CAPACITY_DEFAULTS = {
-    "max_model_len": 135000,
-    "max_num_batched_tokens": 4096,
-    "max_num_seqs": 16,
-    "gpu_memory_utilization": 0.9,
-}
-
-_DEEPSEEK_V4_PRO_RUNTIME_DEFAULTS = (
-    ("enable_expert_parallel", True),
-    ("quantization", "ascend"),
-    ("block_size", 128),
-    ("async_scheduling", True),
-    ("safetensors_load_strategy", "prefetch"),
-    ("tokenizer_mode", "deepseek_v4"),
-    ("tool_call_parser", "deepseek_v4"),
-    ("enable_auto_tool_choice", True),
-    ("reasoning_parser", "deepseek_v4"),
-)
-
-_DEEPSEEK_V4_PRO_ADDITIONAL_CONFIG = {
-    "enable_cpu_binding": True,
-    "ascend_compilation_config": {
-        "enable_npugraph_ex": True,
-        "enable_static_kernel": False,
-    },
-}
-
-
-def _apply_deepseek_v4_pro_topology(
-    params: Dict[str, Any],
-    engine_config: Dict[str, Any],
-    explicit_keys: set,
-) -> None:
-    """V4-Pro 双机 A3：TP=16 锁定 + DP=2。
-
-    V4-Pro 官方形态是双机、每机 1 个 DP rank，因此这里显式写
-    data_parallel_size_local=1 和 start_rank=node_rank。不要复用通用
-    DeepSeek DP 的 device_count/tp 推导，否则 16 卡 A3 会得到错误的
-    本地 DP 数。
-    """
-    if "tensor_parallel_size" not in explicit_keys:
-        engine_config["tensor_parallel_size"] = 16
-        params["tensor_parallel_size"] = 16
-    if "data_parallel_size" not in explicit_keys:
-        engine_config["data_parallel_size"] = 2
-    if "data_parallel_size_local" not in explicit_keys:
-        engine_config["data_parallel_size_local"] = 1
-    if "data_parallel_start_rank" not in explicit_keys:
-        engine_config["data_parallel_start_rank"] = _safe_int(params.get("node_rank")) or 0
 
 
 def _apply_deepseek_v4_pro_engine_defaults(
@@ -1970,36 +1929,20 @@ def _apply_deepseek_v4_pro_engine_defaults(
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
-    """Apply DeepSeek-V4-Pro (w4a8-mtp) vLLM-Ascend launch defaults.
+    """Apply runtime-only DeepSeek-V4-Pro launch defaults that cannot live in JSON.
 
     适配范围：仅 A3 双机（nnodes==2、distributed==True）。其它部署形态不进入此分支。
-    与 V4-Flash 核心差异：w4a8 量化、长上下文（135000）、双机 DP=2/dp_local=1、TP=16，
-    不走通用 DP 推导（通用路径把 dp_size_local 推到 device_count/tp，与 Pro 官方 1 卡/DP 不符）。
+    所有静态字段（TP/DP/DP_local、max_model_len、quantization、compilation_config、
+    additional_config 等）均由 ``ascend_default.json`` 的 ``DeepSeek-V4-Pro`` 条目承载，
+    经 config_loader 注入到 engine_config。这里只注入唯一无法用 JSON 表达的字段：
+    ``data_parallel_start_rank`` —— 它必须等于运行时的 ``node_rank``。
     """
     if params.get("engine") != "vllm_ascend":
         return
     if not _is_deepseek_v4_pro_adapted_scope(params):
         return
-
-    for key, value in _DEEPSEEK_V4_PRO_CAPACITY_DEFAULTS.items():
-        _set_if_not_explicit(engine_config, explicit_keys, key, value)
-    _apply_deepseek_v4_pro_topology(params, engine_config, explicit_keys)
-    for key, value in _DEEPSEEK_V4_PRO_RUNTIME_DEFAULTS:
-        _set_if_not_explicit(engine_config, explicit_keys, key, value)
-
-    # vLLM 0.18 推测解码 method 必须为 ``mtp``（``deepseek_mtp`` 会被静默忽略）。
-    _merge_dict_default_if_not_explicit(
-        engine_config, explicit_keys, "speculative_config",
-        {"num_speculative_tokens": 1, "method": "mtp"},
-    )
-    _merge_dict_default_if_not_explicit(
-        engine_config, explicit_keys, "compilation_config",
-        {"cudagraph_mode": "FULL_DECODE_ONLY"},
-    )
-    _merge_dict_default_if_not_explicit(
-        engine_config, explicit_keys, "additional_config",
-        _DEEPSEEK_V4_PRO_ADDITIONAL_CONFIG,
-    )
+    if "data_parallel_start_rank" not in explicit_keys:
+        engine_config["data_parallel_start_rank"] = _safe_int(params.get("node_rank")) or 0
 
 
 def _apply_deepseek_v4_cpu_offload(
@@ -2133,7 +2076,7 @@ def is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
 # 触发条件：架构 == Glm4MoeForCausalLM 且 config.json 量化字段命中 W8A8 别名表
 # 合并策略：
 #   * 标量字段：用户已显式给出则不覆盖（user > injected）
-#   * dict 字段（additional_config / speculative_config / compilation_config）：
+#   * dict 字段（additional_config / compilation_config）：
 #       做 **深合并**，用户给出的 sub-key 优先，未给出的 sub-key 注入
 _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
     "enable_expert_parallel": True,
@@ -2144,11 +2087,8 @@ _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
         "enable_shared_expert_dp": True,
         "ascend_fusion_config": {"fusion_ops_gmmswigluquant": False},
     },
-    # 推测解码：使用 vllm-ascend 专用 method 名 glm4_moe_mtp
-    "speculative_config": {
-        "method": "glm4_moe_mtp",
-        "num_speculative_tokens": 3,
-    },
+    # 推测解码不在此处承载：完全交由"上层开关 + launcher 自动合成"路径产出，
+    # 避免在 ascend 默认 / 架构指纹注入这条"第三入口"上再硬编码任何 spec 字段。
     # 编译图：cudagraph 全量解码模式，覆盖常用并发档位
     "compilation_config": {
         "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 64, 128],
@@ -2159,7 +2099,6 @@ _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
 # 需要做 dict 深合并的字段（不能整体覆盖）
 _GLM47_W8A8_DEEP_MERGE_KEYS = {
     "additional_config",
-    "speculative_config",
     "compilation_config",
 }
 
@@ -2271,25 +2210,15 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
       * 标量字段：用户优先；dict 字段：深合并，用户的 sub-key 优先
       * BF16 / 同架构非量化变体（如 GLM-4.5）不会被影响
       * 仅对 vllm / vllm_ascend 引擎生效
+      * 不承载推测解码：spec 完全交给"上层开关 + launcher 自动合成"两入口
     """
     info = _get_glm47_w8a8_model_info(params)
     if info is None:
         return
 
-    # 若上层已通过 enable_speculative_decode 走 _build_speculative_cmd 路径，
-    # 则我们不再向 engine_config 注入 speculative_config，避免命令行出现两份
-    # --speculative-config（一份来自 engine_config，一份来自 _build_speculative_cmd）
-    suppress_speculative = bool(params.get("enable_speculative_decode"))
-
     engine_config = params.setdefault("engine_config", {})
-    stats = Glm47InjectionStats(injected=[], deep_merged=[], skipped=[])
+    stats = Glm47InjectionStats()
     for key, default_val in _GLM47_W8A8_ENGINE_DEFAULTS.items():
-        if key == "speculative_config" and suppress_speculative:
-            stats.skipped.append(key + "(handled by _build_speculative_cmd)")
-            # 同时，从 engine_config 中移除任何已存在的 speculative_config，
-            # 避免 _build_vllm_cmd_parts 也输出一份。MTP 路径在尾部追加。
-            engine_config.pop("speculative_config", None)
-            continue
         action = _apply_glm47_w8a8_default(engine_config, key, default_val)
         _record_glm47_default_action(engine_config, key, action, stats)
 
@@ -2337,55 +2266,6 @@ def _build_vllm_cmd_parts(params: Dict[str, Any]) -> str:
 
 
 # ── 推测解码 (Speculative Decoding) ──────────────────────────────────────
-
-
-def _format_speculative_result(config_entries: List[str]) -> str:
-    """将推测解码配置列表格式化为 --speculative-config 命令行参数。"""
-    result = " --speculative-config '{" + ", ".join(config_entries) + "}'"
-    logger.info("[AdvFeature-SpecDecode] Generated params: %s", result.strip())
-    return result
-
-
-def _handle_draft_model_case(params: Dict[str, Any], config: List[str]) -> None:
-    """处理有草稿模型的推测解码配置"""
-    draft_path = params.get("speculative_decode_model_path", "")
-    # 对路径中的双引号和反斜杠进行 JSON 转义，防止 JSON-in-shell 注入
-    safe_path = draft_path.replace('\\', '\\\\').replace('"', '\\"')
-    config.append(f'"model": "{safe_path}"')
-    config.append('"draft_tensor_parallel_size": 1')
-    draft_model_info = ModelIdentifierDraft(params.get("speculative_decode_model_path"))
-
-    if 'eagle3' in draft_model_info.draft_model_architecture.lower():
-        logger.info('--- Using the Eagle3 speculative decoding approach ---')
-        config.append('"method" : "eagle3"')
-        num_spec_tokens = 4
-        config.append(f'"num_speculative_tokens": {num_spec_tokens}')
-    else:
-        logger.info('--- Using the draft model speculative decoding approach ---')
-        config.append('"method" : "draft_model"')
-        num_spec_tokens = 4
-        config.append(f'"num_speculative_tokens": {num_spec_tokens}')
-
-
-def _handle_mtp_case(model_info: ModelIdentifier, mtp_support_models: List[Any],
-                     mtp_types: List[str], config: List[str]) -> None:
-    """处理 MTP 推测解码配置"""
-    logger.info('--- Using the MTP speculative decoding approach ---')
-
-    for i, model_group in enumerate(mtp_support_models):
-        if model_info.model_architecture in model_group:
-            config.append(f'"method": "{mtp_types[i]}"')
-            break
-    # MTP 强制 num_speculative_tokens=3（官方 GLM-4.7 / DeepSeek-V3 推荐值）
-    config.append('"num_speculative_tokens": 3')
-
-
-def _handle_suffix_case(config: List[str]) -> None:
-    """处理 suffix 推测解码配置"""
-    logger.info('--- Using the suffix speculative decoding approach ---')
-    config.append('"method" : "suffix"')
-    config.append('"num_speculative_tokens": 5')
-    config.append('"suffix_decoding_max_cached_requests": 1000')
 
 
 def _is_mtp_or_suffix_strategy(params: Dict[str, Any], engine: str) -> bool:
@@ -2477,6 +2357,55 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
     return "suffix"
 
 
+def _format_speculative_result(config_entries: List[str]) -> str:
+    """将推测解码配置列表格式化为 --speculative-config 命令行参数。"""
+    result = " --speculative-config '{" + ", ".join(config_entries) + "}'"
+    logger.info("[AdvFeature-SpecDecode] Generated params: %s", result.strip())
+    return result
+
+
+def _handle_draft_model_case(params: Dict[str, Any], config: List[str]) -> None:
+    """处理有草稿模型的推测解码配置"""
+    draft_path = params.get("speculative_decode_model_path", "")
+    # 对路径中的双引号和反斜杠进行 JSON 转义，防止 JSON-in-shell 注入
+    safe_path = draft_path.replace('\\', '\\\\').replace('"', '\\"')
+    config.append(f'"model": "{safe_path}"')
+    config.append('"draft_tensor_parallel_size": 1')
+    draft_model_info = ModelIdentifierDraft(params.get("speculative_decode_model_path"))
+
+    if 'eagle3' in draft_model_info.draft_model_architecture.lower():
+        logger.info('--- Using the Eagle3 speculative decoding approach ---')
+        config.append('"method" : "eagle3"')
+        num_spec_tokens = 4
+        config.append(f'"num_speculative_tokens": {num_spec_tokens}')
+    else:
+        logger.info('--- Using the draft model speculative decoding approach ---')
+        config.append('"method" : "draft_model"')
+        num_spec_tokens = 4
+        config.append(f'"num_speculative_tokens": {num_spec_tokens}')
+
+
+def _handle_mtp_case(model_info: ModelIdentifier, mtp_support_models: List[Any],
+                     mtp_types: List[str], config: List[str]) -> None:
+    """处理 MTP 推测解码配置"""
+    logger.info('--- Using the MTP speculative decoding approach ---')
+
+    for i, model_group in enumerate(mtp_support_models):
+        if model_info.model_architecture in model_group:
+            config.append(f'"method": "{mtp_types[i]}"')
+            break
+    # MTP 强制 num_speculative_tokens=3（官方 GLM-4.7 / DeepSeek-V3 推荐值）
+    config.append('"num_speculative_tokens": 3')
+
+
+def _handle_suffix_case(config: List[str]) -> None:
+    """处理 suffix 推测解码配置"""
+    logger.info('--- Using the suffix speculative decoding approach ---')
+    config.append('"method" : "suffix"')
+    config.append('"num_speculative_tokens": 5')
+    config.append('"suffix_decoding_max_cached_requests": 1000')
+
+
 def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
     """推测解码方案的自动选取。
 
@@ -2522,8 +2451,13 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         logger.info("[AdvFeature-SpecDecode] Architecture %s → MTP strategy (%s)",
                     model_info.model_architecture, strategy)
         speculative_config_temp.append(f'"method": "{strategy}"')
-        # MTP 强制 num_speculative_tokens=3（官方 GLM-4.7 / GLM-5 / DeepSeek 推荐值）
-        speculative_config_temp.append('"num_speculative_tokens": 3')
+        # DeepSeek-V4-Pro / V4-Flash 官方推荐 num=1；默认不启用，只有
+        # enable_speculative_decode=True 时由 launcher 合成。
+        # 其余 MTP（GLM-4.7 / GLM-5 / 通用 DeepSeek-V3）保持 num=3。
+        if _is_deepseek_v4_pro_params(params) or _is_deepseek_v4_flash_params(params):
+            speculative_config_temp.append('"num_speculative_tokens": 1')
+        else:
+            speculative_config_temp.append('"num_speculative_tokens": 3')
         return _format_speculative_result(speculative_config_temp)
 
     return ""
@@ -2535,12 +2469,17 @@ def build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
 
 
 def _should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
-    """Return True when launcher should synthesize speculative_config itself."""
+    """白名单：仅在 enable_speculative_decode=True 且 engine_config.speculative_config
+    不存在时让 launcher 合成 spec config。
+
+    设计：投机推理仅两个入口——
+      (1) 上层显式 ``engine_config.speculative_config`` dict → 命中第一条 return False
+      (2) 上层 ``enable_speculative_decode=True`` 开关 → launcher 自动合成
+    ascend_default.json / 架构指纹注入 一律不再承载 spec 字段。
+    """
     if not params.get("enable_speculative_decode"):
         return False
     engine_config = params.get("engine_config") or {}
-    if _is_deepseek_v4_flash_params(params):
-        return False
     return not bool(engine_config.get("speculative_config"))
 
 

@@ -3,11 +3,11 @@
 
 回归用例：
 
-- V4-Pro 双机 A3 16 卡/节点：``_apply_deepseek_v4_pro_engine_defaults`` 注入
-  TP=16/DP=2/DP_local=1/DP_start_rank=node_rank 必须经 sync 后被
+- V4-Pro 双机 A3 16 卡/节点：``config_loader`` 从 JSON 注入
+  TP=16/DP=2/DP_local=1，adapter 只注入 DP_start_rank=node_rank，最终必须经 sync 后被
   ``_resolve_dp_deployment_topology`` 读到。
-- V4-Flash 双机 A3 16 卡/节点：``_apply_deepseek_v4_flash_engine_defaults`` 注入
-  TP=8/DP=4 同样必须被回写。
+- V4-Flash A3：``_apply_deepseek_v4_flash_engine_defaults`` 注入官方 A3 拓扑
+  TP=4，DP 按总卡数 / TP 推导，并必须被回写。
 - V3 / GLM-5 双机 dp_deployment：走通用 DP 块默认表，TP 也必须落到
   ``params["engine_config"]``。
 - 用户显式 ``tensor_parallel_size`` 不被 applier 覆盖（仍走显式优先）。
@@ -23,6 +23,7 @@ V3/V32/GLM-5 此前未崩是因为 ``_default_deepseek_ascend_dp_tensor_parallel
 """
 # pyright: reportMissingImports=false
 
+import copy
 import json
 import sys
 import tempfile
@@ -34,10 +35,60 @@ sys.path.insert(0, str(ROOT / "wings_control"))
 
 from engines.vllm_adapter import (  # noqa: E402
     DistScriptCtx,
-    _prepare_engine_config,
     _resolve_dp_deployment_topology,
 )
+from engines import vllm_adapter as _vllm_adapter  # noqa: E402
 from utils.model_utils import ModelIdentifier  # noqa: E402
+from core.config_loader import (  # noqa: E402
+    _load_default_config,
+    _match_model_engine_config,
+)
+
+
+def _seed_engine_config_from_json(params: dict) -> None:
+    """模拟 config_loader 的 model_deploy_config 注入。
+
+    V4-Pro / V4-Flash 等模型的静态启动字段全部由 ``ascend_default.json`` 承载，
+    生产路径下 ``_get_model_specific_config`` 会把它们写入 ``params["engine_config"]``，
+    再交给 adapter 的 ``_prepare_engine_config`` 做动态字段（如
+    ``data_parallel_start_rank``）注入。这个 helper 复用 config_loader 的真实匹配
+    逻辑，让单元测试也覆盖完整链路（含 w4a8 指纹兜底）。
+    """
+    model_info = ModelIdentifier(
+        params["model_name"], params["model_path"], params["model_type"],
+    )
+    architecture = model_info.identify_model_architecture()
+    if not architecture:
+        return
+    cfg = _load_default_config({"device": "ascend"})
+    arch_dict = (
+        cfg.get("model_deploy_config", {})
+        .get(model_info.identify_model_type(), {})
+        .get(architecture, {})
+    )
+    if not arch_dict:
+        return
+    engine = params.get("engine", "")
+    engine_key = f"{engine}_distributed" if params.get("distributed") else engine
+    defaults = _match_model_engine_config(
+        arch_dict, params["model_name"].lower(), engine_key,
+        False, model_info,
+    )
+    if not defaults:
+        return
+    engine_config = params.setdefault("engine_config", {})
+    for key, value in defaults.items():
+        engine_config.setdefault(key, copy.deepcopy(value))
+
+
+def _prepare_engine_config(params: dict) -> dict:
+    """测试用 wrapper：先做 JSON 默认注入（模拟 config_loader），再走 adapter。
+
+    生产路径：config_loader 注入 model_deploy_config → adapter 注入动态字段。
+    这里把两步串起来，避免每个用例都手动调一次 ``_seed_engine_config_from_json``。
+    """
+    _seed_engine_config_from_json(params)
+    return _vllm_adapter._prepare_engine_config(params)
 
 
 def _make_model_dir(parent: Path, name: str, architecture: str, extra_config: dict | None = None) -> Path:
@@ -245,17 +296,18 @@ class TestDpTopologySync(unittest.TestCase):
         }
         _prepare_engine_config(params)
         ec = params["engine_config"]
-        self.assertEqual(ec.get("tensor_parallel_size"), 8, ec)
-        # V4-Flash applier: dp = device_count * nnodes // 8 = 16*2//8 = 4
-        self.assertEqual(ec.get("data_parallel_size"), 4, ec)
+        self.assertEqual(ec.get("tensor_parallel_size"), 4, ec)
+        # V4-Flash A3 follows the official TP=4 topology:
+        # dp = device_count * nnodes // 4 = 16*2//4 = 8
+        self.assertEqual(ec.get("data_parallel_size"), 8, ec)
 
         model_info = ModelIdentifier(
             params["model_name"], params["model_path"], params["model_type"])
         dp_size, dp_local, dp_start = _resolve_dp_deployment_topology(
             params, _ctx(nnodes=2), model_info)
-        # 拓扑 resolver 用 device_count // tp 重新算 dp_size_local：16//8 = 2
-        # dp_size = dp_size_local * nnodes = 4
-        self.assertEqual((dp_size, dp_local, dp_start), ("4", "2", "0"))
+        # 拓扑 resolver 用 device_count // tp 重新算 dp_size_local：16//4 = 4
+        # dp_size = dp_size_local * nnodes = 8
+        self.assertEqual((dp_size, dp_local, dp_start), ("8", "4", "0"))
 
     # ──────────────── V3 通用 DP 块 ────────────────
     def test_v3_dual_node_generic_dp_block_syncs_tp(self):
@@ -421,9 +473,9 @@ class TestDpTopologySync(unittest.TestCase):
         }
         _prepare_engine_config(params)
         ec = params["engine_config"]
-        self.assertEqual(ec.get("tensor_parallel_size"), 8, ec)
-        # A3 单机: total_cards = 16 (is_distributed=False 路径), dp = 16//8 = 2
-        self.assertEqual(ec.get("data_parallel_size"), 2, ec)
+        self.assertEqual(ec.get("tensor_parallel_size"), 4, ec)
+        # A3 单机官方拓扑: total_cards = 16, dp = 16//4 = 4
+        self.assertEqual(ec.get("data_parallel_size"), 4, ec)
 
     # ──────────────── V4-Flash A2 单机 1×8 sync ────────────────
     def test_v4_flash_a2_single_1x8_sync(self):
@@ -446,10 +498,12 @@ class TestDpTopologySync(unittest.TestCase):
         # A2 单机: total_cards = 8, dp = 8//8 = 1
         self.assertEqual(ec.get("data_parallel_size"), 1, ec)
 
-    # ──────────────── V4-Pro scope-guard：A2 闸门拒绝 ────────────────
-    def test_v4_pro_a2_scope_guard_skips_injection(self):
-        """V4-Pro 适配范围限定 A3 双机；A2 路径下应不注入 TP/DP（闸门排除），
-        同时通用 DP 块也因 _is_deepseek_v4_pro_params 而跳过。"""
+    # ──────────────── V4-Pro scope-guard：A2 上 adapter 动态字段不注入 ────────────────
+    def test_v4_pro_a2_adapter_skips_dynamic_injection(self):
+        """V4-Pro JSON 条目按模型名匹配（A2 上 TP=16/DP=2 同样会被 config_loader 载入，
+        这是有意为之 —— 用户在 A2 命名为 V4-Pro 属于配置错误，由后续启动校验拦截，
+        而非默认值合并阶段）。但 adapter 仅在 A3 双机适配范围内注入动态字段
+        ``data_parallel_start_rank``；A2 路径下该字段不应被注入。"""
         params = {
             "model_name": "DeepSeek-V4-Pro-w4a8-mtp1",
             "model_path": str(self.v4_pro),
@@ -459,15 +513,16 @@ class TestDpTopologySync(unittest.TestCase):
             "nnodes": 2,
             "node_rank": 0,
             "device_count": 8,
-            "device_details": [{"name": "910b"}],  # ← A2，闸门拒绝
+            "device_details": [{"name": "910b"}],  # ← A2
             "distributed_executor_backend": "dp_deployment",
             "engine_config": {},
         }
         _prepare_engine_config(params)
         ec = params["engine_config"]
-        self.assertNotIn("tensor_parallel_size", ec, ec)
-        self.assertNotIn("data_parallel_size", ec, ec)
-        self.assertNotIn("data_parallel_size_local", ec, ec)
+        # JSON 静态值仍按模型名命中被加载（架构层面的事实，由 config_loader 决定）
+        self.assertEqual(ec.get("tensor_parallel_size"), 16, ec)
+        # adapter 的 A3 闸门拒绝注入运行时动态字段
+        self.assertNotIn("data_parallel_start_rank", ec, ec)
 
     # ──────────────── V4-Pro scope-guard：单机 nnodes=1 闸门拒绝 ────────────────
     def test_v4_pro_single_node_scope_guard_skips_injection(self):

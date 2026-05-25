@@ -77,6 +77,7 @@ class TestInjectGlm47W8A8(unittest.TestCase):
         _inject_glm47_w8a8_engine_config(p)
         for k, v in _GLM47_W8A8_ENGINE_DEFAULTS.items():
             self.assertEqual(p["engine_config"][k], v)
+        self.assertNotIn("speculative_config", p["engine_config"])
 
     def test_user_value_not_overridden(self):
         p = _params("glm47_w8a8", engine_config={
@@ -106,6 +107,7 @@ class TestInjectGlm47W8A8(unittest.TestCase):
         self.assertNotIn("ascend_scheduler_config", ac)
 
     def test_speculative_config_user_method_preserved(self):
+        """显式 engine_config.speculative_config 是上层入口，GLM 指纹注入不得改写。"""
         p = _params("glm47_w8a8", engine_config={
             "speculative_config": {"method": "mtp", "num_speculative_tokens": 3}
         })
@@ -114,15 +116,15 @@ class TestInjectGlm47W8A8(unittest.TestCase):
         self.assertEqual(sc["method"], "mtp")  # 用户优先
         self.assertEqual(sc["num_speculative_tokens"], 3)
 
-    def test_json_string_dict_config_is_merged_with_user_priority(self):
+    def test_json_string_speculative_config_is_preserved_without_fingerprint_merge(self):
+        """架构指纹注入不是 spec 入口：JSON 字符串不应被解析后补默认字段。"""
+        user_spec = json.dumps({"method": "custom_mtp"})
         p = _params("glm47_w8a8", engine_config={
-            "speculative_config": json.dumps({"method": "custom_mtp"})
+            "speculative_config": user_spec
         })
         _inject_glm47_w8a8_engine_config(p)
 
-        sc = p["engine_config"]["speculative_config"]
-        self.assertEqual(sc["method"], "custom_mtp")
-        self.assertEqual(sc["num_speculative_tokens"], 3)
+        self.assertEqual(p["engine_config"]["speculative_config"], user_spec)
 
     def test_unparseable_string_dict_config_is_not_overridden(self):
         p = _params("glm47_w8a8", engine_config={

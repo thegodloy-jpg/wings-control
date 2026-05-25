@@ -483,15 +483,14 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--tool-call-parser deepseek_v4", exec_line)
         self.assertIn("--enable-auto-tool-choice", exec_line)
         self.assertIn("--reasoning-parser deepseek_v4", exec_line)
-        self.assertIn(
-            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"mtp\"}'",
-            exec_line,
-        )
+        # spec 不再由 V4-Flash JSON/adapter 默认隐式注入；只走显式
+        # engine_config.speculative_config 或 enable_speculative_decode 自动合成。
+        self.assertNotIn("--speculative-config", exec_line)
         # 官方 A2 启动模板：multistream_overlap_shared_expert 必须为 false。
         self.assertIn("\"multistream_overlap_shared_expert\":false", exec_line)
         self.assertNotIn("ascend_compilation_config", exec_line)
         self.assertNotIn("multistream_dsa_preprocess", exec_line)
-        self.assertEqual(exec_line.count("--speculative-config"), 1)
+        self.assertEqual(exec_line.count("--speculative-config"), 0)
         self.assertEqual(exec_line.count("--additional-config"), 1)
         self.assertEqual(exec_line.count("--compilation-config"), 1)
         self.assertIn("--enable-prefix-caching", exec_line)
@@ -515,10 +514,10 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
 
         self.assertTrue(exec_line.startswith("exec vllm serve "))
-        # V4-Flash 始终锁 TP=8（避免 MTP/sparse 小层被切到 0 维）
-        self.assertIn("--tensor-parallel-size 8", exec_line)
-        # 测试用 device_count=8，TP=8 → DP=1
-        self.assertIn("--data-parallel-size 1", exec_line)
+        # A3 follows the official Flash topology: TP=4, DP fills the cards.
+        self.assertIn("--tensor-parallel-size 4", exec_line)
+        # 测试用 device_count=8，TP=4 → DP=2
+        self.assertIn("--data-parallel-size 2", exec_line)
         self.assertIn("\"multistream_overlap_shared_expert\":false", exec_line)
         self.assertIn("\"multistream_dsa_preprocess\":false", exec_line)
         self.assertIn("\"ascend_compilation_config\"", exec_line)
@@ -536,13 +535,14 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         # V4-Flash 不再默认强开 IndexCache：未带 --enable-sparse 时不应出现 --hf-overrides
         self.assertNotIn("--hf-overrides", exec_line)
 
-    def test_deepseek_v4_flash_a3_16cards_tp_locked_to_8(self):
-        """真实 A3 单机 16 卡 → TP 不再被拉满到 16，强制 TP=8；DP=16/8=2 把卡用满。"""
+    def test_deepseek_v4_flash_a3_16cards_uses_official_tp4_dp4(self):
+        """真实 A3 单机 16 卡 → 官方拓扑 TP=4；DP=16/4=4 把卡用满。"""
         script = self._build_deepseek_v4_flash_script("A3", device_count=16)
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
-        self.assertIn("--tensor-parallel-size 8", exec_line)
+        self.assertIn("--tensor-parallel-size 4", exec_line)
+        self.assertNotIn("--tensor-parallel-size 8", exec_line)
         self.assertNotIn("--tensor-parallel-size 16", exec_line)
-        self.assertIn("--data-parallel-size 2", exec_line)
+        self.assertIn("--data-parallel-size 4", exec_line)
 
     def test_deepseek_v4_flash_a2_8cards_tp_locked_to_8(self):
         """A2 单机 8 卡 → TP=8、DP=1。"""
@@ -551,8 +551,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--tensor-parallel-size 8", exec_line)
         self.assertIn("--data-parallel-size 1", exec_line)
 
-    def test_deepseek_v4_flash_a3_distributed_two_nodes_dp_is_four(self):
-        """A3 双机 × 16 卡 = 32 卡，TP=8 → DP=32/8=4。"""
+    def test_deepseek_v4_flash_a3_distributed_two_nodes_dp_is_eight(self):
+        """A3 双机 × 16 卡 = 32 卡，TP=4 → DP=32/4=8。"""
         script = self._build_deepseek_v4_flash_script(
             "A3",
             device_count=16,
@@ -564,8 +564,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
             extra_env={"RANK_IP": "10.0.0.1"},
         )
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
-        self.assertIn("--tensor-parallel-size 8", exec_line)
-        self.assertIn("--data-parallel-size 4", exec_line)
+        self.assertIn("--tensor-parallel-size 4", exec_line)
+        self.assertIn("--data-parallel-size 8", exec_line)
 
     def test_deepseek_v4_flash_user_explicit_tp_respected(self):
         """用户显式 --tensor-parallel-size 16 → 完全尊重，不被强制覆盖到 8。"""
@@ -602,11 +602,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("\"kv_role\":\"kv_both\"", exec_line)
         self.assertIn("\"swap_in_threshold\":1", exec_line)
         self.assertIn("\"cpu_swap_space_gb\":100", exec_line)
-        # 与 MTP 共存：spec 不应降级（vLLM 0.18 推测解码 method 名 ``mtp``）
-        self.assertIn(
-            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"mtp\"}'",
-            exec_line,
-        )
+        # KV offload 与 spec 入口解耦：未显式开启 enable_speculative_decode 时不应默认生成 spec。
+        self.assertNotIn("--speculative-config", exec_line)
         # LMCache env / YAML / 补丁安装均不应出现
         self.assertNotIn("export LMCACHE_OFFLOAD=", script)
         self.assertNotIn("export LMCACHE_CONFIG_FILE=", script)
@@ -668,8 +665,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         engine_config = merged["engine_config"]
         self.assertEqual(engine_config.get("max_model_len"), 65536, engine_config)
         self.assertEqual(engine_config.get("tensor_parallel_size"), 8, engine_config)
-        speculative_config = json.loads(engine_config["speculative_config"])
-        self.assertEqual(speculative_config["method"], "mtp")
+        self.assertNotIn("speculative_config", engine_config)
 
     def _build_deepseek_v4_pro_script(
         self,
@@ -742,11 +738,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--enable-auto-tool-choice", exec_line)
         self.assertIn("--reasoning-parser deepseek_v4", exec_line)
         self.assertIn("--safetensors-load-strategy prefetch", exec_line)
-        # vLLM 0.18 推测解码 method 名 ``mtp``，``deepseek_mtp`` 会被静默忽略。
-        self.assertIn(
-            "--speculative-config '{\"num_speculative_tokens\":1,\"method\":\"mtp\"}'",
-            exec_line,
-        )
+        # spec 不再由 V4-Pro JSON/adapter 默认隐式注入。
+        self.assertNotIn("--speculative-config", exec_line)
         # ``enable_cpu_binding`` 必须是 bool（字符串 "true" 会被 _format_cli_arg
         # 当成普通字符串发出 'true'，与 vLLM 0.18 期望的 bool 不符）。
         self.assertIn("\"enable_cpu_binding\":true", exec_line)
@@ -800,7 +793,11 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--tensor-parallel-size 8", exec_line)
 
     def test_deepseek_v4_pro_mtp1_matches_mtp_defaults_during_config_merge(self):
-        """mtp1 变体应复用 V4-Pro mtp 默认，避免落到 DeepseekV4 架构默认。"""
+        """mtp1 变体应复用 V4-Pro 默认（容量/拓扑/additional_config），避免落到通用 V4 架构默认。
+
+        注意：投机字段不再由 ascend_default.json 承载（两入口设计——上层显式 dict 或
+        enable_speculative_decode 开关 + launcher 自动合成），故此处只校验非 spec 字段。
+        """
         from core.start_args_compat import parse_launch_args  # noqa: E402
 
         with tempfile.TemporaryDirectory() as model_dir:
@@ -835,8 +832,49 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertEqual(engine_config.get("max_model_len"), 135000, engine_config)
         self.assertEqual(engine_config.get("tensor_parallel_size"), 16, engine_config)
         self.assertEqual(engine_config.get("data_parallel_size"), 2, engine_config)
-        self.assertIn("speculative_config", engine_config)
+        # spec 字段不再由 JSON 默认提供
+        self.assertNotIn("speculative_config", engine_config)
         self.assertIn("additional_config", engine_config)
+
+    def test_deepseek_v4_pro_anonymous_w4a8_fingerprint_matches_json_defaults(self):
+        """匿名 served model 可通过 DeepseekV4 + w4a8 指纹命中 JSON 的 V4-Pro 条目。"""
+        from core.start_args_compat import parse_launch_args  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as model_dir:
+            Path(model_dir, "config.json").write_text(
+                json.dumps({
+                    "architectures": ["DeepseekV4ForCausalLM"],
+                    "quantize": "w4a8",
+                }),
+                encoding="utf-8",
+            )
+            argv = [
+                "--engine", "vllm_ascend",
+                "--model-name", "served-model-anonymous",
+                "--model-path", model_dir,
+                "--device-count", "16",
+                "--trust-remote-code",
+                "--distributed",
+                "--nnodes", "2",
+                "--node-rank", "0",
+                "--node-ips", "10.0.0.1,10.0.0.2",
+                "--master-ip", "10.0.0.1",
+            ]
+            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
+                with patch.dict(os.environ, {"RANK_IP": "10.0.0.1"}, clear=True):
+                    launch_args = parse_launch_args(argv)
+                    merged = load_and_merge_configs(
+                        {"device": "ascend", "count": 16, "details": []},
+                        launch_args.to_namespace(),
+                    )
+
+        engine_config = merged["engine_config"]
+        self.assertEqual(engine_config.get("max_model_len"), 135000, engine_config)
+        self.assertEqual(engine_config.get("tensor_parallel_size"), 16, engine_config)
+        self.assertEqual(engine_config.get("data_parallel_size"), 2, engine_config)
+        self.assertEqual(engine_config.get("data_parallel_size_local"), 1, engine_config)
+        self.assertIn("additional_config", engine_config)
+        self.assertNotIn("speculative_config", engine_config)
 
     def test_deepseek_v4_pro_short_config_key_matches_w4a8_variant(self):
         """DeepSeek-V4-Pro 短配置键应覆盖 w4a8 等 Pro 变体。"""
@@ -874,8 +912,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertEqual(engine_config.get("max_model_len"), 135000, engine_config)
         self.assertEqual(engine_config.get("tensor_parallel_size"), 16, engine_config)
         self.assertEqual(engine_config.get("data_parallel_size"), 2, engine_config)
-        speculative_config = json.loads(engine_config["speculative_config"])
-        self.assertEqual(speculative_config["method"], "mtp")
+        self.assertNotIn("speculative_config", engine_config)
 
     def test_deepseek_v4_pro_flash_name_does_not_match_pro(self):
         """名称含 flash 严格视为 V4-Flash，不应进入 V4-Pro 分支。"""
