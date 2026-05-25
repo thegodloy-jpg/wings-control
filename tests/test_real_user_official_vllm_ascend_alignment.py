@@ -152,6 +152,14 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
             "export USE_MULTI_BLOCK_POOL=1",
             "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
             "export VLLM_ASCEND_ENABLE_FUSED_MC2=1",
+            "export HCCL_OP_EXPANSION_MODE=AIV",
+            "export HCCL_CONNECT_TIMEOUT=7200",
+            "export ASCEND_CONNECT_TIMEOUT=10000",
+            "export ASCEND_TRANSFER_TIMEOUT=10000",
+            "export VLLM_RPC_TIMEOUT=1800000",
+            "export ASCEND_BUFFER_POOL=4:8",
+            "export VLLM_USE_V1=1",
+            "export VLLM_VERSION=0.18.0",
             "exec vllm serve",
             "--safetensors-load-strategy prefetch",
             "--max-model-len 135000",
@@ -176,6 +184,40 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
             "\"num_speculative_tokens\": 1",
             "deepseek_mtp",
         ])
+        # V4-Pro 路径不应注入 ``--api-server-count``（仅 V4-Flash A3 才会）。
+        self.assertNotIn(
+            "--api-server-count",
+            script,
+            "V4-Pro should NOT inject --api-server-count (that is V4-Flash A3 only)",
+        )
+
+    def test_deepseek_v4_pro_a3_real_user_launch_matches_official_two_node_rank1(self):
+        """V4-Pro worker (node_rank=1) must inject --data-parallel-start-rank 1."""
+        script = self._build_script(
+            architecture="DeepseekV4ForCausalLM",
+            model_name="DeepSeek-V4-Pro-w4a8-mtp",
+            argv_extra=[
+                "--distributed",
+                "--nnodes", "2",
+                "--node-rank", "1",
+                "--node-ips", "10.0.0.1,10.0.0.2",
+                "--master-ip", "10.0.0.1",
+            ],
+            hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
+            env={"RANK_IP": "10.0.0.2", "WINGS_ASCEND_PLATFORM": "A3"},
+        )
+
+        self._assert_official_fragments(script, [
+            "export HCCL_BUFFSIZE=2048",
+            "export VLLM_USE_V1=1",
+            "export VLLM_RPC_TIMEOUT=1800000",
+            "--data-parallel-size 2",
+            "--data-parallel-size-local 1",
+            "--data-parallel-start-rank 1",
+            "--data-parallel-rpc-port 13399",
+            "--tensor-parallel-size 16",
+        ])
+        self.assertNotIn("--api-server-count", script)
 
     def test_glm47_w8a8_real_user_launch_matches_official_single_node(self):
         """Official GLM-4.7-W8A8 single-node example uses vllm serve + MTP."""

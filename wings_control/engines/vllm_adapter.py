@@ -1498,6 +1498,13 @@ def _build_deepseek_v4_pro_env(params: Dict[str, Any]) -> List[str]:
 
     与 V4-Flash A3 共用绝大多数变量，差异点：``HCCL_BUFFSIZE=2048``
     （Pro 长上下文/MoE 通信量更大，沿用 1024 会触发 HCCL OOM 风险）。
+
+    超时/缓冲池/V1 引擎相关变量与 vLLM-Ascend 官方 V4-Pro 双机参考脚本对齐：
+    - ``HCCL_CONNECT_TIMEOUT`` / ``ASCEND_CONNECT_TIMEOUT`` /
+      ``ASCEND_TRANSFER_TIMEOUT`` / ``VLLM_RPC_TIMEOUT``：双机冷启动 + 长上下文
+      首 token 时长偶发超过 30 分钟，沿用通用 1800/默认值会触发 HCCL/RPC timeout。
+    - ``ASCEND_BUFFER_POOL=4:8``：Pro 长上下文 KV 池化预留。
+    - ``VLLM_USE_V1=1`` / ``VLLM_VERSION``：强制走 V1 引擎路径与官方一致。
     """
     logger.info("[DeepSeek-V4-Pro] Set Ascend A3 environment variables")
     return [
@@ -1511,6 +1518,14 @@ def _build_deepseek_v4_pro_env(params: Dict[str, Any]) -> List[str]:
         "export HCCL_BUFFSIZE=2048",
         "export VLLM_ASCEND_ENABLE_FUSED_MC2=1",
         "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
+        "export HCCL_OP_EXPANSION_MODE=AIV",
+        "export HCCL_CONNECT_TIMEOUT=7200",
+        "export ASCEND_CONNECT_TIMEOUT=10000",
+        "export ASCEND_TRANSFER_TIMEOUT=10000",
+        "export VLLM_RPC_TIMEOUT=1800000",
+        "export ASCEND_BUFFER_POOL=4:8",
+        "export VLLM_USE_V1=1",
+        "export VLLM_VERSION=0.18.0",
     ]
 
 
