@@ -1808,6 +1808,11 @@ _DEEPSEEK_V4_FLASH_CAPACITY_DEFAULTS = {
     "gpu_memory_utilization": 0.9,
 }
 
+_DEEPSEEK_V4_FLASH_A3_CAPACITY_OVERRIDES = {
+    "max_model_len": 1024000,
+    "api_server_count": 1,
+}
+
 
 def _force_set_if_not_explicit(
     engine_config: Dict[str, Any],
@@ -1858,7 +1863,10 @@ def _apply_deepseek_v4_flash_capacity_and_topology(
     只填空值，是因为通用 vllm_default.json 已经带有非空默认（如 4096 上下文、
     EP=False），保留它们会让 Flash 的 MTP+MoE 路径在运行时崩溃。
     """
-    for key, value in _DEEPSEEK_V4_FLASH_CAPACITY_DEFAULTS.items():
+    capacity_defaults = dict(_DEEPSEEK_V4_FLASH_CAPACITY_DEFAULTS)
+    if platform == "a3":
+        capacity_defaults.update(_DEEPSEEK_V4_FLASH_A3_CAPACITY_OVERRIDES)
+    for key, value in capacity_defaults.items():
         _force_set_if_not_explicit(engine_config, explicit_keys, key, value)
     default_tp = _default_deepseek_v4_flash_tensor_parallel_size(platform)
     tp_size = _safe_int(engine_config.get("tensor_parallel_size")) or default_tp
@@ -1915,6 +1923,8 @@ def _apply_deepseek_v4_flash_engine_defaults(
         return
 
     platform = _resolve_deepseek_v4_flash_platform(params)
+    if platform == "a3" and not get_lmcache_env():
+        params["enable_speculative_decode"] = True
     _apply_deepseek_v4_flash_capacity_and_topology(params, engine_config, explicit_keys, platform)
     _apply_deepseek_v4_flash_runtime_defaults(engine_config, explicit_keys)
     _set_deepseek_v4_flash_additional_config(engine_config, explicit_keys, platform)
@@ -1941,6 +1951,10 @@ def _apply_deepseek_v4_pro_engine_defaults(
         return
     if not _is_deepseek_v4_pro_adapted_scope(params):
         return
+    params["enable_speculative_decode"] = True
+    if params.get("rpc_port") in (None, "", 13355, "13355"):
+        params["rpc_port"] = 13399
+    params["_force_data_parallel_start_rank_on_rank0"] = True
     if "data_parallel_start_rank" not in explicit_keys:
         engine_config["data_parallel_start_rank"] = _safe_int(params.get("node_rank")) or 0
 
@@ -2079,9 +2093,17 @@ def is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
 #   * dict 字段（additional_config / compilation_config）：
 #       做 **深合并**，用户给出的 sub-key 优先，未给出的 sub-key 注入
 _GLM47_W8A8_ENGINE_DEFAULTS: Dict[str, Any] = {
+    "use_vllm_serve": True,
+    "data_parallel_size": 2,
+    "tensor_parallel_size": 8,
     "enable_expert_parallel": True,
     "async_scheduling": True,
     "quantization": "ascend",
+    "seed": 1024,
+    "max_model_len": 133000,
+    "max_num_batched_tokens": 8192,
+    "max_num_seqs": 16,
+    "gpu_memory_utilization": 0.9,
     "additional_config": {
         # 官方 GLM-4.7-W8A8 强推荐
         "enable_shared_expert_dp": True,
@@ -2118,14 +2140,27 @@ def _merge_glm47_dict_default(existing: Any, default_val: Dict[str, Any]) -> Glm
     return Glm47DefaultMergeResult(None, "skipped_non_dict")
 
 
-def _apply_glm47_w8a8_default(engine_config: Dict[str, Any], key: str, default_val: Any) -> str:
+def _apply_glm47_w8a8_default(
+    engine_config: Dict[str, Any],
+    key: str,
+    default_val: Any,
+    explicit_keys: Optional[set] = None,
+    force_non_explicit: bool = False,
+) -> str:
     """Apply one GLM-4.7 W8A8 default while preserving explicit user values."""
+    explicit_keys = explicit_keys or set()
+    if key in explicit_keys:
+        return "skipped"
     existing = engine_config.get(key)
     if key in _GLM47_W8A8_DEEP_MERGE_KEYS and isinstance(default_val, dict):
         result = _merge_glm47_dict_default(existing, default_val)
         if result.value is not None:
             engine_config[key] = result.value
         return result.action
+    if force_non_explicit:
+        action = "overridden" if not _is_empty_engine_config_value(existing) else "injected"
+        engine_config[key] = default_val
+        return action
     if not _is_empty_engine_config_value(existing):
         return "skipped"
     engine_config[key] = default_val
@@ -2202,7 +2237,7 @@ def _log_glm47_w8a8_summary(
         logger.debug("[GLM-4.7-W8A8] Skip summary dump: %s", e)
 
 
-def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
+def _inject_glm47_w8a8_engine_config(params: Dict[str, Any], force_non_explicit: bool = False) -> None:
     """检测 GLM-4.7-W8A8 模型，**就地**向 engine_config 追加调优默认字段。
 
     设计要点：
@@ -2217,9 +2252,13 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any]) -> None:
         return
 
     engine_config = params.setdefault("engine_config", {})
+    params["enable_speculative_decode"] = True
+    explicit_keys = set(params.get("_explicit_cli_keys") or [])
     stats = Glm47InjectionStats()
     for key, default_val in _GLM47_W8A8_ENGINE_DEFAULTS.items():
-        action = _apply_glm47_w8a8_default(engine_config, key, default_val)
+        action = _apply_glm47_w8a8_default(
+            engine_config, key, default_val, explicit_keys, force_non_explicit,
+        )
         _record_glm47_default_action(engine_config, key, action, stats)
 
     _log_glm47_w8a8_summary(info, engine_config, stats)
@@ -2307,8 +2346,8 @@ def _resolve_mtp_method(model_architecture: str) -> str:
     mtp_methods_by_arch = {
         "DeepseekV3ForCausalLM": "mtp",
         "DeepseekV32ForCausalLM": "mtp",
-        # DeepSeek-V4 (Flash/Pro) 在 vLLM 0.18 沿用 ``mtp`` 推测解码方法名。
-        "DeepseekV4ForCausalLM": "mtp",
+        # DeepSeek-V4 (Flash/Pro) 在 vLLM-Ascend 官方模板中使用 deepseek_mtp。
+        "DeepseekV4ForCausalLM": "deepseek_mtp",
         "GlmMoeDsaForCausalLM": "deepseek_mtp",
         "Qwen3NextForCausalLM": "qwen3_next_mtp",
         "Glm4MoeForCausalLM": "glm4_moe_mtp",
@@ -2450,6 +2489,8 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
     if strategy == "mtp" or strategy.endswith("_mtp"):
         logger.info("[AdvFeature-SpecDecode] Architecture %s → MTP strategy (%s)",
                     model_info.model_architecture, strategy)
+        if model_info.model_architecture == "Glm4MoeForCausalLM" and _is_w8a8_quantize(model_info.model_quantize):
+            strategy = "mtp"
         speculative_config_temp.append(f'"method": "{strategy}"')
         # DeepSeek-V4-Pro / V4-Flash 官方推荐 num=1；默认不启用，只有
         # enable_speculative_decode=True 时由 launcher 合成。
@@ -2458,6 +2499,8 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
             speculative_config_temp.append('"num_speculative_tokens": 1')
         else:
             speculative_config_temp.append('"num_speculative_tokens": 3')
+        if model_info.model_architecture == "Glm4MoeForCausalLM" and _is_w8a8_quantize(model_info.model_quantize):
+            speculative_config_temp.append('"speculative_token_range": "256,512"')
         return _format_speculative_result(speculative_config_temp)
 
     return ""
@@ -2686,7 +2729,7 @@ def build_start_script(params: Dict[str, Any]) -> str:
         _force_kv_sparse_for_glm51_ascend(params, engine)
     sparse_args = _build_kv_sparse_cmd(params, engine) if should_emit_sparse else ""
     # GLM-4.7-W8A8 引擎参数注入（必须在 _build_vllm_cmd_parts 之前，且只动 W8A8 量化变体）
-    _inject_glm47_w8a8_engine_config(params)
+    _inject_glm47_w8a8_engine_config(params, force_non_explicit=True)
     cmd = _build_vllm_cmd_parts(params)
     is_distributed = params.get("distributed", False)
     nnodes = params.get("nnodes", 1)

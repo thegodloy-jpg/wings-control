@@ -302,6 +302,7 @@ def _build_dp_exec_command(
     dp_cmd: str,
     dp_rpc_port: str,
     topology: DpDeploymentTopology,
+    include_rank0_start_rank: bool = False,
 ) -> str:
     """根据 node_rank 构造 dp_deployment head/worker 的最终 exec 行。"""
     common = (
@@ -311,7 +312,12 @@ def _build_dp_exec_command(
         f" --data-parallel-size-local {topology.dp_size_local}"
     )
     if ctx.node_rank == 0:
-        return f"exec {dp_cmd}{common}"
+        rank0_start_rank = (
+            f" --data-parallel-start-rank {topology.dp_start_rank}"
+            if include_rank0_start_rank
+            else ""
+        )
+        return f"exec {dp_cmd}{common}{rank0_start_rank}"
     dp_cmd_headless = re.sub(r"\s*--port\s+(?:'[^']*'|\S+)", "", re.sub(r"\s*--host\s+(?:'[^']*'|\S+)", "", dp_cmd))
     return f"exec {dp_cmd_headless}{common} --headless --data-parallel-start-rank {topology.dp_start_rank}"
 
@@ -327,8 +333,9 @@ def _build_dp_deployment_commands(params: Dict[str, Any], ctx: DistScriptCtx, sp
     if vllm_adapter.should_append_auto_speculative_config(params):
         speculative_extra = vllm_adapter.build_speculative_cmd(params, ctx.engine)
     parts = _build_dp_env_commands(ctx.is_ascend, params)
+    include_rank0_start_rank = bool(params.get("_force_data_parallel_start_rank_on_rank0"))
     parts.append(_build_dp_exec_command(ctx, f"{dp_cmd}{speculative_extra}{sparse_args}",
-                                       dp_rpc_port, topology))
+                                       dp_rpc_port, topology, include_rank0_start_rank))
     return parts
 
 

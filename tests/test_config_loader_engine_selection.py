@@ -724,9 +724,10 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--tensor-parallel-size 16", exec_line)
         self.assertIn("--data-parallel-size 2", exec_line)
         self.assertIn("--data-parallel-size-local 1", exec_line)
-        # rank0 走 head 入口，没有 --headless / --data-parallel-start-rank
+        # rank0 仍走 head 入口，但 V4-Pro 官方 dp_deployment 模板显式携带 start_rank=0。
         self.assertNotIn("--headless", exec_line)
-        self.assertNotIn("--data-parallel-start-rank", exec_line)
+        self.assertIn("--data-parallel-start-rank 0", exec_line)
+        self.assertIn("--data-parallel-rpc-port 13399", exec_line)
         self.assertIn("--max-model-len 135000", exec_line)
         self.assertIn("--max-num-batched-tokens 4096", exec_line)
         self.assertIn("--enable-expert-parallel", exec_line)
@@ -738,8 +739,9 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--enable-auto-tool-choice", exec_line)
         self.assertIn("--reasoning-parser deepseek_v4", exec_line)
         self.assertIn("--safetensors-load-strategy prefetch", exec_line)
-        # spec 不再由 V4-Pro JSON/adapter 默认隐式注入。
-        self.assertNotIn("--speculative-config", exec_line)
+        self.assertIn("--speculative-config", exec_line)
+        self.assertIn('"method": "deepseek_mtp"', exec_line)
+        self.assertIn('"num_speculative_tokens": 1', exec_line)
         # ``enable_cpu_binding`` 必须是 bool（字符串 "true" 会被 _format_cli_arg
         # 当成普通字符串发出 'true'，与 vLLM 0.18 期望的 bool 不符）。
         self.assertIn("\"enable_cpu_binding\":true", exec_line)
