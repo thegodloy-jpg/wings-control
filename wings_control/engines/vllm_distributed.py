@@ -202,7 +202,7 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
     vllm_adapter = _import_vllm_adapter()
     dp_arch = vllm_adapter.get_deepseek_ascend_dp_model_architecture(params)
     is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
-    is_v4_pro_dp = vllm_adapter._is_deepseek_v4_pro_adapted_scope(params)
+    is_v4_pro_dp = vllm_adapter.is_deepseek_v4_pro_adapted_scope(params)
     if is_glm5_dp:
         omp_default, buffsize_default, connect_timeout_default = "1", "200", "1800"
     elif is_v4_pro_dp:

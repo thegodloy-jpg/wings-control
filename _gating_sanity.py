@@ -54,7 +54,7 @@ scope_cases = [
 ]
 ok2 = 0
 for params, expected, desc in scope_cases:
-    actual = va._is_deepseek_v4_pro_adapted_scope(params)
+    actual = va.is_deepseek_v4_pro_adapted_scope(params)
     status = "OK" if actual == expected else "FAIL"
     if actual == expected:
         ok2 += 1

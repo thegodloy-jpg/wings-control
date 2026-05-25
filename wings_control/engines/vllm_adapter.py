@@ -1327,7 +1327,7 @@ def _is_deepseek_v4_flash_params(
     return False
 
 
-def _is_deepseek_v4_pro_adapted_scope(
+def is_deepseek_v4_pro_adapted_scope(
     params: Dict[str, Any],
     model_info: Optional[ModelIdentifier] = None,
 ) -> bool:
@@ -1566,7 +1566,7 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
 
     if engine == "vllm_ascend" and _is_deepseek_v4_flash_params(params, model_info):
         return _build_deepseek_v4_flash_env(params)
-    if engine == "vllm_ascend" and _is_deepseek_v4_pro_adapted_scope(params, model_info):
+    if engine == "vllm_ascend" and is_deepseek_v4_pro_adapted_scope(params, model_info):
         return _build_deepseek_v4_pro_env(params)
 
     if engine == "vllm_ascend":
@@ -1964,7 +1964,7 @@ def _apply_deepseek_v4_pro_engine_defaults(
     """
     if params.get("engine") != "vllm_ascend":
         return
-    if not _is_deepseek_v4_pro_adapted_scope(params):
+    if not is_deepseek_v4_pro_adapted_scope(params):
         return
     # MTP (enable_speculative_decode) 由上层 CLI/ENV (--enable-speculative-decode)
     # 控制，本路径不再默认强制开启。模型权重虽含 MTP head，但 LMCache、调试场景
