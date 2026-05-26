@@ -171,6 +171,7 @@ _DEEPSEEK_ASCEND_DP_ARCHES = {
     # ``(nnodes, 1, node_rank)`` 默认分支，与 V4-Flash 双机 DP=4 / V4-Pro DP=2 不符。
     "DeepseekV4ForCausalLM",
     "GlmMoeDsaForCausalLM",
+    "KimiK25ForConditionalGeneration",
 }
 
 
@@ -181,6 +182,8 @@ def _default_deepseek_ascend_dp_tensor_parallel_size(
     """Return the recommended default TP size for Ascend DP architectures."""
     if not device_count or device_count <= 0:
         return None
+    if model_architecture == "KimiK25ForConditionalGeneration" and device_count in (8, 16):
+        return device_count
     if model_architecture == "DeepseekV32ForCausalLM" and device_count in (8, 16):
         return device_count
     if model_architecture == "DeepseekV3ForCausalLM":
@@ -343,18 +346,6 @@ def _build_vllm_ascend_extensions(params) -> List[str]:
     if params.get("engine_config", {}).get("use_kunlun_atb"):
         commands.append("export USE_KUNLUN_ATB=1")
         logger.info("kunlun atb is used")
-    model_info = ModelIdentifier(
-        params.get("model_name"),
-        params.get("model_path"),
-        params.get("model_type")
-    )
-    if model_info.model_architecture == "Qwen3NextForCausalLM":
-        commands.extend([
-            "set +u",
-            "source /usr/local/Ascend/ascend-toolkit/8.3.RC2/bisheng_toolkit/set_env.sh",
-            "set -u",
-        ])
-        logger.info("Qwen3NextForCausalLM will source bisheng_toolkit")
     return commands
 
 
@@ -1075,22 +1066,46 @@ def _build_llama_ascend_env(arch: str) -> List[str]:
     ]
 
 
+def _is_kimik25_distributed() -> bool:
+    """判断当前是否为 Kimi-K2.5 分布式部署场景。
+
+    通过 DISTRIBUTED 环境变量判断是否处于分布式模式：
+    - 分布式: 不开EP，且不注入 VLLM_ASCEND_ENABLE_FLASHCOMM1，
+              并新增 HCCL_INTRA_PCIE_ENABLE，HCCL_INTRA_ROCE_ENABLE
+    - 非分布式: 开EP，注入 VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+
+    Returns:
+        True 如果 DISTRIBUTED 环境变量为 true/1
+    """
+    engine_version = os.getenv("DISTRIBUTED", "")
+    
+    return engine_version in [True, "true", 1]
+
+
 def _build_kimik25_ascend_env(arch: str) -> List[str]:
     """构建 Kimi-K2.5 (KimiK25ForConditionalGeneration) Ascend 环境变量命令。
 
     注入 Kimi-K2.5 在 Ascend 上所需的环境变量：
     - HCCL_OP_EXPANSION_MODE=AIV: 启用 AIV 通信优化
-    - VLLM_ASCEND_ENABLE_MLAPO=1: 启用 MLAPO 优化
-    - VLLM_ASCEND_ENABLE_FLASHCOMM1=1: 启用 FlashComm 通信优化
-    - VLLM_ASCEND_BALANCE_SCHEDULING=1: 启用负载均衡调度
+    - PYTORCH_NPU_ALLOC_CONF=expandable_segments:True: 启用 NPU 内存扩展段
+    - OMP_PROC_BIND=false / OMP_NUM_THREADS=1: OpenMP 线程绑定与数量限制
     - TASK_QUEUE_ENABLE=1: 启用任务队列
     - HCCL_BUFFSIZE=1024: HCCL 缓冲区大小
-    - jemalloc 预加载: 使用 jemalloc 内存分配器优化性能
-    - CPU 性能模式: 设置 CPU 为性能模式
-    - 系统内核参数优化: 禁用 swap、NUMA 平衡，优化调度迁移成本
+    - VLLM_ASCEND_ENABLE_MLAPO=1: 启用 MLAPO 优化
+    - VLLM_ASCEND_BALANCE_SCHEDULING=1: 启用负载均衡调度
+    - VLLM_ENGINE_READY_TIMEOUT_S=3600: 引擎就绪超时时间
+
+    根据 DISTRIBUTED 是否分布式 决定分支注入：
+    - 非分布式: 注入 VLLM_ASCEND_ENABLE_FLASHCOMM1=1（FlashComm 通信优化）
+    - 分布式: 注入 HCCL_INTRA_PCIE_ENABLE=1 / HCCL_INTRA_ROCE_ENABLE=0
+              （HCCL 网卡绑定配置，不注入 FlashComm1）
     """
-    logger.info("[Kimi-K2.5] Set Ascend environment variables for %s", arch)
-    return [
+    is_distributed = _is_kimik25_distributed()
+    logger.info(
+        "[Kimi-K2.5] Set Ascend environment variables for %s (DISTRIBUTED=%s)",
+        arch, is_distributed,
+    )
+    env_vars = [
         "export HCCL_OP_EXPANSION_MODE=AIV",
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         "export OMP_PROC_BIND=false",
@@ -1098,10 +1113,15 @@ def _build_kimik25_ascend_env(arch: str) -> List[str]:
         "export TASK_QUEUE_ENABLE=1",
         "export HCCL_BUFFSIZE=1024",
         "export VLLM_ASCEND_ENABLE_MLAPO=1",
-        "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
         "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
         "export VLLM_ENGINE_READY_TIMEOUT_S=3600",
     ]
+    if not is_distributed:
+        env_vars.append("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1")
+    else:
+        env_vars.append("export HCCL_INTRA_PCIE_ENABLE=1")
+        env_vars.append("export HCCL_INTRA_ROCE_ENABLE=0")
+    return env_vars
 
 
 def _build_glm5_ascend_env(arch: str, platform: str = "") -> List[str]:
@@ -1708,6 +1728,13 @@ def _apply_generic_deepseek_ascend_dp_defaults(
         )
     if "enable_expert_parallel" not in explicit_keys:
         engine_config["enable_expert_parallel"] = True
+    
+    # KimiK25: EP 由 是否分布式决定。分布式：不开EP。 非分布式：开EP
+    if (model_architecture == "KimiK25ForConditionalGeneration"
+        and _is_kimik25_distributed()
+    ):
+        engine_config.pop("enable_expert_parallel")
+
     if "async_scheduling" not in explicit_keys:
         engine_config["async_scheduling"] = True
 
@@ -1816,19 +1843,6 @@ def _set_deepseek_v4_flash_additional_config(
     engine_config["additional_config"] = current
 
 
-_DEEPSEEK_V4_FLASH_CAPACITY_DEFAULTS = {
-    "max_model_len": 65536,
-    "max_num_batched_tokens": 8192,
-    "max_num_seqs": 16,
-    "gpu_memory_utilization": 0.9,
-}
-
-_DEEPSEEK_V4_FLASH_A3_CAPACITY_OVERRIDES = {
-    "max_model_len": 1024000,
-    "api_server_count": 1,
-}
-
-
 def _force_set_if_not_explicit(
     engine_config: Dict[str, Any],
     explicit_keys: set,
@@ -1872,17 +1886,16 @@ def _apply_deepseek_v4_flash_capacity_and_topology(
     explicit_keys: set,
     platform: str,
 ) -> None:
-    """V4-Flash 容量与 TP/DP 拓扑强制覆盖。
+    """V4-Flash TP/DP 拓扑与 A3 专属 CLI 字段。
 
-    这些默认值来自 vllm-ascend Flash W8A8 启动模板。之所以直接覆盖而不是
-    只填空值，是因为通用 vllm_default.json 已经带有非空默认（如 4096 上下文、
-    EP=False），保留它们会让 Flash 的 MTP+MoE 路径在运行时崩溃。
+    max_model_len / max_num_batched_tokens / max_num_seqs / gpu_memory_utilization
+    等共用默认由 ascend_default.json 的 DeepSeek-V4-Flash 条目承载，loader 已注入
+    engine_config，此处不再重复 force-set；A3 官方长上下文例外，需要默认提升到
+    1024000，并允许用户通过 CLI/配置显式覆盖。
     """
-    capacity_defaults = dict(_DEEPSEEK_V4_FLASH_CAPACITY_DEFAULTS)
     if platform == "a3":
-        capacity_defaults.update(_DEEPSEEK_V4_FLASH_A3_CAPACITY_OVERRIDES)
-    for key, value in capacity_defaults.items():
-        _force_set_if_not_explicit(engine_config, explicit_keys, key, value)
+        _force_set_if_not_explicit(engine_config, explicit_keys, "max_model_len", 1024000)
+        _force_set_if_not_explicit(engine_config, explicit_keys, "api_server_count", 1)
     default_tp = _default_deepseek_v4_flash_tensor_parallel_size(platform)
     tp_size = _safe_int(engine_config.get("tensor_parallel_size")) or default_tp
     # A2 保持 TP=8；A3 对齐 vllm-ascend 官方 Flash A3 模板，默认 TP=4/DP=4（16 卡）。

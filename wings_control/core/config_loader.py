@@ -2079,7 +2079,8 @@ def _handle_vllm_distributed(distributed_config: Dict[str, Any], cmd_params: Dic
     is_ascend_deepseek = (model_architecture in ["DeepseekV3ForCausalLM",
                                                   "DeepseekV32ForCausalLM",
                                                   "DeepseekV4ForCausalLM",
-                                                  "GlmMoeDsaForCausalLM"]
+                                                  "GlmMoeDsaForCausalLM",
+                                                  "KimiK25ForConditionalGeneration"]
                           and is_ascend)
 
     if pd_role in ['P', 'D'] and is_ascend:
@@ -2527,3 +2528,4 @@ def load_and_merge_configs(
     logger.info("Final engine_config keys: %s", list(engine_config.keys()))
     logger.info("Config merging completed.")
     return final_engine_params
+

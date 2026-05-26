@@ -270,6 +270,10 @@ class ScriptGenContext:
 
         p_hw = patch("core.wings_entry.detect_hardware", return_value=self._hardware)
         p_mi = patch("core.config_loader.ModelIdentifier", side_effect=_make_fake_model)
+        # vllm_adapter._build_model_env_commands 内部又 new 了一次 ModelIdentifier
+        # （非生产路径，仅本地 dry-run 在模型权重目录缺失时触发 arch=unknown_architecture）。
+        # 不补这一层 mock，V4-Flash gate 会被 arch 否决，专属 env 全部丢失。
+        p_mi2 = patch("engines.vllm_adapter.ModelIdentifier", side_effect=_make_fake_model)
         p_env = patch("core.wings_entry._build_env_overrides_preamble", return_value="")
         p_os = patch.dict(os.environ, env, clear=False)
         # 固定 get_local_ip 返回值，确保脚本中的 host/IP 不随机器变化
@@ -283,7 +287,7 @@ class ScriptGenContext:
             return_value="",
         )
 
-        self._patches = [p_hw, p_mi, p_env, p_os, p_ip1, p_ip2, p_perm, p_rank]
+        self._patches = [p_hw, p_mi, p_mi2, p_env, p_os, p_ip1, p_ip2, p_perm, p_rank]
         if self._mock_accel:
             self._patches.append(
                 patch("core.wings_entry._build_accel_preamble", return_value="")
