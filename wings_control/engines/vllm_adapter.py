@@ -1519,8 +1519,8 @@ def _build_deepseek_v4_pro_env(params: Dict[str, Any]) -> List[str]:
     与 vLLM-Ascend 官方 V4-Pro 双机参考脚本严格对齐。差异点：``HCCL_BUFFSIZE=2048``
     （Pro 长上下文/MoE 通信量更大，沿用 1024 会触发 HCCL OOM 风险）。
 
-    超时、缓冲池和 V1 引擎相关变量也必须保留；否则 DP env 的通用默认值会覆盖
-    V4-Pro 官方模板所需的最终运行环境。
+    jemalloc 预加载与 sysctl/cpufreq 性能调优仅对 Pro 生效（其它 Ascend 模型不下发），
+    避免在受限容器或不需要这些调优的部署形态上产生噪声/副作用。
     """
     logger.info("[DeepSeek-V4-Pro] Set Ascend A3 environment variables")
     return [
@@ -1542,6 +1542,25 @@ def _build_deepseek_v4_pro_env(params: Dict[str, Any]) -> List[str]:
         "export ASCEND_BUFFER_POOL=4:8",
         "export VLLM_USE_V1=1",
         "export VLLM_VERSION=0.18.0",
+        "# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏",
+        "# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338",
+        "if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then",
+        '    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"',
+        '    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"',
+        "fi",
+        "# V4-Pro 性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭",
+        "# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动",
+        'case "${WINGS_ASCEND_PERF_TUNING:-true}" in',
+        "    false|False|FALSE|0|no|No|NO)",
+        '        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"',
+        "        ;;",
+        "    *)",
+        "        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true",
+        "        sysctl -w vm.swappiness=0 || true",
+        "        sysctl -w kernel.numa_balancing=0 || true",
+        "        sysctl -w kernel.sched_migration_cost_ns=50000 || true",
+        "        ;;",
+        "esac",
     ]
 
 
