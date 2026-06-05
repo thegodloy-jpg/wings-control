@@ -85,6 +85,7 @@ from core.port_plan import PortPlan, derive_port_plan
 from core.start_args_compat import LaunchArgs, parse_launch_args
 from core.wings_entry import build_launcher_plan
 from utils.env_utils import get_local_ip, get_master_ip, get_node_ips
+from utils.model_utils import resolve_thinking_off_policy
 from utils.file_utils import safe_write_file, WriteOptions
 from utils.log_config import setup_root_logging, LOGGER_LAUNCHER
 from utils.noise_filter import install_noise_filters
@@ -324,6 +325,34 @@ def _restart_if_needed(proc: ManagedProc) -> None:
 
 # Prometheus multi-process metrics 共享目录，放在日志共享卷下
 _PROMETHEUS_MULTIPROC_DIR = "/var/log/wings/prometheus_multiproc"
+
+
+def _export_thinking_policy_env(launch_args: LaunchArgs) -> None:
+    """当 enable_reasoning 关闭时，把「关闭思考」策略导出到环境变量供 proxy 强制执行。
+
+    reasoning_parser 开关只控制服务端是否解析思维链；要「保证关闭后模型不触发思考」，
+    需在 proxy 层对 /v1/chat/completions 注入 chat_template_kwargs 强制非思考。
+    此处在父进程解析出策略并写入 WINGS_THINKING_OFF，子进程（proxy）经
+    os.environ.copy() 继承后据此执行（见 proxy/thinking_policy.py）。
+
+    取值：
+      - JSON（如 {"enable_thinking": false}）：强制注入的 chat_template_kwargs
+      - "always_on"：模型始终推理、无法关闭（proxy 仅告警）
+      - 不设置：enable_reasoning 开启，或模型本就不思考 → proxy 不介入
+    """
+    if getattr(launch_args, "enable_reasoning", False):
+        # reasoning 开启 → 不强制关闭思考，确保不残留旧值
+        os.environ.pop("WINGS_THINKING_OFF", None)
+        return
+    policy = resolve_thinking_off_policy(getattr(launch_args, "model_name", "") or "")
+    if policy is None:
+        os.environ.pop("WINGS_THINKING_OFF", None)
+        return
+    os.environ["WINGS_THINKING_OFF"] = (
+        policy if isinstance(policy, str) else json.dumps(policy)
+    )
+    logger.info("[thinking] enable_reasoning=false; proxy thinking-off policy=%s",
+                os.environ["WINGS_THINKING_OFF"])
 
 
 def _build_child_env(port_plan: PortPlan) -> dict[str, str]:
@@ -1231,6 +1260,8 @@ def run(argv: Sequence[str] | None = None) -> int:
       - worker:     Worker 等待模式（Worker API + 仅 health，等 Master 分发脚本）
     """
     launch_args = parse_launch_args(list(argv) if argv is not None else None)
+    # 解析「关闭思考」策略并导出到环境变量，供 proxy 子进程强制执行（见 proxy/thinking_policy.py）。
+    _export_thinking_policy_env(launch_args)
     port_plan = derive_port_plan(
         port=launch_args.port,
         enable_reason_proxy=settings.ENABLE_REASON_PROXY,

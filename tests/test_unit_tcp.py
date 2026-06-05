@@ -27,7 +27,11 @@ TESTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "wings_control"))
 sys.path.insert(0, str(TESTS_DIR))
 
-from core.config_loader import _set_function_call, load_and_merge_configs  # noqa: E402
+from core.config_loader import (  # noqa: E402
+    _set_function_call,
+    _set_reasoning_parser,
+    load_and_merge_configs,
+)
 from engines.mindie_adapter import _build_model_config_overrides  # noqa: E402
 from snapshot_framework import (  # noqa: E402
     FakeModelIdentifier,
@@ -47,9 +51,14 @@ def _load_engine_config(
     model_name: str = "test-model",
     model_path: str = "/models/test",
     enable_auto_tool_choice: bool = True,
+    enable_reasoning: bool = True,
     **overrides,
 ) -> dict:
-    """运行完整配置合并流程，返回 engine_config 子字典。"""
+    """运行完整配置合并流程，返回 engine_config 子字典。
+
+    reasoning_parser 已与 function call 解耦，由独立的 enable_reasoning 开关控制；
+    helper 默认开启 enable_reasoning，便于复用既有 reasoning_parser 映射断言。
+    """
     fake_model = FakeModelIdentifier(
         architecture=architecture,
         model_name=model_name,
@@ -64,6 +73,7 @@ def _load_engine_config(
         model_name=model_name,
         model_path=model_path,
         enable_auto_tool_choice=enable_auto_tool_choice,
+        enable_reasoning=enable_reasoning,
         **overrides,
     ).to_namespace()
 
@@ -182,13 +192,35 @@ class TestNvidiaVllmParserMapping(unittest.TestCase):
         self.assertEqual(ec.get("reasoning_parser"), "minimax_m2_append_think")
 
     # UT-TCP-14
-    def test_tcp14_fc_disabled_no_parser(self):
-        """enable_auto_tool_choice=False → 任何架构均无 tool_call_parser / reasoning_parser。"""
+    def test_tcp14_both_disabled_no_parser(self):
+        """FC 与 reasoning 均关闭 → 任何架构均无 tool_call_parser / reasoning_parser。"""
         ec = _load_engine_config(
             self.HW, "Qwen3ForCausalLM", "vllm",
             enable_auto_tool_choice=False,
+            enable_reasoning=False,
         )
         self.assertNotIn("tool_call_parser", ec)
+        self.assertNotIn("reasoning_parser", ec)
+
+    # UT-TCP-14b：reasoning_parser 与 function call 解耦
+    def test_tcp14b_fc_off_reasoning_on_keeps_only_reasoning(self):
+        """FC 关 + reasoning 开 → 无 tool_call_parser，但保留 reasoning_parser。"""
+        ec = _load_engine_config(
+            self.HW, "Qwen3ForCausalLM", "vllm",
+            enable_auto_tool_choice=False,
+            enable_reasoning=True,
+        )
+        self.assertNotIn("tool_call_parser", ec)
+        self.assertEqual(ec.get("reasoning_parser"), "qwen3")
+
+    def test_tcp14c_fc_on_reasoning_off_keeps_only_tool_call(self):
+        """FC 开 + reasoning 关 → 保留 tool_call_parser，剔除 reasoning_parser。"""
+        ec = _load_engine_config(
+            self.HW, "Qwen3ForCausalLM", "vllm",
+            enable_auto_tool_choice=True,
+            enable_reasoning=False,
+        )
+        self.assertEqual(ec.get("tool_call_parser"), "hermes")
         self.assertNotIn("reasoning_parser", ec)
 
 
@@ -232,14 +264,15 @@ class TestAscendVllmAscendParserMapping(unittest.TestCase):
         self.assertEqual(ec.get("tool_call_parser"), "deepseek_v31")
         self.assertEqual(ec.get("reasoning_parser"), "deepseek_v3")
 
-    def test_tcp17c_deepseekv31_w8a8_fc_disabled_no_parser(self):
-        """DeepSeek-V3.1-w8a8 未开启 FC 时，不应注入 tool_call_parser / reasoning_parser。"""
+    def test_tcp17c_deepseekv31_w8a8_both_disabled_no_parser(self):
+        """DeepSeek-V3.1-w8a8 FC 与 reasoning 均关闭时，不应注入任何 parser 字段。"""
         ec = _load_engine_config(
             self.HW,
             "DeepseekV3ForCausalLM",
             "vllm_ascend",
             model_name="DeepSeek-V3.1-w8a8",
             enable_auto_tool_choice=False,
+            enable_reasoning=False,
         )
 
         self.assertNotIn("enable_auto_tool_choice", ec)
@@ -268,19 +301,36 @@ class TestAscendVllmAscendParserMapping(unittest.TestCase):
 class TestNvidiaSglangParserMapping(unittest.TestCase):
     """UT-TCP-20~24：NVIDIA + SGLang 架构的 tool_call_parser 映射。
 
-    SGLang 不支持 reasoning_parser，全部断言其不存在。
+    SGLang 现已支持独立的 reasoning_parser 开关（与 vllm 复用 _set_reasoning_parser）；
+    取值按官方 SGLang 命名（连字符，如 deepseek-r1 / deepseek-v3 / minimax-append-think）。
     """
 
     HW = nvidia_hardware(device_count=8, memory_gb=80)
 
-    def _ec(self, arch, model_name="test-model"):
-        return _load_engine_config(self.HW, arch, "sglang", model_name=model_name)
+    def _ec(self, arch, model_name="test-model", **kw):
+        return _load_engine_config(self.HW, arch, "sglang", model_name=model_name, **kw)
 
     # UT-TCP-20
     def test_tcp20_deepseekv3_sglang_deepseekv3(self):
         """DeepseekV3ForCausalLM + sglang → deepseekv3（单词无下划线）。"""
         ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3")
         self.assertEqual(ec.get("tool_call_parser"), "deepseekv3")
+
+    def test_sglang_reasoning_parser_official_naming(self):
+        """SGLang reasoning_parser 按官方命名注入（DeepSeek-V3 → deepseek-r1）。"""
+        ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3")
+        self.assertEqual(ec.get("reasoning_parser"), "deepseek-r1")
+
+    def test_sglang_minimax_reasoning_parser(self):
+        """MiniMaxM2 + sglang → reasoning_parser=minimax-append-think。"""
+        ec = self._ec("MiniMaxM2ForCausalLM")
+        self.assertEqual(ec.get("reasoning_parser"), "minimax-append-think")
+
+    def test_sglang_reasoning_disabled_strips_parser(self):
+        """SGLang reasoning 开关关闭 → 不注入 reasoning_parser。"""
+        ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3",
+                      enable_reasoning=False)
+        self.assertNotIn("reasoning_parser", ec)
 
     def test_deepseekv31_sglang_h20_uses_deepseekv31(self):
         """DeepSeek-V3.1 + SGLang + H20 → deepseekv31。"""
@@ -432,19 +482,22 @@ class TestAscendMindieParserMapping(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestSetFunctionCallGating(unittest.TestCase):
-    """直接测试 _set_function_call 门控逻辑（与方案 UT-TCP 互补）。"""
+    """直接测试 _set_function_call 门控逻辑（仅管 tool_call_parser，不再触碰 reasoning_parser）。"""
 
-    def test_fc_enabled_with_parser_keeps_both(self):
+    def test_fc_enabled_with_parser_keeps_tool_call_and_ignores_reasoning(self):
         params = {"tool_call_parser": "hermes", "reasoning_parser": "qwen3"}
         _set_function_call(params, {"enable_auto_tool_choice": True})
         self.assertEqual(params.get("tool_call_parser"), "hermes")
+        self.assertIs(params.get("enable_auto_tool_choice"), True)
+        # reasoning_parser 不再由 FC 管理，保持原样
         self.assertEqual(params.get("reasoning_parser"), "qwen3")
 
-    def test_fc_disabled_removes_all_parser_fields(self):
+    def test_fc_disabled_removes_tool_call_but_keeps_reasoning(self):
+        """FC 关闭只移除 tool_call_parser；reasoning_parser 已解耦，保持原样。"""
         params = {"tool_call_parser": "deepseek_v3", "reasoning_parser": "deepseek_r1"}
         _set_function_call(params, {"enable_auto_tool_choice": False})
         self.assertNotIn("tool_call_parser", params)
-        self.assertNotIn("reasoning_parser", params)
+        self.assertEqual(params.get("reasoning_parser"), "deepseek_r1")
 
     def test_fc_enabled_no_parser_removes_flag(self):
         params = {}
@@ -452,10 +505,42 @@ class TestSetFunctionCallGating(unittest.TestCase):
         self.assertNotIn("tool_call_parser", params)
         self.assertNotIn("enable_auto_tool_choice", params)
 
-    def test_fc_not_passed_removes_parsers(self):
+    def test_fc_not_passed_removes_tool_call(self):
         params = {"tool_call_parser": "hermes"}
         _set_function_call(params, {})
         self.assertNotIn("tool_call_parser", params)
+
+
+class TestSetReasoningParserGating(unittest.TestCase):
+    """直接测试 _set_reasoning_parser 门控逻辑（独立于 function call）。"""
+
+    def test_reasoning_enabled_keeps_parser(self):
+        params = {"reasoning_parser": "qwen3"}
+        _set_reasoning_parser(params, {"enable_reasoning": True})
+        self.assertEqual(params.get("reasoning_parser"), "qwen3")
+
+    def test_reasoning_disabled_removes_parser(self):
+        params = {"reasoning_parser": "deepseek_r1"}
+        _set_reasoning_parser(params, {"enable_reasoning": False})
+        self.assertNotIn("reasoning_parser", params)
+
+    def test_reasoning_not_passed_removes_parser(self):
+        """未传 enable_reasoning（默认关闭）→ 剔除 reasoning_parser。"""
+        params = {"reasoning_parser": "glm45"}
+        _set_reasoning_parser(params, {})
+        self.assertNotIn("reasoning_parser", params)
+
+    def test_reasoning_enabled_no_config_is_noop(self):
+        """开关开启但配置无 reasoning_parser → 不凭空注入。"""
+        params = {"tool_call_parser": "hermes"}
+        _set_reasoning_parser(params, {"enable_reasoning": True})
+        self.assertNotIn("reasoning_parser", params)
+
+    def test_reasoning_independent_of_tool_call_parser(self):
+        """FC 未配置 tool_call_parser 也能单独保留 reasoning_parser。"""
+        params = {"reasoning_parser": "deepseek_r1"}
+        _set_reasoning_parser(params, {"enable_reasoning": True})
+        self.assertEqual(params.get("reasoning_parser"), "deepseek_r1")
 
 
 if __name__ == "__main__":

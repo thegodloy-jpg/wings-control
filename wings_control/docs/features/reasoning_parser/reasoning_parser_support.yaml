@@ -1,0 +1,192 @@
+# Reasoning Parser（思维解析）特性支持表
+#
+# 范围: vllm / vllm_ascend / sglang（不含 mindie —— mindie 不使用 reasoning_parser，思维解析为服务端内置）。
+#
+# 开关: reasoning_parser 已与 function call 解耦, 由独立开关 --enable-reasoning / ENABLE_REASONING 驱动
+#   （默认关闭, 见 config_loader._set_reasoning_parser）。
+#   - 开关开启 + 模型/引擎默认配置里有 reasoning_parser → 注入启动命令（启用思维解析）。
+#   - 开关开启 但配置无 reasoning_parser → 仅告警, 不凭空注入。
+#   - 开关关闭 → 移除 reasoning_parser, 启动命令不带思维解析（模型仍可能输出 <think>, 只是不被拆解）。
+#
+# 数据来源:
+#   - vllm / sglang : wings_control/config/defaults/nvidia_default.json
+#   - vllm_ascend   : wings_control/config/defaults/ascend_default.json
+#   - 模型清单      : wings_control/utils/model_utils.py (_LLM_MODELS)
+#
+# 每个架构含两块:
+#   config:  严格对齐 JSON 中【真实配了 reasoning_parser】的配置键 → 取值。这是来源真值。
+#   models:  model_utils 中该架构的【每个具体模型】→ 经匹配规则解析后, 各引擎实际生效的取值。
+#
+# models 取值约定:
+#   <string>  实际生效的 reasoning_parser
+#   null      解析到的配置键未配置 reasoning_parser（即该引擎下此模型不启用思维解析）
+#   省略某 engine 键 = 该引擎的配置文件中没有此架构段
+#
+# 命名差异(同模型不同引擎取值可能不同):
+#   - vllm / vllm_ascend 用下划线: deepseek_r1, deepseek_v3, deepseek_v4, minimax_m2_append_think
+#   - sglang 用连字符:           deepseek-r1, deepseek-v3, deepseek-v4, minimax-append-think
+#   - glm45 / qwen3 两边写法一致
+#
+# 匹配规则(config_loader._match_model_engine_config):
+#   - 模型名与配置键【精确匹配】(忽略大小写) 命中专属键; 否则回落 default。
+#   - 仅 deepseek-v4-flash / deepseek-v4-pro 两键按 token 子串匹配。
+#   ⚠️ vllm_ascend 的 DeepseekV3 default 段无 reasoning_parser, DeepseekV32 整个无 →
+#      昇腾上回落 default 的模型为 null（不启用）。
+#   ⚠️ nvidia(vllm/sglang) 上 DeepSeek-V3.1-w8a8 无精确键 → 回落 default → 得 default 值（非 V3.1 值）。
+
+feature: reasoning_parser
+field: reasoning_parser
+engines: [vllm, vllm_ascend, sglang]
+
+architectures:
+
+  - name: DeepseekV3ForCausalLM
+    config:
+      vllm:        {default: deepseek_r1, DeepSeek-R1: deepseek_r1, DeepSeek-V3.1: deepseek_v3}
+      vllm_ascend: {DeepSeek-R1-w8a8: deepseek_r1, DeepSeek-R1: deepseek_r1, DeepSeek-V3.1-w8a8: deepseek_v3, DeepSeek-V3.1: deepseek_v3}
+      sglang:      {default: deepseek-r1, DeepSeek-R1: deepseek-r1, DeepSeek-V3.1: deepseek-v3}
+    models:
+      DeepSeek-R1:                     {vllm: deepseek_r1, vllm_ascend: deepseek_r1, sglang: deepseek-r1}
+      DeepSeek-R1-0528:                {vllm: deepseek_r1, vllm_ascend: null,        sglang: deepseek-r1}
+      DeepSeek-V3:                     {vllm: deepseek_r1, vllm_ascend: null,        sglang: deepseek-r1}
+      DeepSeek-V3-0324:                {vllm: deepseek_r1, vllm_ascend: null,        sglang: deepseek-r1}
+      DeepSeek-V3.1:                   {vllm: deepseek_v3, vllm_ascend: deepseek_v3, sglang: deepseek-v3}
+      DeepSeek-Coder-V2-Instruct:      {vllm: deepseek_r1, vllm_ascend: null,        sglang: deepseek-r1}
+      DeepSeek-R1-w8a8:                {vllm: deepseek_r1, vllm_ascend: deepseek_r1, sglang: deepseek-r1}
+      DeepSeek-R1-0528-w8a8:           {vllm: deepseek_r1, vllm_ascend: null,        sglang: deepseek-r1}
+      DeepSeek-V3-w8a8:                {vllm: deepseek_r1, vllm_ascend: null,        sglang: deepseek-r1}
+      DeepSeek-V3-0324-w8a8:           {vllm: deepseek_r1, vllm_ascend: null,        sglang: deepseek-r1}
+      DeepSeek-V3.1-w8a8:              {vllm: deepseek_r1, vllm_ascend: deepseek_v3, sglang: deepseek-r1}
+      DeepSeek-Coder-V2-Instruct-w8a8: {vllm: deepseek_r1, vllm_ascend: null,        sglang: deepseek-r1}
+
+  - name: DeepseekV4ForCausalLM
+    config:
+      vllm:        {default: deepseek_v4, DeepSeek-V4-Flash: deepseek_v4}
+      vllm_ascend: {default: deepseek_v4, DeepSeek-V4-Flash: deepseek_v4, DeepSeek-V4-Pro: deepseek_v4}
+      sglang:      {default: deepseek-v4, DeepSeek-V4-Flash: deepseek-v4}
+    models:
+      DeepSeek-V4:                {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseek-v4}
+      DeepSeek-V4-w8a8:           {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseek-v4}
+      DeepSeek-V4-Flash:          {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseek-v4}
+      DeepSeek-V4-Flash-w8a8-mtp: {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseek-v4}
+      DeepSeek-V4-Pro:            {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseek-v4}
+      DeepSeek-V4-Pro-w4a8-mtp:   {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseek-v4}
+
+  - name: DeepseekV32ForCausalLM
+    config:
+      vllm:   {default: deepseek_r1}
+      sglang: {default: deepseek-v3}
+      # vllm_ascend: default 段无 reasoning_parser
+    models:
+      DeepSeek-V3.2:      {vllm: deepseek_r1, vllm_ascend: null, sglang: deepseek-v3}
+      DeepSeek-V3.2-Exp:  {vllm: deepseek_r1, vllm_ascend: null, sglang: deepseek-v3}
+      DeepSeek-V3.2-0715: {vllm: deepseek_r1, vllm_ascend: null, sglang: deepseek-v3}
+
+  - name: KimiK25ForConditionalGeneration
+    config:
+      vllm_ascend: {default: kimi_k2}
+    models:
+      Kimi-K2.5:      {vllm_ascend: kimi_k2}
+      Kimi-K2.5-w4a8: {vllm_ascend: kimi_k2}
+
+  - name: GlmMoeDsaForCausalLM
+    config:
+      vllm:        {default: glm45}
+      vllm_ascend: {default: glm45}
+      sglang:      {default: glm45}
+    models:
+      GLM-5:       {vllm: glm45, vllm_ascend: glm45, sglang: glm45}
+      GLM-5-FP8:   {vllm: glm45, vllm_ascend: glm45, sglang: glm45}
+      GLM-5-w4a8:  {vllm: glm45, vllm_ascend: glm45, sglang: glm45}
+      GLM-5.1:     {vllm: glm45, vllm_ascend: glm45, sglang: glm45}
+      GLM-5.1-FP8: {vllm: glm45, vllm_ascend: glm45, sglang: glm45}
+
+  - name: Glm4MoeForCausalLM
+    config:
+      vllm:        {default: glm45}
+      vllm_ascend: {default: glm45}
+      sglang:      {default: glm45}
+    models:
+      GLM-4.7:      {vllm: glm45, vllm_ascend: glm45, sglang: glm45}
+      GLM-4.7-w8a8: {vllm: glm45, vllm_ascend: glm45, sglang: glm45}
+
+  - name: Qwen3ForCausalLM
+    config:
+      vllm:        {default: qwen3}
+      vllm_ascend: {default: qwen3}
+      sglang:      {default: qwen3}
+    models:
+      Qwen3-32B: {vllm: qwen3, vllm_ascend: qwen3, sglang: qwen3}
+
+  - name: Qwen3MoeForCausalLM
+    config:
+      vllm:        {default: qwen3}
+      vllm_ascend: {default: qwen3, Qwen3-235B-A22B: qwen3}
+      sglang:      {default: qwen3}
+    models:
+      Qwen3-30B-A3B:   {vllm: qwen3, vllm_ascend: qwen3, sglang: qwen3}
+      Qwen3-235B-A22B: {vllm: qwen3, vllm_ascend: qwen3, sglang: qwen3}
+
+  - name: Qwen3NextForCausalLM
+    config:
+      vllm:        {default: qwen3}
+      vllm_ascend: {default: qwen3}
+      sglang:      {default: qwen3}
+    models:
+      Qwen3-Next-80B-A3B-Instruct: {vllm: qwen3, vllm_ascend: qwen3, sglang: qwen3}
+
+  - name: Qwen3_5ForConditionalGeneration
+    config:
+      vllm:        {default: qwen3}
+      vllm_ascend: {default: qwen3}
+      sglang:      {default: qwen3}
+    models:
+      Qwen3.5-27B:          {vllm: qwen3, vllm_ascend: qwen3, sglang: qwen3}
+      Qwen3.5-27B-Instruct: {vllm: qwen3, vllm_ascend: qwen3, sglang: qwen3}
+
+  - name: Qwen3_5MoeForConditionalGeneration
+    config:
+      vllm:        {default: qwen3}
+      vllm_ascend: {default: qwen3}
+      sglang:      {default: qwen3}
+    models:
+      Qwen3.5-397-A17B:      {vllm: qwen3, vllm_ascend: qwen3, sglang: qwen3}
+      Qwen3.5-397-A17B-w8a8: {vllm: qwen3, vllm_ascend: qwen3, sglang: qwen3}
+
+  - name: MiniMaxM2ForCausalLM
+    config:
+      vllm:        {default: minimax_m2_append_think}
+      vllm_ascend: {default: minimax_m2_append_think}
+      sglang:      {default: minimax-append-think}
+    models:
+      MiniMax-M2.5:      {vllm: minimax_m2_append_think, vllm_ascend: minimax_m2_append_think, sglang: minimax-append-think}
+      MiniMax-M2.5-w8a8: {vllm: minimax_m2_append_think, vllm_ascend: minimax_m2_append_think, sglang: minimax-append-think}
+      MiniMax-M2.7:      {vllm: minimax_m2_append_think, vllm_ascend: minimax_m2_append_think, sglang: minimax-append-think}
+      MiniMax-M2.7-w8a8: {vllm: minimax_m2_append_think, vllm_ascend: minimax_m2_append_think, sglang: minimax-append-think}
+
+  # ── 以下架构在三引擎 default 段均未配 reasoning_parser, 全部模型 null（不启用思维解析）──
+  # ⚠️ 其中 DeepSeek-R1-Distill-* 与 QwQ-32B 属推理型模型, 当前未配 reasoning_parser, 如需可补。
+  - name: Glm4ForCausalLM
+    config: {}
+    models:
+      GLM-4-9B-0414: {vllm: null, vllm_ascend: null, sglang: null}
+
+  - name: Qwen2ForCausalLM
+    config: {}
+    models:
+      DeepSeek-R1-Distill-Qwen-1.5B: {vllm: null, vllm_ascend: null, sglang: null}
+      DeepSeek-R1-Distill-Qwen-7B:   {vllm: null, vllm_ascend: null, sglang: null}
+      DeepSeek-R1-Distill-Qwen-14B:  {vllm: null, vllm_ascend: null, sglang: null}
+      DeepSeek-R1-Distill-Qwen-32B:  {vllm: null, vllm_ascend: null, sglang: null}
+      Qwen2.5-32B-Instruct:          {vllm: null, vllm_ascend: null, sglang: null}
+      QwQ-32B:                       {vllm: null, vllm_ascend: null, sglang: null}
+
+  - name: LlamaForCausalLM
+    config: {}
+    models:
+      LLaMA3-8B:                     {vllm: null, vllm_ascend: null, sglang: null}
+      LLaMA3.1-70B:                  {vllm: null, vllm_ascend: null, sglang: null}
+      LLaMA3.1-70B-Instruct:         {vllm: null, vllm_ascend: null, sglang: null}
+      Meta-Llama-3.1-70B-Instruct:   {vllm: null, vllm_ascend: null, sglang: null}
+      DeepSeek-R1-Distill-Llama-8B:  {vllm: null, vllm_ascend: null, sglang: null}
+      DeepSeek-R1-Distill-Llama-70B: {vllm: null, vllm_ascend: null, sglang: null}

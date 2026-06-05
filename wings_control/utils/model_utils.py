@@ -231,6 +231,57 @@ _RERANK_MODELS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Thinking-mode 关闭策略（供 --enable-reasoning 关闭时在 proxy 层强制非思考）
+# ---------------------------------------------------------------------------
+# 背景：reasoning_parser 只控制服务端是否「解析」思维链，控制不了模型「是否思考」。
+# 当 enable_reasoning=False 且要求「保证模型不触发思考」时，需在 proxy 注入
+# chat_template_kwargs 强制关闭思考。不同模型族的禁用键名不同（已对齐各家官方/vLLM）：
+#   - Qwen3 系列 / GLM-4.5+ MoE 系列 → {"enable_thinking": false}
+#   - DeepSeek-V3.1 / V3.2（混合推理）→ {"thinking": false}
+# 始终推理模型（R1 / QwQ / MiniMax-M2 等）无法关闭思考，返回 "always_on" 仅用于告警。
+
+# 始终推理（无法关闭思考）模型名片段，优先于混合推理判断。
+THINKING_ALWAYS_ON = "always_on"
+_ALWAYS_ON_THINKING_TOKENS = ("r1", "qwq", "minimax-m2")
+
+
+def resolve_thinking_off_policy(model_name: str):
+    """根据模型名解析「关闭思考」所需的 chat_template_kwargs。
+
+    Returns:
+        dict          : 强制关闭思考需注入/覆盖的 chat_template_kwargs（如 {"enable_thinking": False}）
+        "always_on"   : 该模型始终推理、无法关闭思考（仅告警）
+        None          : 该模型本就不思考，或无法识别 → 无需处理（不改写请求）
+
+    注：取值按模型名子串匹配（忽略大小写、下划线归一为连字符），与各家官方
+    chat 模板键名对齐；R1/蒸馏 R1/QwQ/MiniMax-M2 等优先判定为 always_on。
+    """
+    if not model_name:
+        return None
+    name = model_name.lower().replace("_", "-")
+
+    # 1) 始终推理模型优先（R1 / R1-Distill / QwQ / MiniMax-M2）
+    if any(tok in name for tok in _ALWAYS_ON_THINKING_TOKENS):
+        return THINKING_ALWAYS_ON
+
+    # 2) Qwen3 系列（混合推理）：enable_thinking
+    if "qwen3" in name:
+        return {"enable_thinking": False}
+
+    # 3) GLM MoE 混合推理（GLM-4.5/4.6/4.7/5/5.1）：enable_thinking
+    #    排除非思考的 glm-4-9b 等（不含 4.5+ 版本号则不匹配）。
+    if any(tag in name for tag in ("glm-4.5", "glm-4.6", "glm-4.7", "glm-5")):
+        return {"enable_thinking": False}
+
+    # 4) DeepSeek V3.1 / V3.2（混合推理）：thinking（注意键名不是 enable_thinking）
+    if "deepseek-v3" in name:
+        return {"thinking": False}
+
+    # 其余（Qwen2.5 / Llama / GLM-4-9B / embedding / rerank 等非思考模型）→ 无需处理
+    return None
+
+
 class ModelIdentifier:
     """模型元信息识别器，从模型目录的 config.json 提取架构、类型、量化信息。
 

@@ -285,6 +285,7 @@ def _build_engine_cmd_parameter(cmd_known_params: Dict[str, Any]) -> Dict[str, A
         "max_num_batched_tokens", "enable_prefix_caching", "enable_speculative_decode",
         "speculative_decode_model_path",
         "enable_rag_acc", "enable_auto_tool_choice",
+        "enable_reasoning",
         "enable_sparse",
     ]
     return {k: cmd_known_params.get(k) for k in keys}
@@ -361,6 +362,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     #
     _set_common_params(params, engine_cmd_parameter, engine_param_map_config_path)
     _set_function_call(params, engine_cmd_parameter)
+    _set_reasoning_parser(params, engine_cmd_parameter)
     _set_sequence_length(params, engine_cmd_parameter, model_type=ctx.get("model_type", "llm"))
     _set_parallelism_params(params, ctx)
     _set_kv_cache_config(params, ctx, model_info)
@@ -409,15 +411,18 @@ def _set_function_call(params, engine_cmd_parameter):
 
     触发源：CLI 显式开关 **或** model_deploy_config 中明确写 ``enable_auto_tool_choice: true``
     （后者在 V4-Pro/V4-Flash 等模型默认中已配置，避免用户重复指定）。
-    tool_call_parser / reasoning_parser 来自模型默认配置，不需要用户指定。
+    tool_call_parser 来自模型默认配置，不需要用户指定。
 
-    逻辑：
+    逻辑（仅管 tool_call_parser / enable_auto_tool_choice，不再触碰 reasoning_parser）：
       - 触发源开启 + 模型配置了 tool_call_parser
-        → 保留 tool_call_parser 和 reasoning_parser，注入 enable_auto_tool_choice
+        → 保留 tool_call_parser，注入 enable_auto_tool_choice
       - 触发源开启 但模型没有 tool_call_parser
-        → 移除 enable_auto_tool_choice 和 reasoning_parser，打印警告
+        → 移除 enable_auto_tool_choice，打印警告
       - 触发源未开启
-        → 移除 tool_call_parser 和 reasoning_parser，FC 不生效
+        → 移除 tool_call_parser 和 enable_auto_tool_choice，FC 不生效
+
+    注意：reasoning_parser 已与 function call 解耦，改由 _set_reasoning_parser
+    依据独立的 --enable-reasoning 开关单独控制。
     """
     user_wants_fc = (
         engine_cmd_parameter.get("enable_auto_tool_choice")
@@ -427,18 +432,39 @@ def _set_function_call(params, engine_cmd_parameter):
         if "tool_call_parser" in params:
             params["enable_auto_tool_choice"] = True
             logger.info(
-                "Function Call enabled (parser=%s, reasoning_parser=%s)",
+                "Function Call enabled (parser=%s)",
                 params["tool_call_parser"],
-                params.get("reasoning_parser", "N/A"),
             )
         else:
             params.pop("enable_auto_tool_choice", None)
-            params.pop("reasoning_parser", None)
             logger.warning("enable_auto_tool_choice is set but model has no tool_call_parser configured")
     else:
         params.pop("tool_call_parser", None)
-        params.pop("reasoning_parser", None)
         params.pop("enable_auto_tool_choice", None)
+
+
+def _set_reasoning_parser(params, engine_cmd_parameter):
+    """独立控制 reasoning_parser（思维链解析），与 function call 解耦。
+
+    由 --enable-reasoning / ENABLE_REASONING 开关单独驱动（默认关闭）：
+      - 开关开启 → 保留模型默认配置中已有的 reasoning_parser；
+        若模型/引擎配置未定义 reasoning_parser 则仅打印警告（不凭空注入）。
+      - 开关关闭 → 移除 reasoning_parser，启动命令不带思维链解析。
+
+    适用引擎：vllm / vllm_ascend / sglang（mindie 无 reasoning_parser 字段）。
+    本函数仅作用于配置解析后 params 中已存在的字段，因此实际行为依赖
+    nvidia_default.json / ascend_default.json 等默认配置中是否定义了
+    对应模型的 reasoning_parser。
+    """
+    if engine_cmd_parameter.get("enable_reasoning"):
+        if params.get("reasoning_parser"):
+            logger.info("Reasoning parser enabled (parser=%s)", params["reasoning_parser"])
+        else:
+            logger.warning(
+                "enable_reasoning is set but model/engine config has no reasoning_parser configured"
+            )
+    else:
+        params.pop("reasoning_parser", None)
 
 
 def _resolve_gpu_total_memory(ctx: Dict[str, Any]) -> float:
@@ -1298,24 +1324,24 @@ def _merge_sglang_params(params, ctx, engine_cmd_parameter):
         params['ep_size'] = params['tp_size']
 
     # 处理 tool parser 参数（function call 支持）
-    # 用户通过 enable_auto_tool_choice 统一触发，映射到 SGLang 的 tool_call_parser / reasoning_parser
-    # 两个字段均受 enable_auto_tool_choice 统一控制
+    # 用户通过 enable_auto_tool_choice 统一触发，映射到 SGLang 的 tool_call_parser。
+    # reasoning_parser 已与 function call 解耦，改由 _set_reasoning_parser 单独控制。
     params.pop("enable_tool_choice", None)  # 清理旧参数名
     user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
     if user_wants_fc:
         if "tool_call_parser" in params:
             logger.info(
-                "Function Call enabled for SGLang (parser=%s, reasoning_parser=%s)",
+                "Function Call enabled for SGLang (parser=%s)",
                 params["tool_call_parser"],
-                params.get("reasoning_parser", "N/A"),
             )
         else:
-            params.pop("reasoning_parser", None)
             logger.warning("enable_auto_tool_choice is set but SGLang model has no tool_call_parser configured")
     else:
         params.pop("tool_call_parser", None)
-        params.pop("reasoning_parser", None)
         logger.info("Function Call not enabled for SGLang")
+
+    # reasoning_parser 独立开关（与 vllm 路径复用同一处理）
+    _set_reasoning_parser(params, engine_cmd_parameter)
 
     return params
 

@@ -407,12 +407,11 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
         self.assertIn("--async-scheduling", exec_line)
-        # GLM-5/5.1 on vllm_ascend A2（默认 platform）会深合并 additional_config 默认值：
-        # 用户传入的 fuse_muls_add=true 被保留，multistream_overlap_shared_expert 与
-        # ascend_compilation_config.enable_npugraph_ex 由 _apply_glm5_ascend_engine_defaults 补齐。
+        # GLM-5/5.1 additional_config 默认注入已移除：仅保留配置文件/用户显式传入的
+        # fuse_muls_add，不再补齐 multistream_overlap_shared_expert / ascend_compilation_config。
         self.assertIn("--additional-config '{\"fuse_muls_add\":true", exec_line)
-        self.assertIn("\"multistream_overlap_shared_expert\":true", exec_line)
-        self.assertIn("\"ascend_compilation_config\":{\"enable_npugraph_ex\":true}", exec_line)
+        self.assertNotIn("\"multistream_overlap_shared_expert\"", exec_line)
+        self.assertNotIn("\"ascend_compilation_config\"", exec_line)
         self.assertIn(
             "--speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\"}'",
             exec_line,
@@ -450,6 +449,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--port", "18000",
                 "--device-count", str(device_count),
                 "--trust-remote-code",
+                # 官方 V4-Flash 启动命令带 --reasoning-parser，需显式开启 reasoning 开关。
+                "--enable-reasoning",
             ]
             if extra_argv:
                 argv.extend(extra_argv)
@@ -695,6 +696,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--port", "18000",
                 "--device-count", str(device_count),
                 "--trust-remote-code",
+                # 官方 V4-Pro 启动命令带 --reasoning-parser，需显式开启 reasoning 开关。
+                "--enable-reasoning",
                 "--distributed",
                 "--nnodes", str(nnodes),
                 "--node-rank", str(node_rank),

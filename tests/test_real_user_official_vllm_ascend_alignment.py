@@ -85,6 +85,8 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
             model_name="DeepSeek-V4-Flash-w8a8-mtp",
             hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
             env={"WINGS_ASCEND_PLATFORM": "A3"},
+            # 官方 V4-Flash 启动命令带 --reasoning-parser，需显式开启 reasoning 开关。
+            argv_extra=["--enable-reasoning"],
         )
 
         self._assert_official_fragments(script, [
@@ -142,6 +144,7 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
                 "--node-ips", "10.0.0.1,10.0.0.2",
                 "--master-ip", "10.0.0.1",
                 "--enable-speculative-decode",
+                "--enable-reasoning",
             ],
             hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
             env={"RANK_IP": "10.0.0.1", "WINGS_ASCEND_PLATFORM": "A3"},
@@ -208,6 +211,7 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
                 "--node-ips", "10.0.0.1,10.0.0.2",
                 "--master-ip", "10.0.0.1",
                 "--enable-speculative-decode",
+                "--enable-reasoning",
             ],
             hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
             env={"RANK_IP": "10.0.0.2", "WINGS_ASCEND_PLATFORM": "A3"},

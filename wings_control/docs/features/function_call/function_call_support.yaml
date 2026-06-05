@@ -1,0 +1,194 @@
+# Function Call（工具调用）特性支持表
+#
+# 数据来源:
+#   - vllm / sglang        : wings_control/config/defaults/nvidia_default.json
+#   - vllm_ascend / mindie : wings_control/config/defaults/ascend_default.json
+#   - 模型清单             : wings_control/utils/model_utils.py (_LLM_MODELS)
+#
+# 每个架构含两块:
+#   config:  严格对齐 JSON 的配置键（"default" 或具体模型名变体）→ tool_call_parser 取值。这是来源真值。
+#   models:  model_utils 中该架构的【每个具体模型】→ 经匹配规则解析后, 各引擎实际生效的取值。
+#
+# models 取值约定:
+#   <string>  实际生效的 tool_call_parser
+#   null      解析到的配置键未配置 tool_call_parser（即该引擎不支持此模型 FC）
+#   省略某 engine 键 = 该引擎的配置文件中没有此架构段
+#
+# 匹配规则(config_loader._match_model_engine_config):
+#   - 模型名与配置键【精确匹配】(忽略大小写) 命中专属键; 否则回落 default。
+#   - 仅 deepseek-v4-flash / deepseek-v4-pro 两键按 token 子串匹配(边界符 -_./:)。
+#   ⚠️ 故 nvidia(vllm/sglang) 上 DeepSeek-V3.1-w8a8 无精确键 → 回落 default → 得 deepseek_v3（而非 deepseek_v31）。
+#   - 各 engine 取值同时代表单机与 _distributed 版。mindie 取值为 mindie_tool_call_parser。
+#
+# 触发开关: FC 由 --enable-auto-tool-choice / ENABLE_AUTO_TOOL_CHOICE（或模型默认配置里写死
+#   enable_auto_tool_choice: true）触发, 仅控制 tool_call_parser / enable_auto_tool_choice。
+#   reasoning_parser 已与 FC 解耦, 由独立的 --enable-reasoning 开关控制, 见
+#   ../reasoning_parser/reasoning_parser_support.yaml。
+
+feature: function_call
+field: tool_call_parser
+engines: [vllm, vllm_ascend, sglang, mindie]
+
+architectures:
+
+  - name: DeepseekV3ForCausalLM
+    config:
+      vllm:        {default: deepseek_v3, DeepSeek-R1: deepseek_v3, DeepSeek-V3.1: deepseek_v31}
+      sglang:      {default: deepseekv3, DeepSeek-R1: deepseekv3, DeepSeek-V3.1: deepseekv31}
+      vllm_ascend: {default: deepseek_v3, DeepSeek-R1-w8a8: deepseek_v3, DeepSeek-R1: deepseek_v3, DeepSeek-V3.1-w8a8: deepseek_v31, DeepSeek-V3.1: deepseek_v31}
+      mindie:      {default: deepseekv3, DeepSeek-R1-w8a8: deepseekv3, DeepSeek-R1: deepseekv3, DeepSeek-V3.1-w8a8: deepseek_v31, DeepSeek-V3.1: deepseek_v31}
+    models:
+      DeepSeek-R1:                    {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-R1-0528:               {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-V3:                    {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-V3-0324:               {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-V3.1:                  {vllm: deepseek_v31, vllm_ascend: deepseek_v31, sglang: deepseekv31, mindie: deepseek_v31}
+      DeepSeek-Coder-V2-Instruct:     {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-R1-w8a8:               {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-R1-0528-w8a8:          {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-V3-w8a8:               {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-V3-0324-w8a8:          {vllm: deepseek_v3,  vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+      DeepSeek-V3.1-w8a8:             {vllm: deepseek_v3,  vllm_ascend: deepseek_v31, sglang: deepseekv3,  mindie: deepseek_v31}
+      DeepSeek-Coder-V2-Instruct-w8a8: {vllm: deepseek_v3, vllm_ascend: deepseek_v3,  sglang: deepseekv3,  mindie: deepseekv3}
+
+  - name: DeepseekV4ForCausalLM
+    config:
+      vllm:        {default: deepseek_v4, DeepSeek-V4-Flash: deepseek_v4}
+      sglang:      {default: deepseekv3, DeepSeek-V4-Flash: deepseekv4}
+      vllm_ascend: {default: deepseek_v4, DeepSeek-V4-Flash: deepseek_v4, DeepSeek-V4-Pro: deepseek_v4}
+      mindie:      {default: deepseek_v4}
+    models:
+      DeepSeek-V4:                {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseekv3, mindie: deepseek_v4}
+      DeepSeek-V4-w8a8:           {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseekv3, mindie: deepseek_v4}
+      DeepSeek-V4-Flash:          {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseekv4, mindie: deepseek_v4}
+      DeepSeek-V4-Flash-w8a8-mtp: {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseekv4, mindie: deepseek_v4}
+      DeepSeek-V4-Pro:            {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseekv3, mindie: deepseek_v4}
+      DeepSeek-V4-Pro-w4a8-mtp:   {vllm: deepseek_v4, vllm_ascend: deepseek_v4, sglang: deepseekv3, mindie: deepseek_v4}
+
+  - name: DeepseekV32ForCausalLM
+    config:
+      vllm:        {default: deepseek_v32}
+      sglang:      {default: deepseekv32}
+      vllm_ascend: {default: deepseek_v32}
+    models:
+      DeepSeek-V3.2:      {vllm: deepseek_v32, vllm_ascend: deepseek_v32, sglang: deepseekv32}
+      DeepSeek-V3.2-Exp:  {vllm: deepseek_v32, vllm_ascend: deepseek_v32, sglang: deepseekv32}
+      DeepSeek-V3.2-0715: {vllm: deepseek_v32, vllm_ascend: deepseek_v32, sglang: deepseekv32}
+
+  - name: KimiK25ForConditionalGeneration
+    config:
+      vllm_ascend: {default: kimi_k2}
+    models:
+      Kimi-K2.5:      {vllm_ascend: kimi_k2}
+      Kimi-K2.5-w4a8: {vllm_ascend: kimi_k2}
+
+  - name: Glm4ForCausalLM
+    config:
+      vllm:        {default: hermes}
+      sglang:      {default: glm}
+      vllm_ascend: {default: hermes}
+    models:
+      GLM-4-9B-0414: {vllm: hermes, vllm_ascend: hermes, sglang: glm}
+
+  - name: GlmMoeDsaForCausalLM
+    config:
+      vllm:        {default: glm47}
+      sglang:      {default: glm}
+      vllm_ascend: {default: glm47}
+    models:
+      GLM-5:      {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5-FP8:  {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5-w4a8: {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5.1:    {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5.1-FP8: {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+
+  - name: Glm4MoeForCausalLM
+    config:
+      vllm:        {default: glm47}
+      sglang:      {default: glm}
+      vllm_ascend: {default: glm47}
+    models:
+      GLM-4.7:      {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-4.7-w8a8: {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+
+  - name: Qwen2ForCausalLM
+    config:
+      vllm:        {default: hermes}
+      sglang:      {default: qwen25}
+      vllm_ascend: {default: hermes}
+      mindie:      {default: qwen2_5}
+    models:
+      DeepSeek-R1-Distill-Qwen-1.5B: {vllm: hermes, vllm_ascend: hermes, sglang: qwen25, mindie: qwen2_5}
+      DeepSeek-R1-Distill-Qwen-7B:   {vllm: hermes, vllm_ascend: hermes, sglang: qwen25, mindie: qwen2_5}
+      DeepSeek-R1-Distill-Qwen-14B:  {vllm: hermes, vllm_ascend: hermes, sglang: qwen25, mindie: qwen2_5}
+      DeepSeek-R1-Distill-Qwen-32B:  {vllm: hermes, vllm_ascend: hermes, sglang: qwen25, mindie: qwen2_5}
+      Qwen2.5-32B-Instruct:          {vllm: hermes, vllm_ascend: hermes, sglang: qwen25, mindie: qwen2_5}
+      QwQ-32B:                       {vllm: hermes, vllm_ascend: hermes, sglang: qwen25, mindie: qwen2_5}
+
+  - name: Qwen3ForCausalLM
+    config:
+      vllm:        {default: hermes}
+      sglang:      {default: qwen}
+      vllm_ascend: {default: hermes}
+      mindie:      {default: qwen3}
+    models:
+      Qwen3-32B: {vllm: hermes, vllm_ascend: hermes, sglang: qwen, mindie: qwen3}
+
+  - name: Qwen3MoeForCausalLM
+    config:
+      vllm:        {default: hermes, Qwen3-Coder-480B-A35B-Instruct: qwen3_xml, Qwen3-Coder-30B-A3B-Instruct: qwen3_xml}
+      sglang:      {default: qwen, Qwen3-Coder-480B-A35B-Instruct: qwen3_coder, Qwen3-Coder-30B-A3B-Instruct: qwen3_coder}
+      vllm_ascend: {default: hermes, Qwen3-235B-A22B: hermes}
+      mindie:      {default: qwen3, Qwen3-235B-A22B: qwen3}
+    models:
+      Qwen3-30B-A3B:   {vllm: hermes, vllm_ascend: hermes, sglang: qwen, mindie: qwen3}
+      Qwen3-235B-A22B: {vllm: hermes, vllm_ascend: hermes, sglang: qwen, mindie: qwen3}
+
+  - name: Qwen3NextForCausalLM
+    config:
+      vllm:        {default: hermes}
+      sglang:      {default: qwen}
+      vllm_ascend: {default: hermes}
+    models:
+      Qwen3-Next-80B-A3B-Instruct: {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
+
+  - name: Qwen3_5ForConditionalGeneration
+    config:
+      vllm:        {default: hermes}
+      sglang:      {default: qwen}
+      vllm_ascend: {default: hermes}
+    models:
+      Qwen3.5-27B:          {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
+      Qwen3.5-27B-Instruct: {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
+
+  - name: Qwen3_5MoeForConditionalGeneration
+    config:
+      vllm:        {default: hermes}
+      sglang:      {default: qwen}
+      vllm_ascend: {default: hermes}
+    models:
+      Qwen3.5-397-A17B:      {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
+      Qwen3.5-397-A17B-w8a8: {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
+
+  - name: MiniMaxM2ForCausalLM
+    config:
+      vllm:        {default: minimax_m2}
+      vllm_ascend: {default: minimax_m2}
+    models:
+      MiniMax-M2.5:      {vllm: minimax_m2, vllm_ascend: minimax_m2}
+      MiniMax-M2.5-w8a8: {vllm: minimax_m2, vllm_ascend: minimax_m2}
+      MiniMax-M2.7:      {vllm: minimax_m2, vllm_ascend: minimax_m2}
+      MiniMax-M2.7-w8a8: {vllm: minimax_m2, vllm_ascend: minimax_m2}
+
+  - name: LlamaForCausalLM
+    config:
+      vllm:        {default: llama3_json}
+      sglang:      {default: llama3}
+      vllm_ascend: {default: llama3_json}
+    models:
+      LLaMA3-8B:                    {vllm: llama3_json, vllm_ascend: llama3_json, sglang: llama3}
+      LLaMA3.1-70B:                 {vllm: llama3_json, vllm_ascend: llama3_json, sglang: llama3}
+      LLaMA3.1-70B-Instruct:        {vllm: llama3_json, vllm_ascend: llama3_json, sglang: llama3}
+      Meta-Llama-3.1-70B-Instruct:  {vllm: llama3_json, vllm_ascend: llama3_json, sglang: llama3}
+      DeepSeek-R1-Distill-Llama-8B: {vllm: llama3_json, vllm_ascend: llama3_json, sglang: llama3}
+      DeepSeek-R1-Distill-Llama-70B: {vllm: llama3_json, vllm_ascend: llama3_json, sglang: llama3}

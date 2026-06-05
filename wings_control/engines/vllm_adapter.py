@@ -1739,8 +1739,6 @@ def _apply_generic_deepseek_ascend_dp_defaults(
             "[DeepSeek Ascend DP] enabling expert parallel to align with "
             "vLLM-Ascend DeepSeek multi-node launch examples."
         )
-    if "enable_expert_parallel" not in explicit_keys:
-        engine_config["enable_expert_parallel"] = True
     
     # KimiK25: EP 由 是否分布式决定。分布式：不开EP。 非分布式：开EP
     if (model_architecture == "KimiK25ForConditionalGeneration"
@@ -1748,8 +1746,6 @@ def _apply_generic_deepseek_ascend_dp_defaults(
     ):
         engine_config.pop("enable_expert_parallel")
 
-    if "async_scheduling" not in explicit_keys:
-        engine_config["async_scheduling"] = True
 
 
 def _writeback_dp_topology_to_params(params: Dict[str, Any], engine_config: Dict[str, Any]) -> None:
@@ -1783,7 +1779,6 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     _apply_deepseek_v4_pro_engine_defaults(params, engine_config, explicit_keys)
     if _is_deepseek_v4_cpu_offload_params(params):
         _apply_deepseek_v4_cpu_offload(engine_config, explicit_keys)
-    _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
     _apply_generic_deepseek_ascend_dp_defaults(params, engine_config, explicit_keys)
 
     removed_task = engine_config.pop("task", None)
@@ -1933,6 +1928,11 @@ def _apply_deepseek_v4_flash_runtime_defaults(
 
     这里仅处理与 vLLM CLI 直接对应的运行参数；平台相关 additional_config
     和 MTP/compile JSON 放在上层入口集中合并，便于保护用户显式配置。
+
+    注意：reasoning_parser 不在此处注入。它由 config_loader._set_reasoning_parser
+    依据 --enable-reasoning 开关统一裁决（V4-Flash 的默认值已写在
+    ascend_default.json 的 DeepSeek-V4-Flash 条目中），adapter 不再重复注入，
+    以免绕过开关。
     """
     _set_if_not_explicit(engine_config, explicit_keys, "quantization", "ascend")
     _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
@@ -1944,7 +1944,6 @@ def _apply_deepseek_v4_flash_runtime_defaults(
     _set_if_not_explicit(engine_config, explicit_keys, "tokenizer_mode", "deepseek_v4")
     _set_if_not_explicit(engine_config, explicit_keys, "tool_call_parser", "deepseek_v4")
     _force_set_if_not_explicit(engine_config, explicit_keys, "enable_auto_tool_choice", True)
-    _set_if_not_explicit(engine_config, explicit_keys, "reasoning_parser", "deepseek_v4")
 
 
 def _apply_deepseek_v4_flash_engine_defaults(
@@ -2041,82 +2040,6 @@ def _apply_deepseek_v4_cpu_offload(
             "cpu_swap_space_gb": cpu_swap_gb,
         },
     }
-
-
-_GLM5_A2_ADDITIONAL_CONFIG: Dict[str, Any] = {
-    "fuse_muls_add": True,
-    "multistream_overlap_shared_expert": True,
-    "ascend_compilation_config": {"enable_npugraph_ex": True},
-}
-
-
-def _apply_glm5_ascend_engine_defaults(
-    params: Dict[str, Any],
-    engine_config: Dict[str, Any],
-    explicit_keys: set,
-) -> None:
-    """[GLM-5/5.1 Ascend] 注入 ``additional_config`` 三键默认值，并强制关闭 EP。
-
-    依据 vllm-ascend 官方 W8A8 双机命令（A2/A3 一致）：
-      * 传 ``--additional-config '{fuse_muls_add,
-        multistream_overlap_shared_expert, ascend_compilation_config.enable_npugraph_ex}'``
-
-    行为：A2 / A3 一致；深合并默认三键，用户显式声明的键值保留。
-
-    EP 强制关闭：GLM-5.1 ascend 路径无论用户/上层配置是否开 ``enable_expert_parallel``，
-    一律强制关闭。原因：参考社区 W8A8 单机/双机启动命令均无 ``--enable-expert-parallel``，
-    实际生产中开启 EP 会改变路由 / 通信路径，与当前 vllm-ascend image 的 ACL graph 路径
-    存在已知不稳定（参见 vllm-ascend#8015 类问题）。
-    """
-    if params.get("engine") != "vllm_ascend":
-        return
-    try:
-        model_info = ModelIdentifier(
-            params.get("model_name"),
-            params.get("model_path"),
-            params.get("model_type"),
-        )
-    except Exception as exc:
-        logger.debug(
-            "[GLM-5/5.1 Ascend] Skip additional_config defaults; "
-            "ModelIdentifier failed: %s", exc,
-        )
-        return
-    if model_info.model_architecture != "GlmMoeDsaForCausalLM":
-        return
-
-    _merge_dict_default_if_not_explicit(
-        engine_config,
-        explicit_keys,
-        "additional_config",
-        _GLM5_A2_ADDITIONAL_CONFIG,
-    )
-    logger.info(
-        "[GLM-5/5.1 Ascend] ensure additional_config defaults applied",
-    )
-
-    # EP 强制关闭：范围与 KV 稀疏 force-on 严格一致（仅 GLM-5.1，覆盖
-    # 910B/910C × 单机/双机 四象限）。GLM-5.0（非 5.1）的 GlmMoeDsa 走
-    # 上面的 additional_config 注入但不强制 EP/sparse，保留用户原始配置。
-    if not is_glm51_ascend_kvsparse_tmp_scope(
-        model_info, params.get("engine"),
-        model_name=params.get("model_name"),
-        model_path=params.get("model_path"),
-    ):
-        return
-    prev_ep = engine_config.get("enable_expert_parallel")
-    engine_config["enable_expert_parallel"] = False
-    if prev_ep is True:
-        if "enable_expert_parallel" in explicit_keys:
-            logger.warning(
-                "[GLM5.1-Ascend-Tmp] --enable-expert-parallel forcibly disabled; "
-                "GLM-5.1 ascend path requires EP off (overriding user request).",
-            )
-        else:
-            logger.info(
-                "[GLM5.1-Ascend-Tmp] enable_expert_parallel forcibly disabled "
-                "(was True from defaults).",
-            )
 
 
 def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
@@ -2537,8 +2460,17 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         speculative_config_temp.append(f'"method": "{strategy}"')
         # DeepSeek-V4-Pro / V4-Flash 官方推荐 num=1；默认不启用，只有
         # enable_speculative_decode=True 时由 launcher 合成。
+        # GLM-5.1（GlmMoeDsaForCausalLM 变体）同样官方推荐 num=1。
         # 其余 MTP（GLM-4.7 / GLM-5 / 通用 DeepSeek-V3）保持 num=3。
-        if _is_deepseek_v4_pro_params(params) or _is_deepseek_v4_flash_params(params):
+        if (
+            _is_deepseek_v4_pro_params(params)
+            or _is_deepseek_v4_flash_params(params)
+            or is_glm_moe_dsa_glm51(
+                model_info,
+                model_name=params.get("model_name"),
+                model_path=params.get("model_path"),
+            )
+        ):
             speculative_config_temp.append('"num_speculative_tokens": 1')
         else:
             speculative_config_temp.append('"num_speculative_tokens": 3')

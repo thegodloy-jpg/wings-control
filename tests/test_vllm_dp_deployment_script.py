@@ -120,8 +120,8 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertNotIn("ray start --head", script)
         self.assertNotIn("--distributed-executor-backend ray", script)
         self.assertNotIn("--speculative-config", script)
-        self.assertIn("--enable-expert-parallel", script)
-        self.assertIn("--async-scheduling", script)
+        # 通用 DeepSeek dp_deployment 的 enable_expert_parallel / async_scheduling
+        # 自动注入已移除；这两个字段不再由 adapter 默认下发。
         self.assertIn("--dtype auto", script)
         self.assertIn("--seed 42", script)
         self.assertIn("--max-num-seqs 256", script)
@@ -184,8 +184,8 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         self.assertIn("--data-parallel-rpc-port 27071", exec_line)
 
         # 模型启动参数对齐 master（关键字段不能丢失）
-        self.assertIn("--enable-expert-parallel", script)
-        self.assertIn("--async-scheduling", script)
+        # 通用 DeepSeek dp_deployment 的 enable_expert_parallel / async_scheduling
+        # 自动注入已移除；这两个字段不再由 adapter 默认下发。
         self.assertIn("--dtype auto", script)
         self.assertIn("--seed 42", script)
         self.assertIn("--max-num-seqs 256", script)
@@ -253,8 +253,8 @@ class TestVllmDpDeploymentScript(unittest.TestCase):
         with patch("engines.vllm_adapter.ModelIdentifier", _FakeDeepSeekModelIdentifier):
             script = build_start_script(params)
 
-        self.assertIn("--enable-expert-parallel", script)
-        self.assertIn("--async-scheduling", script)
+        # 通用 DeepSeek dp_deployment 的 enable_expert_parallel / async_scheduling
+        # 自动注入已移除；这两个字段不再由 adapter 默认下发。
         self.assertNotIn("--enable-prefix-caching", script)
         self.assertIn("--no-enable-prefix-caching", script)
 

@@ -55,6 +55,7 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
             model_path="/models/Qwen3-32B",
             device_count=8,
             enable_auto_tool_choice=True,
+            enable_reasoning=True,
         )
         port_plan = make_port_plan()
 
@@ -92,6 +93,7 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
             nodes="10.0.0.1,10.0.0.2",
             ray_head_ip="10.0.0.1",
             enable_auto_tool_choice=True,
+            enable_reasoning=True,
         )
         port_plan = make_port_plan()
 
@@ -125,6 +127,7 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
             model_path="/models/Kimi-K2.5",
             device_count=8,
             enable_auto_tool_choice=True,
+            enable_reasoning=True,
         )
         port_plan = make_port_plan()
 
@@ -249,6 +252,7 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
             model_path="/models/GLM-Z1-Air",
             device_count=8,
             enable_auto_tool_choice=True,
+            enable_reasoning=True,
         )
         port_plan = make_port_plan()
 
@@ -328,6 +332,7 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
             device_count=8,
             enable_rag_acc=True,
             enable_auto_tool_choice=True,
+            enable_reasoning=True,
         )
         port_plan = make_port_plan()
 

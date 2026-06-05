@@ -194,9 +194,11 @@ class TestVllmKvSparse(unittest.TestCase):
                     ):
                         script = vllm_adapter.build_start_script(params)
 
+                    # GLM-5.1 官方推荐 num=1；GLM-5（非 5.1）保持 num=3。
+                    expected_num = 1 if model_name == "GLM-5.1" else 3
                     self.assertIn(
                         "--speculative-config '{\"method\": \"deepseek_mtp\", "
-                        "\"num_speculative_tokens\": 3}'",
+                        "\"num_speculative_tokens\": " + str(expected_num) + "}'",
                         script,
                     )
                     self.assertNotIn('"method" : "suffix"', script)
@@ -243,9 +245,10 @@ class TestVllmKvSparse(unittest.TestCase):
         ):
             script = vllm_adapter.build_start_script(params)
 
+        # GLM-5.1 官方推荐 num=1（与 is_glm_moe_dsa_glm51 分支一致）。
         self.assertIn(
             "--speculative-config '{\"method\": \"deepseek_mtp\", "
-            "\"num_speculative_tokens\": 3}'",
+            "\"num_speculative_tokens\": 1}'",
             script,
         )
         self.assertNotIn('"method" : "suffix"', script)

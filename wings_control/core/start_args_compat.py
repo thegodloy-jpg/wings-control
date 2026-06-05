@@ -237,6 +237,7 @@ class LaunchArgs:
     speculative_decode_model_path: str
     enable_rag_acc: bool
     enable_auto_tool_choice: bool
+    enable_reasoning: bool
     enable_sparse: bool
     distributed: bool
     nnodes: int
@@ -294,6 +295,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--speculative-decode-model-path", default=_env("SPECULATIVE_DECODE_MODEL_PATH", ""))
     _add_bool(p, "--enable-rag-acc", "ENABLE_RAG_ACC", False)
     _add_bool(p, "--enable-auto-tool-choice", "ENABLE_AUTO_TOOL_CHOICE", False)
+    # 独立控制 reasoning_parser（思维链解析），与 function call 解耦；
+    # 默认关闭，仅当显式开启时才把模型默认配置中的 reasoning_parser 注入启动命令。
+    _add_bool(p, "--enable-reasoning", "ENABLE_REASONING", False)
 
     # --- v2 新增: Sparse KV / KVStore 参数 ---
     _add_bool(p, "--enable-sparse", "ENABLE_SPARSE", False)
@@ -347,6 +351,7 @@ def _map_args_to_launch_kwargs(args, engine: str) -> dict:
         "speculative_decode_model_path": args.speculative_decode_model_path,
         "enable_rag_acc": bool(args.enable_rag_acc),
         "enable_auto_tool_choice": bool(args.enable_auto_tool_choice),
+        "enable_reasoning": bool(args.enable_reasoning),
         "enable_sparse": bool(args.enable_sparse),
         "distributed": bool(args.distributed),
         "nnodes": int(args.nnodes),
