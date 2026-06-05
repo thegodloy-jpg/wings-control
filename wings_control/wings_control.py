@@ -356,6 +356,21 @@ def _export_thinking_policy_env(launch_args: LaunchArgs) -> None:
                 os.environ["WINGS_THINKING_OFF"])
 
 
+def _monitor_proxy_port(port_plan: PortPlan) -> int:
+    """安全读取 monitor_proxy_port，容忍镜像逐文件更新导致的版本错配。
+
+    monitor_proxy 功能横跨 settings/port_plan/wings_control 多文件，镜像逐文件
+    更新时可能出现新 wings_control.py + 旧 port_plan.py 混部：旧 PortPlan 没有
+    monitor_proxy_port 字段，裸访问会抛 AttributeError 硬崩。此处统一回退到
+    settings.MONITOR_PROXY_PORT，settings 也缺失时回退到默认 19100。
+    与 run() 中 derive_port_plan 的防御式调用（见 inspect.signature 守卫）成对。
+    """
+    return getattr(
+        port_plan, "monitor_proxy_port",
+        getattr(settings, "MONITOR_PROXY_PORT", 19100),
+    )
+
+
 def _build_child_env(port_plan: PortPlan) -> dict[str, str]:
     """为 proxy/health/monitor_proxy 子进程准备环境变量。"""
     env = os.environ.copy()
@@ -373,7 +388,7 @@ def _build_child_env(port_plan: PortPlan) -> dict[str, str]:
     env["PROXY_PORT"] = str(port_plan.proxy_port)
     env["HEALTH_PORT"] = str(port_plan.health_port)
     env["HEALTH_SERVICE_PORT"] = str(port_plan.health_port)
-    env["MONITOR_PROXY_PORT"] = str(port_plan.monitor_proxy_port)
+    env["MONITOR_PROXY_PORT"] = str(_monitor_proxy_port(port_plan))
 
     # 引擎类型：K8s 部署通过 ENGINE 环境变量传入（如 mindie/vllm/sglang），
     # 子进程（health_router/proxy/health_service）统一通过 ENGINE 读取。
@@ -445,7 +460,7 @@ def _build_monitor_proxy_proc(
         name="monitor_proxy",
         argv=[
             python_bin, "-m", uvicorn_mod, settings.MONITOR_PROXY_APP,
-            "--host", "0.0.0.0", "--port", str(port_plan.monitor_proxy_port),
+            "--host", "0.0.0.0", "--port", str(_monitor_proxy_port(port_plan)),
             "--log-level", "info",
         ],
         env=env.copy(),
@@ -1052,7 +1067,7 @@ def _run_master_mode(
         port_plan.backend_port,
         port_plan.proxy_port,
         port_plan.health_port,
-        port_plan.monitor_proxy_port,
+        _monitor_proxy_port(port_plan),
     )
     return _daemon_loop(processes, "Master mode")
 
@@ -1114,13 +1129,10 @@ def _run_worker_mode(
     # 健康即表示包含此 Worker 的 Ray 集群正常工作。
     worker_health_port = port_plan.health_port + 1
     master_backend_url = f"http://{master_ip}:{port_plan.backend_port}"
-    worker_port_plan = PortPlan(
-        enable_proxy=port_plan.enable_proxy,
-        backend_port=port_plan.backend_port,
-        proxy_port=port_plan.proxy_port,
-        health_port=worker_health_port,
-        monitor_proxy_port=port_plan.monitor_proxy_port,
-    )
+    # 用 dataclasses.replace 仅覆盖 health_port，保留其余字段原样。
+    # 避免显式传 monitor_proxy_port：旧 PortPlan 无该字段时，显式 kwarg 会触发
+    # TypeError（同一镜像逐文件错配问题，见 _monitor_proxy_port）。
+    worker_port_plan = dataclasses.replace(port_plan, health_port=worker_health_port)
     # Worker 只启动 health 服务，不启动 proxy 和 monitor_proxy
     processes = [p for p in _build_processes(worker_port_plan) if p.name == "health"]
     for proc in processes:
@@ -1197,7 +1209,7 @@ def _launch_attempt(launch_args: LaunchArgs, port_plan: PortPlan, attempt_label:
         port_plan.backend_port,
         port_plan.proxy_port,
         port_plan.health_port,
-        port_plan.monitor_proxy_port,
+        _monitor_proxy_port(port_plan),
     )
     return processes
 

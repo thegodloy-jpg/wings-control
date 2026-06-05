@@ -838,6 +838,7 @@ def _build_ascend_dp_network_env_commands(
         f"export HCCL_BUFFSIZE={hccl_buffsize}",
         'echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"',
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
+        "export HCCL_OP_EXPANSION_MODE=AIV",
     ]
     if dp_arch in ("DeepseekV3ForCausalLM", "DeepseekV32ForCausalLM"):
         # OPP 自定义算子路径是 DeepSeek 系列专属，套到 GLM 等其它架构会加载错算子。
@@ -1739,7 +1740,10 @@ def _apply_generic_deepseek_ascend_dp_defaults(
             "[DeepSeek Ascend DP] enabling expert parallel to align with "
             "vLLM-Ascend DeepSeek multi-node launch examples."
         )
-    
+
+    if "enable_expert_parallel" not in explicit_keys:
+        engine_config["enable_expert_parallel"] = True
+
     # KimiK25: EP 由 是否分布式决定。分布式：不开EP。 非分布式：开EP
     if (model_architecture == "KimiK25ForConditionalGeneration"
         and _is_kimik25_distributed()
@@ -2584,7 +2588,7 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
                 "[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 → "
                 "IndexCache via --hf-overrides (no patch install)"
             )
-            return " --hf-overrides '{\"index_topk_freq\": 4}'"
+            return " --hf-overrides '{\"index_topk_freq\": 8}'"
         logger.info(
             "[KV Sparse] engine=vllm_ascend arch=%s not GLM-5.1; "
             "KV sparse is no-op on ascend", arch,

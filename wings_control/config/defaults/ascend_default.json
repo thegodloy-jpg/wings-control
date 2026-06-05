@@ -442,7 +442,6 @@
             "gpu_memory_utilization": 0.95,
             "enable_chunked_prefill": true,
             "enable_prefix_caching": true,
-            "async_scheduling": true,
             "additional_config": {
               "fuse_muls_add": true,
               "multistream_overlap_shared_expert": true,
@@ -464,7 +463,6 @@
             "max_num_seqs": 2,
             "max_num_batched_tokens": 4096,
             "gpu_memory_utilization": 0.95,
-            "async_scheduling": true,
             "additional_config": {
               "fuse_muls_add": true,
               "multistream_overlap_shared_expert": true,
