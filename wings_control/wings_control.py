@@ -63,6 +63,7 @@ Sidecar 架构说明：
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import logging
 import os
@@ -1262,12 +1263,21 @@ def run(argv: Sequence[str] | None = None) -> int:
     launch_args = parse_launch_args(list(argv) if argv is not None else None)
     # 解析「关闭思考」策略并导出到环境变量，供 proxy 子进程强制执行（见 proxy/thinking_policy.py）。
     _export_thinking_policy_env(launch_args)
-    port_plan = derive_port_plan(
-        port=launch_args.port,
-        enable_reason_proxy=settings.ENABLE_REASON_PROXY,
-        health_port=settings.HEALTH_PORT,
-        monitor_proxy_port=settings.MONITOR_PROXY_PORT,
-    )
+    port_plan_kwargs = {
+        "port": launch_args.port,
+        "enable_reason_proxy": settings.ENABLE_REASON_PROXY,
+        "health_port": settings.HEALTH_PORT,
+    }
+    # 防御文件版本错位：仅当 settings 提供 MONITOR_PROXY_PORT 且 derive_port_plan
+    # 支持该形参时才传入（monitor_proxy 功能跨 settings/port_plan/wings_control 多文件，
+    # 镜像逐文件更新时可能新旧混部）。缺失则各自回退到默认 19100，避免硬崩。
+    _monitor_port = getattr(settings, "MONITOR_PROXY_PORT", None)
+    if (
+        _monitor_port is not None
+        and "monitor_proxy_port" in inspect.signature(derive_port_plan).parameters
+    ):
+        port_plan_kwargs["monitor_proxy_port"] = _monitor_port
+    port_plan = derive_port_plan(**port_plan_kwargs)
 
     # 当前版本必须启用 proxy。
     if not port_plan.enable_proxy:
