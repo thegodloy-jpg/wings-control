@@ -1847,7 +1847,7 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     _apply_deepseek_v4_flash_engine_defaults(params, engine_config, explicit_keys)
     _apply_deepseek_v4_pro_engine_defaults(params, engine_config, explicit_keys)
     if _is_deepseek_v4_cpu_offload_params(params):
-        _apply_deepseek_v4_cpu_offload(engine_config, explicit_keys)
+        _apply_deepseek_v4_cpu_offload(params, engine_config, explicit_keys)
     _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
     _apply_generic_deepseek_ascend_dp_defaults(params, engine_config, explicit_keys)
     _apply_glm5_dsa_distributed_fixups(params, engine_config, explicit_keys)
@@ -2101,14 +2101,19 @@ def _apply_deepseek_v4_pro_engine_defaults(
 
 
 def _apply_deepseek_v4_cpu_offload(
+    params: Dict[str, Any],
     engine_config: Dict[str, Any],
     explicit_keys: set,
 ) -> None:
     """Inject vllm-ascend CPUOffloadingConnector kv_transfer_config for DeepSeek-V4.
 
     触发条件复用 LMCache: ``LMCACHE_OFFLOAD=true`` (由上游 K8s ConfigMap 注入)。
-    cpu_swap_space_gb 直接复用 ``LMCACHE_MAX_LOCAL_CPU_SIZE`` (与页面传入的内存值一致)，
-    缺省 200，与 vllm-ascend benchmark 模板一致。
+
+    cpu_swap_space_gb 取值规则:
+      * **V4-Flash**: ``device_count(本节点卡数) × LMCACHE_MAX_LOCAL_CPU_SIZE``
+        (即 ``LMCACHE_MAX_LOCAL_CPU_SIZE`` 语义为「每卡」CPU 卸载内存)；
+      * **V4-Pro / 其它**: 直接等于 ``LMCACHE_MAX_LOCAL_CPU_SIZE``（不乘卡数，维持原行为）；
+      * ``LMCACHE_MAX_LOCAL_CPU_SIZE`` 未设置/非法时：一律缺省 200（不乘）。
 
     与 LMCache 互斥：``_build_cache_env_commands`` 在 V4 Flash/Pro 路径已跳过 LMCache env
     导出与 YAML 生成。两者不会同时生效。
@@ -2122,13 +2127,22 @@ def _apply_deepseek_v4_cpu_offload(
         return
     raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
     try:
-        cpu_swap_gb = int(raw_size) if raw_size else 200
+        per_card_gb = int(raw_size) if raw_size else None
     except ValueError:
         logger.warning(
             "[DeepSeek-V4 KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
             "falling back to 200 GB.", raw_size,
         )
+        per_card_gb = None
+    if per_card_gb is None:
         cpu_swap_gb = 200
+    elif _is_deepseek_v4_flash_params(params):
+        # 仅 V4-Flash：LMCACHE_MAX_LOCAL_CPU_SIZE 视作「每卡」值，乘本节点卡数
+        device_count = _safe_int(params.get("device_count")) or 1
+        cpu_swap_gb = device_count * per_card_gb
+    else:
+        # V4-Pro / 其它：维持原行为，直接使用该值
+        cpu_swap_gb = per_card_gb
     engine_config["kv_transfer_config"] = {
         "kv_connector": "CPUOffloadingConnector",
         "kv_connector_module_path":

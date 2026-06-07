@@ -885,16 +885,31 @@ def _is_deepseek_v4_cpu_offload(ctx, model_info) -> bool:
     return arch in _DEEPSEEK_V4_CPU_OFFLOAD_ARCHES
 
 
-def _build_deepseek_v4_cpu_offload_config() -> Dict[str, Any]:
+def _build_deepseek_v4_cpu_offload_config(device_count: int = 1, is_flash: bool = False) -> Dict[str, Any]:
+    """构建 V4 CPUOffloadingConnector 配置。
+
+    cpu_swap_space_gb 取值:
+      * V4-Flash: ``device_count(本节点卡数) × LMCACHE_MAX_LOCAL_CPU_SIZE``（每卡语义）;
+      * V4-Pro / 其它: 直接等于 ``LMCACHE_MAX_LOCAL_CPU_SIZE``（不乘卡数）;
+      * 未设置/非法: 一律缺省 200（不乘）。
+    须与 ``vllm_adapter._apply_deepseek_v4_cpu_offload`` 公式保持一致。
+    """
     raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
     try:
-        cpu_swap_gb = int(raw_size) if raw_size else 200
+        per_card_gb = int(raw_size) if raw_size else None
     except ValueError:
         logger.warning(
             "[DeepSeek-V4 KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
             "falling back to 200 GB.", raw_size,
         )
+        per_card_gb = None
+    if per_card_gb is None:
         cpu_swap_gb = 200
+    elif is_flash:
+        dc = device_count if device_count and device_count > 0 else 1
+        cpu_swap_gb = dc * per_card_gb
+    else:
+        cpu_swap_gb = per_card_gb
     return {
         "kv_connector": "CPUOffloadingConnector",
         "kv_connector_module_path":
@@ -921,7 +936,22 @@ def _set_kv_cache_config(params, ctx, model_info=None):
     device = ctx.get('device', '')
 
     if lmcache_offload and model_info is not None and _is_deepseek_v4_cpu_offload(ctx, model_info):
-        params["kv_transfer_config"] = json.dumps(_build_deepseek_v4_cpu_offload_config())
+        _v4_text = " ".join(
+            str(x).lower() for x in [
+                getattr(model_info, "model_name", ""),
+                getattr(model_info, "model_path", ""),
+                ctx.get("model_name", ""),
+                ctx.get("model_path", ""),
+            ] if x
+        )
+        _v4_is_flash = "flash" in _v4_text
+        try:
+            _v4_device_count = int(ctx.get("device_count") or params.get("device_count") or 1)
+        except (TypeError, ValueError):
+            _v4_device_count = 1
+        params["kv_transfer_config"] = json.dumps(
+            _build_deepseek_v4_cpu_offload_config(_v4_device_count, _v4_is_flash)
+        )
         logger.info(
             "[KVCache Offload] DeepSeek-V4 Flash/Pro on vllm_ascend uses "
             "CPUOffloadingConnector; not injecting LMCacheConnectorV1."

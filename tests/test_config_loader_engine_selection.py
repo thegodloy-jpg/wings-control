@@ -234,7 +234,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         )
         self.assertEqual(kv_config["kv_role"], "kv_both")
         self.assertEqual(kv_config["kv_connector_extra_config"]["swap_in_threshold"], 1)
-        self.assertEqual(kv_config["kv_connector_extra_config"]["cpu_swap_space_gb"], 100)
+        # V4-Flash: cpu_swap_space_gb = device_count(8) × LMCACHE_MAX_LOCAL_CPU_SIZE(100)
+        self.assertEqual(kv_config["kv_connector_extra_config"]["cpu_swap_space_gb"], 800)
 
     def test_deepseek_v4_flash_name_with_v3_arch_keeps_lmcache_path(self):
         from core.start_args_compat import parse_launch_args  # noqa: E402
@@ -602,7 +603,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         )
         self.assertIn("\"kv_role\":\"kv_both\"", exec_line)
         self.assertIn("\"swap_in_threshold\":1", exec_line)
-        self.assertIn("\"cpu_swap_space_gb\":100", exec_line)
+        # V4-Flash: cpu_swap_space_gb = device_count(8) × LMCACHE_MAX_LOCAL_CPU_SIZE(100)
+        self.assertIn("\"cpu_swap_space_gb\":800", exec_line)
         # KV offload 与 spec 入口解耦：未显式开启 enable_speculative_decode 时不应默认生成 spec。
         self.assertNotIn("--speculative-config", exec_line)
         # LMCache env / YAML / 补丁安装均不应出现
@@ -620,7 +622,8 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
 
         self.assertIn("\"kv_connector\":\"CPUOffloadingConnector\"", exec_line)
-        self.assertIn("\"cpu_swap_space_gb\":150", exec_line)
+        # V4-Flash: cpu_swap_space_gb = device_count(8) × LMCACHE_MAX_LOCAL_CPU_SIZE(150)
+        self.assertIn("\"cpu_swap_space_gb\":1200", exec_line)
         # A2 路径与 A3 保持一致：完全不应走 LMCache（env / YAML / 补丁安装均跳过）
         self.assertNotIn("export LMCACHE_OFFLOAD=", script)
         self.assertNotIn("export LMCACHE_CONFIG_FILE=", script)
