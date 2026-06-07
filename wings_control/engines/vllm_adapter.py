@@ -1752,6 +1752,40 @@ def _apply_generic_deepseek_ascend_dp_defaults(
 
 
 
+def _apply_glm5_dsa_distributed_fixups(
+    params: Dict[str, Any],
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+) -> None:
+    """对齐 vllm-ascend 官方 GLM-5/5.1 双机模板的两处修正。
+
+    仅作用于 GlmMoeDsaForCausalLM + dp_deployment（双机分布式）：
+      (#prefix) prefix caching：撤销通用 DeepSeek DP 路径的 force-off —— 官方 GLM5
+                单机/双机模板均开启 prefix caching；
+      (#additional) additional_config：A3（910C）双机不下发 fuse_muls_add /
+                multistream_overlap_shared_expert / enable_npugraph_ex —— 官方 A3
+                多机模板特意省略，这些图优化开关在长上下文 decode replay 时触发
+                MTE 地址越界崩溃。A2 双机仍保留。
+
+    必须在 ``_apply_generic_deepseek_ascend_dp_defaults`` 之后调用，才能覆盖它对
+    prefix caching 的强制关闭。``explicit_keys`` 始终优先，用户显式配置不被覆盖。
+    """
+    if params.get("engine") != "vllm_ascend":
+        return
+    if _get_deepseek_ascend_dp_model_architecture(params) != "GlmMoeDsaForCausalLM":
+        return
+
+    # 不强制关闭 prefix caching（官方 GLM5 单机/双机均开启）
+    if not explicit_keys.intersection({"enable_prefix_caching", "no_enable_prefix_caching"}):
+        engine_config.pop("no_enable_prefix_caching", None)
+        engine_config["enable_prefix_caching"] = True
+
+    # 仅 A3（910C）双机移除 additional_config
+    if "additional_config" not in explicit_keys:
+        if _resolve_deepseek_v4_flash_platform(params) == "a3":
+            engine_config.pop("additional_config", None)
+
+
 def _writeback_dp_topology_to_params(params: Dict[str, Any], engine_config: Dict[str, Any]) -> None:
     """Mirror DP topology keys back into params["engine_config"] so downstream readers see them.
 
@@ -1784,6 +1818,7 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     if _is_deepseek_v4_cpu_offload_params(params):
         _apply_deepseek_v4_cpu_offload(engine_config, explicit_keys)
     _apply_generic_deepseek_ascend_dp_defaults(params, engine_config, explicit_keys)
+    _apply_glm5_dsa_distributed_fixups(params, engine_config, explicit_keys)
 
     removed_task = engine_config.pop("task", None)
     if removed_task and removed_task != "generate":

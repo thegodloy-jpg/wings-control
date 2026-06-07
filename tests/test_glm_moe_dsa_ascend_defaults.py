@@ -43,7 +43,8 @@ class TestGlmMoeDsaAscendDefaults(unittest.TestCase):
         self.assertEqual(cfg["gpu_memory_utilization"], 0.95)
         self.assertTrue(cfg["enable_chunked_prefill"])
         self.assertTrue(cfg["enable_prefix_caching"])
-        self.assertTrue(cfg["async_scheduling"])
+        # async_scheduling 已从 GLM5.1 默认中移除（官方 GLM5 模板不下发 --async-scheduling）
+        self.assertNotIn("async_scheduling", cfg)
         self.assertEqual(cfg["additional_config"]["fuse_muls_add"], True)
         self.assertEqual(cfg["additional_config"]["multistream_overlap_shared_expert"], True)
         self.assertEqual(cfg["additional_config"]["ascend_compilation_config"]["enable_npugraph_ex"], True)

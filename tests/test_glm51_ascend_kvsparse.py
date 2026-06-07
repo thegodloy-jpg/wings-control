@@ -742,18 +742,23 @@ class TestEndToEndPlatformAwareScript(unittest.TestCase):
         # worker 节点也含 additional_config（vllm DP 模式 head/worker 命令相同）
         self.assertIn("--additional-config", script)
 
-    # ── A3 双机：保留 additional-config + 追加 MLAPO ─────────────────────
-    def test_a3_dual_node_keeps_additional_config_and_adds_mlapo(self):
+    # ── A3 双机：移除 additional-config（对齐官方 A3 多机模板）+ 追加 MLAPO ──
+    # 官方 A3 双机模板特意省略 fuse_muls_add / multistream_overlap_shared_expert /
+    # enable_npugraph_ex，这些图优化开关在长上下文 decode replay 时触发 MTE 越界崩溃。
+    def test_a3_dual_node_drops_additional_config_and_adds_mlapo(self):
         os.environ["WINGS_ASCEND_PLATFORM"] = "a3"
         script = self._build(_glm51_e2e_params(distributed=True, rank=0))
-        self.assertIn("--additional-config", script)
-        self.assertIn("fuse_muls_add", script)
+        self.assertNotIn("--additional-config", script)
+        self.assertNotIn("fuse_muls_add", script)
         self.assertIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
+        # A3 双机 prefix caching 不再被强制关闭
+        self.assertIn("--enable-prefix-caching", script)
+        self.assertNotIn("--no-enable-prefix-caching", script)
 
-    def test_a3_dual_node_via_engine_version_keeps_additional_config_and_adds_mlapo(self):
+    def test_a3_dual_node_via_engine_version_drops_additional_config_and_adds_mlapo(self):
         os.environ["ENGINE_VERSION"] = "0.13.0rc3-a3"
         script = self._build(_glm51_e2e_params(distributed=True, rank=0))
-        self.assertIn("--additional-config", script)
+        self.assertNotIn("--additional-config", script)
         self.assertIn("export VLLM_ASCEND_ENABLE_MLAPO=1", script)
 
     # ── 优先级 ───────────────────────────────────────────────────────────
