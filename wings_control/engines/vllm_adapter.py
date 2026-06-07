@@ -63,6 +63,45 @@ def _sanitize_shell_path(path: str) -> str:
     """
     return shlex.quote(path)
 
+
+# ── RoCE 互联检测 ─────────────────────────────────────────────────────
+_DEFAULT_RANK_TABLE_PATH_VLLM = "/workspace/rank_table_all.json"
+
+
+def is_roce_distributed() -> bool:
+    """Public wrapper — see :func:`_is_roce_distributed`."""
+    return _is_roce_distributed()
+
+
+def _is_roce_distributed() -> bool:
+    """根据 ranktable 内容判断是否为 RoCE 互联场景。
+
+    判断逻辑：读取 RANK_TABLE_PATH 指向的 ranktable JSON 文件，
+    如果所有 device 条目中均不包含 ``super_device_id`` 字段，则认定为 RoCE 场景。
+    包含 ``super_device_id`` 字段表示 HCCS 互联（非 RoCE）。
+
+    Returns:
+        True: RoCE 场景（ranktable 无 super_device_id）
+        False: 非 RoCE 或无法判断（文件不存在/解析失败）
+    """
+    rank_table_path = (
+        os.getenv("RANK_TABLE_PATH", "").strip() or _DEFAULT_RANK_TABLE_PATH_VLLM
+    )
+    if not os.path.isfile(rank_table_path):
+        return False
+    try:
+        with open(rank_table_path, "r", encoding="utf-8") as f:
+            rank_table = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    for server in rank_table.get("server_list", []):
+        if not isinstance(server, dict):
+            continue
+        for device in server.get("device", []):
+            if isinstance(device, dict) and "super_device_id" in device:
+                return False
+    return True
+
 logger = logging.getLogger(__name__)
 
 # ── 引擎版本解析 ──────────────────────────────────────────────────────
@@ -383,7 +422,13 @@ def _build_vllm_ascend_forced_env_commands(params: Dict[str, Any], engine: str) 
         "export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}",
         "export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}",
     ]
-    if not _is_vllm_ascend_ray_distributed(params, engine):
+    # RoCE 互联 + GLM5.1 分布式场景不注入 HCCL_OP_EXPANSION_MODE
+    is_roce_glm51 = (
+        params.get("distributed")
+        and _get_deepseek_ascend_dp_model_architecture(params) == "GlmMoeDsaForCausalLM"
+        and _is_roce_distributed()
+    )
+    if not _is_vllm_ascend_ray_distributed(params, engine) and not is_roce_glm51:
         commands.append("export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}")
     return commands
 
@@ -825,7 +870,7 @@ def _build_ascend_dp_network_env_commands(
     dp_arch = _get_deepseek_ascend_dp_model_architecture(params)
     is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
     omp_default = '1' if is_glm5_dp else '10'
-    hccl_buffsize_default = '200' if is_glm5_dp else '1024'
+    hccl_buffsize_default = '1024' if is_glm5_dp else '1024'
     omp_threads = os.getenv('OMP_NUM_THREADS', omp_default)
     hccl_buffsize = os.getenv('HCCL_BUFFSIZE', hccl_buffsize_default)
     commands = [
@@ -966,7 +1011,7 @@ def _build_glm_moe_dsa_ascend_env(arch: str) -> List[str]:
         "export HCCL_OP_EXPANSION_MODE=AIV",
         "export OMP_PROC_BIND=false",
         "export OMP_NUM_THREADS=1",
-        "export HCCL_BUFFSIZE=200",
+        "export HCCL_BUFFSIZE=1024",
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
     ]
@@ -1129,7 +1174,7 @@ def _build_glm5_ascend_env(arch: str, platform: str = "") -> List[str]:
     """构建 GLM-5 (GlmMoeDsaForCausalLM) Ascend 环境变量命令。
 
     数值对齐 vllm-ascend 官方 GLM-5 W8A8 多机部署文档：
-    HCCL_OP_EXPANSION_MODE=AIV / OMP_NUM_THREADS=1 / HCCL_BUFFSIZE=200 /
+    HCCL_OP_EXPANSION_MODE=AIV / OMP_NUM_THREADS=1 / HCCL_BUFFSIZE=1024 /
     VLLM_ASCEND_BALANCE_SCHEDULING=1。
 
     A3（W8A8 官方双机命令）额外追加 ``VLLM_ASCEND_ENABLE_MLAPO=1``；
@@ -1140,7 +1185,7 @@ def _build_glm5_ascend_env(arch: str, platform: str = "") -> List[str]:
         "export HCCL_OP_EXPANSION_MODE=AIV",
         "export OMP_PROC_BIND=false",
         "export OMP_NUM_THREADS=1",
-        "export HCCL_BUFFSIZE=200",
+        "export HCCL_BUFFSIZE=1024",
         "export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True",
         "export VLLM_ASCEND_BALANCE_SCHEDULING=1",
     ]
@@ -1520,8 +1565,6 @@ def _build_deepseek_v4_pro_env(params: Dict[str, Any]) -> List[str]:
     与 vLLM-Ascend 官方 V4-Pro 双机参考脚本严格对齐。差异点：``HCCL_BUFFSIZE=2048``
     （Pro 长上下文/MoE 通信量更大，沿用 1024 会触发 HCCL OOM 风险）。
 
-    jemalloc 预加载与 sysctl/cpufreq 性能调优仅对 Pro 生效（其它 Ascend 模型不下发），
-    避免在受限容器或不需要这些调优的部署形态上产生噪声/副作用。
     """
     logger.info("[DeepSeek-V4-Pro] Set Ascend A3 environment variables")
     return [
@@ -1534,32 +1577,7 @@ def _build_deepseek_v4_pro_env(params: Dict[str, Any]) -> List[str]:
         "export VLLM_ASCEND_ENABLE_FUSED_MC2=1",
         "export VLLM_ASCEND_ENABLE_FLASHCOMM1=1",
         "export HCCL_OP_EXPANSION_MODE=AIV",
-        '# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏 (ref: kvcache-ai/Mooncake#1369, #1338)',
-        '# 与官方 V4-Pro 脚本一致，不做文件存在性探测；engine 镜像必须自带 libjemalloc.so.2',
         'export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"',
-        "# V4-Pro 性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭",
-        "# 受限/非特权容器中 sysfs/procfs 只读，预探测后静默跳过避免刷屏（千核机器会刷出几千行错误）",
-        'case "${WINGS_ASCEND_PERF_TUNING:-true}" in',
-        "    false|False|FALSE|0|no|No|NO)",
-        '        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"',
-        "        ;;",
-        "    *)",
-        "        if [ -w /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then",
-        "            echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null 2>&1 || true",
-        '            echo "INFO: cpufreq governor set to performance"',
-        "        else",
-        '            echo "INFO: cpufreq sysfs read-only, skip governor tuning"',
-        "        fi",
-        "        if [ -w /proc/sys/vm/swappiness ]; then",
-        "            sysctl -w vm.swappiness=0 >/dev/null 2>&1 || true",
-        "            sysctl -w kernel.numa_balancing=0 >/dev/null 2>&1 || true",
-        "            sysctl -w kernel.sched_migration_cost_ns=50000 >/dev/null 2>&1 || true",
-        '            echo "INFO: kernel sysctl tuning applied"',
-        "        else",
-        '            echo "INFO: /proc/sys read-only, skip sysctl tuning"',
-        "        fi",
-        "        ;;",
-        "esac",
     ]
 
 
@@ -1624,7 +1642,21 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     # GLM-5 (GlmMoeDsaForCausalLM) 在 A3 上需要追加 VLLM_ASCEND_ENABLE_MLAPO=1，
     # 与 vllm-ascend W8A8 官方双机命令对齐；其它架构构造器签名不变。
     if engine == "vllm_ascend" and arch == "GlmMoeDsaForCausalLM":
-        return builder(arch, _resolve_deepseek_v4_flash_platform(params))
+        env_commands = builder(arch, _resolve_deepseek_v4_flash_platform(params))
+        # RoCE 互联场景：剔除 HCCL_OP_EXPANSION_MODE=AIV，追加 MLAPO/FUSED_MC2
+        if params.get("distributed") and _is_roce_distributed():
+            env_commands = [
+                c
+                for c in env_commands
+                if "HCCL_OP_EXPANSION_MODE" not in c
+            ]
+            env_commands.append("export VLLM_ASCEND_ENABLE_MLAPO=1")
+            env_commands.append("export VLLM_ASCEND_ENABLE_FUSED_MC2=0")
+            logger.info(
+                "[GLM-5.1 RoCE] Removed HCCL_OP_EXPANSION_MODE, "
+                "appended VLLM_ASCEND_ENABLE_MLAPO=1, VLLM_ASCEND_ENABLE_FUSED_MC2=0"
+            )
+        return env_commands
     return builder(arch)
 
 
@@ -1740,10 +1772,9 @@ def _apply_generic_deepseek_ascend_dp_defaults(
             "[DeepSeek Ascend DP] enabling expert parallel to align with "
             "vLLM-Ascend DeepSeek multi-node launch examples."
         )
-
     if "enable_expert_parallel" not in explicit_keys:
         engine_config["enable_expert_parallel"] = True
-
+    
     # KimiK25: EP 由 是否分布式决定。分布式：不开EP。 非分布式：开EP
     if (model_architecture == "KimiK25ForConditionalGeneration"
         and _is_kimik25_distributed()
@@ -1817,8 +1848,38 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     _apply_deepseek_v4_pro_engine_defaults(params, engine_config, explicit_keys)
     if _is_deepseek_v4_cpu_offload_params(params):
         _apply_deepseek_v4_cpu_offload(engine_config, explicit_keys)
+    _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
     _apply_generic_deepseek_ascend_dp_defaults(params, engine_config, explicit_keys)
     _apply_glm5_dsa_distributed_fixups(params, engine_config, explicit_keys)
+
+    # ── GLM-5.1 RoCE 互联场景：强制剔除 async_scheduling / enable_expert_parallel，
+    #    并将投机推理 speculative_config 替换为 RoCE 适配版本 ──
+    is_glm5_roce = (
+        params.get("engine") == "vllm_ascend"
+        and _get_deepseek_ascend_dp_model_architecture(params) == "GlmMoeDsaForCausalLM"
+        and _is_roce_distributed()
+    )
+    if params.get("distributed") and is_glm5_roce:
+        removed_keys = []
+        if engine_config.pop("async_scheduling", None) is not None:
+            removed_keys.append("async_scheduling")
+        if engine_config.pop("enable_expert_parallel", None) is not None:
+            removed_keys.append("enable_expert_parallel")
+        # 投机推理使用 RoCE 适配配置
+        if params.get("enable_speculative_decode"):
+            engine_config["speculative_config"] = {
+                "num_speculative_tokens": 1,
+                "method": "deepseek_mtp",
+            }
+            logger.info(
+                "[GLM-5.1 RoCE] Replaced speculative_config with "
+                "num_speculative_tokens=1, method=deepseek_mtp"
+            )
+        if removed_keys:
+            logger.info(
+                "[GLM-5.1 RoCE] Forcibly removed engine_config keys: %s",
+                ", ".join(removed_keys),
+            )
 
     removed_task = engine_config.pop("task", None)
     if removed_task and removed_task != "generate":
@@ -1826,6 +1887,9 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
         engine_config.setdefault("runner", "pooling")
 
     _writeback_dp_topology_to_params(params, engine_config)
+    # 同步 speculative_config 回 params，阻止 _should_append_auto_speculative_config 重复合成
+    if "speculative_config" in engine_config:
+        params.setdefault("engine_config", {})["speculative_config"] = engine_config["speculative_config"]
     return engine_config
 
 
@@ -1967,11 +2031,6 @@ def _apply_deepseek_v4_flash_runtime_defaults(
 
     这里仅处理与 vLLM CLI 直接对应的运行参数；平台相关 additional_config
     和 MTP/compile JSON 放在上层入口集中合并，便于保护用户显式配置。
-
-    注意：reasoning_parser 不在此处注入。它由 config_loader._set_reasoning_parser
-    依据 --enable-reasoning 开关统一裁决（V4-Flash 的默认值已写在
-    ascend_default.json 的 DeepSeek-V4-Flash 条目中），adapter 不再重复注入，
-    以免绕过开关。
     """
     _set_if_not_explicit(engine_config, explicit_keys, "quantization", "ascend")
     _set_if_not_explicit(engine_config, explicit_keys, "block_size", 128)
@@ -1983,6 +2042,7 @@ def _apply_deepseek_v4_flash_runtime_defaults(
     _set_if_not_explicit(engine_config, explicit_keys, "tokenizer_mode", "deepseek_v4")
     _set_if_not_explicit(engine_config, explicit_keys, "tool_call_parser", "deepseek_v4")
     _force_set_if_not_explicit(engine_config, explicit_keys, "enable_auto_tool_choice", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "reasoning_parser", "deepseek_v4")
 
 
 def _apply_deepseek_v4_flash_engine_defaults(
@@ -2079,6 +2139,82 @@ def _apply_deepseek_v4_cpu_offload(
             "cpu_swap_space_gb": cpu_swap_gb,
         },
     }
+
+
+_GLM5_A2_ADDITIONAL_CONFIG: Dict[str, Any] = {
+    "fuse_muls_add": True,
+    "multistream_overlap_shared_expert": True,
+    "ascend_compilation_config": {"enable_npugraph_ex": True},
+}
+
+
+def _apply_glm5_ascend_engine_defaults(
+    params: Dict[str, Any],
+    engine_config: Dict[str, Any],
+    explicit_keys: set,
+) -> None:
+    """[GLM-5/5.1 Ascend] 注入 ``additional_config`` 三键默认值，并强制关闭 EP。
+
+    依据 vllm-ascend 官方 W8A8 双机命令（A2/A3 一致）：
+      * 传 ``--additional-config '{fuse_muls_add,
+        multistream_overlap_shared_expert, ascend_compilation_config.enable_npugraph_ex}'``
+
+    行为：A2 / A3 一致；深合并默认三键，用户显式声明的键值保留。
+
+    EP 强制关闭：GLM-5.1 ascend 路径无论用户/上层配置是否开 ``enable_expert_parallel``，
+    一律强制关闭。原因：参考社区 W8A8 单机/双机启动命令均无 ``--enable-expert-parallel``，
+    实际生产中开启 EP 会改变路由 / 通信路径，与当前 vllm-ascend image 的 ACL graph 路径
+    存在已知不稳定（参见 vllm-ascend#8015 类问题）。
+    """
+    if params.get("engine") != "vllm_ascend":
+        return
+    try:
+        model_info = ModelIdentifier(
+            params.get("model_name"),
+            params.get("model_path"),
+            params.get("model_type"),
+        )
+    except Exception as exc:
+        logger.debug(
+            "[GLM-5/5.1 Ascend] Skip additional_config defaults; "
+            "ModelIdentifier failed: %s", exc,
+        )
+        return
+    if model_info.model_architecture != "GlmMoeDsaForCausalLM":
+        return
+
+    _merge_dict_default_if_not_explicit(
+        engine_config,
+        explicit_keys,
+        "additional_config",
+        _GLM5_A2_ADDITIONAL_CONFIG,
+    )
+    logger.info(
+        "[GLM-5/5.1 Ascend] ensure additional_config defaults applied",
+    )
+
+    # EP 强制关闭：范围与 KV 稀疏 force-on 严格一致（仅 GLM-5.1，覆盖
+    # 910B/910C × 单机/双机 四象限）。GLM-5.0（非 5.1）的 GlmMoeDsa 走
+    # 上面的 additional_config 注入但不强制 EP/sparse，保留用户原始配置。
+    if not is_glm51_ascend_kvsparse_tmp_scope(
+        model_info, params.get("engine"),
+        model_name=params.get("model_name"),
+        model_path=params.get("model_path"),
+    ):
+        return
+    prev_ep = engine_config.get("enable_expert_parallel")
+    engine_config["enable_expert_parallel"] = False
+    if prev_ep is True:
+        if "enable_expert_parallel" in explicit_keys:
+            logger.warning(
+                "[GLM5.1-Ascend-Tmp] --enable-expert-parallel forcibly disabled; "
+                "GLM-5.1 ascend path requires EP off (overriding user request).",
+            )
+        else:
+            logger.info(
+                "[GLM5.1-Ascend-Tmp] enable_expert_parallel forcibly disabled "
+                "(was True from defaults).",
+            )
 
 
 def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
@@ -2497,19 +2633,11 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         if model_info.model_architecture == "Glm4MoeForCausalLM" and _is_w8a8_quantize(model_info.model_quantize):
             strategy = "mtp"
         speculative_config_temp.append(f'"method": "{strategy}"')
-        # DeepSeek-V4-Pro / V4-Flash 官方推荐 num=1；默认不启用，只有
+        # DeepSeek-V4-Pro / V4-Flash / GLM-5/5.1 官方推荐 num=1；默认不启用，只有
         # enable_speculative_decode=True 时由 launcher 合成。
-        # GLM-5.1（GlmMoeDsaForCausalLM 变体）同样官方推荐 num=1。
-        # 其余 MTP（GLM-4.7 / GLM-5 / 通用 DeepSeek-V3）保持 num=3。
-        if (
-            _is_deepseek_v4_pro_params(params)
-            or _is_deepseek_v4_flash_params(params)
-            or is_glm_moe_dsa_glm51(
-                model_info,
-                model_name=params.get("model_name"),
-                model_path=params.get("model_path"),
-            )
-        ):
+        # 其余 MTP（GLM-4.7 / 通用 DeepSeek-V3）保持 num=3。
+        if (_is_deepseek_v4_pro_params(params) or _is_deepseek_v4_flash_params(params)
+                or model_info.model_architecture == "GlmMoeDsaForCausalLM"):
             speculative_config_temp.append('"num_speculative_tokens": 1')
         else:
             speculative_config_temp.append('"num_speculative_tokens": 3')

@@ -204,7 +204,7 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
     is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
     is_v4_pro_dp = vllm_adapter.is_deepseek_v4_pro_adapted_scope(params)
     if is_glm5_dp:
-        omp_default, buffsize_default, connect_timeout_default = "1", "200", "1800"
+        omp_default, buffsize_default, connect_timeout_default = "1", "1024", "1800"
     elif is_v4_pro_dp:
         omp_default, buffsize_default, connect_timeout_default = "10", "2048", "7200"
     else:
@@ -232,7 +232,10 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
             "op_api/lib/:${LD_LIBRARY_PATH:-}",
         ])
     if is_glm5_dp:
-        env_commands.extend(["export HCCL_OP_EXPANSION_MODE=AIV", "export VLLM_ASCEND_BALANCE_SCHEDULING=1"])
+        # RoCE 互联场景不注入 HCCL_OP_EXPANSION_MODE=AIV
+        if not (params.get("distributed") and vllm_adapter.is_roce_distributed()):
+            env_commands.append("export HCCL_OP_EXPANSION_MODE=AIV")
+        env_commands.append("export VLLM_ASCEND_BALANCE_SCHEDULING=1")
     if vllm_adapter.is_deepseek_ascend_dp_deployment(params):
         env_commands.append(f"export VLLM_ENGINE_READY_TIMEOUT_S={os.getenv('VLLM_ENGINE_READY_TIMEOUT_S', '7200')}")
     return env_commands
