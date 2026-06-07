@@ -154,6 +154,25 @@ SCENARIOS = {
             "quantization_config": {"quant_method": "ascend"},
         },
     },
+    "v4pro-a3-dual": {
+        "description": "DeepSeek-V4-Pro + 910C(A3) 双机32卡 dp_deployment (DP=2)",
+        "architecture": "DeepseekV4ForCausalLM",
+        "model_name": "DeepSeek-V4-Pro",
+        "engine": "vllm_ascend",
+        "device_count": 16,
+        "nnodes": 2,
+        "distributed": True,
+        "distributed_executor_backend": "dp_deployment",
+        "head_node_addr": "192.168.1.100",
+        "node_ips": "192.168.1.100,192.168.1.101",
+        "enable_speculative_decode": False,  # A3 会自动开启
+        "enable_sparse": False,
+        "platform": "a3",
+        "config_json_extra": {
+            "quantization_config": {"quant_method": "ascend"},
+            "quantize": "w4a8_dynamic",
+        },
+    },
 }
 
 

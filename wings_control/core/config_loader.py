@@ -865,27 +865,43 @@ _DEEPSEEK_V4_CPU_OFFLOAD_ARCHES = {
 }
 
 
-def _is_deepseek_v4_cpu_offload(ctx, model_info) -> bool:
-    """Return True when V4 KV offload should bypass LMCache in config merge."""
-    if ctx.get("engine") != "vllm_ascend":
-        return False
-
+def _v4_offload_identity_text(ctx, model_info) -> str:
+    """拼接 V4 身份判定文本（模型名/路径，小写），供 offload 判定复用。"""
     candidates = [
         getattr(model_info, "model_name", ""),
         getattr(model_info, "model_path", ""),
         ctx.get("model_name", ""),
         ctx.get("model_path", ""),
     ]
-    text = " ".join(str(item).lower() for item in candidates if item)
+    return " ".join(str(item).lower() for item in candidates if item)
+
+
+def _is_deepseek_v4_cpu_offload(ctx, model_info) -> bool:
+    """Return True when V4 KV offload should bypass LMCache in config merge."""
+    if ctx.get("engine") != "vllm_ascend":
+        return False
+    text = _v4_offload_identity_text(ctx, model_info)
     is_v4_flash_or_pro = "v4" in text and ("flash" in text or "pro" in text)
     if not is_v4_flash_or_pro:
         return False
-
     arch = getattr(model_info, "model_architecture", "")
     return arch in _DEEPSEEK_V4_CPU_OFFLOAD_ARCHES
 
 
-def _build_deepseek_v4_cpu_offload_config(device_count: int = 1, is_flash: bool = False) -> Dict[str, Any]:
+def _is_deepseek_v4_flash_offload(ctx, model_info) -> bool:
+    """Return True when the V4 offload target is V4-Flash (vs V4-Pro)."""
+    return "flash" in _v4_offload_identity_text(ctx, model_info)
+
+
+def _resolve_v4_offload_device_count(params, ctx) -> int:
+    """本节点卡数，用于 V4-Flash 卸载容量按卡放大。"""
+    try:
+        return int(ctx.get("device_count") or params.get("device_count") or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _build_deepseek_v4_cpu_offload_config(params, ctx, model_info) -> Dict[str, Any]:
     """构建 V4 CPUOffloadingConnector 配置。
 
     cpu_swap_space_gb 取值:
@@ -905,9 +921,8 @@ def _build_deepseek_v4_cpu_offload_config(device_count: int = 1, is_flash: bool 
         per_card_gb = None
     if per_card_gb is None:
         cpu_swap_gb = 200
-    elif is_flash:
-        dc = device_count if device_count and device_count > 0 else 1
-        cpu_swap_gb = dc * per_card_gb
+    elif _is_deepseek_v4_flash_offload(ctx, model_info):
+        cpu_swap_gb = _resolve_v4_offload_device_count(params, ctx) * per_card_gb
     else:
         cpu_swap_gb = per_card_gb
     return {
@@ -936,21 +951,8 @@ def _set_kv_cache_config(params, ctx, model_info=None):
     device = ctx.get('device', '')
 
     if lmcache_offload and model_info is not None and _is_deepseek_v4_cpu_offload(ctx, model_info):
-        _v4_text = " ".join(
-            str(x).lower() for x in [
-                getattr(model_info, "model_name", ""),
-                getattr(model_info, "model_path", ""),
-                ctx.get("model_name", ""),
-                ctx.get("model_path", ""),
-            ] if x
-        )
-        _v4_is_flash = "flash" in _v4_text
-        try:
-            _v4_device_count = int(ctx.get("device_count") or params.get("device_count") or 1)
-        except (TypeError, ValueError):
-            _v4_device_count = 1
         params["kv_transfer_config"] = json.dumps(
-            _build_deepseek_v4_cpu_offload_config(_v4_device_count, _v4_is_flash)
+            _build_deepseek_v4_cpu_offload_config(params, ctx, model_info)
         )
         logger.info(
             "[KVCache Offload] DeepSeek-V4 Flash/Pro on vllm_ascend uses "
