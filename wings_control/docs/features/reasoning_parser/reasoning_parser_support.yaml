@@ -1,9 +1,13 @@
 # Reasoning Parser（思维解析）特性支持表
 #
-# 范围: vllm / vllm_ascend / sglang（不含 mindie —— mindie 不使用 reasoning_parser，思维解析为服务端内置）。
+# 范围: vllm / vllm_ascend / sglang（不含 mindie —— mindie 不使用 reasoning_parser, 思维解析为服务端内置）。
+#   本表是【解析端】视角: reasoning_parser 与 function call 的解耦对三引擎一致生效, 故 sglang 在表内。
+#   ⚠️ 生成端「启动时关闭思考」(--default-chat-template-kwargs) 仅 vllm / vllm_ascend 适配,
+#      sglang 无启动级关闭能力, 不适配生成端（见 xuqiu/reasoning_thinking_switch.md「生成端引擎范围」）;
+#      但 sglang 的解析端解耦照常生效, 故本表保留 sglang。
 #
-# 开关: reasoning_parser 已与 function call 解耦, 由独立开关 --enable-reasoning / ENABLE_REASONING 驱动
-#   （默认关闭, 见 config_loader._set_reasoning_parser）。
+# 开关: reasoning_parser 已与 function call 解耦, 由独立开关 --enable-auto-think-choice / ENABLE_AUTO_THINK_CHOICE 驱动
+#   （字段 enable_auto_think_choice, 与 function call 的 enable_auto_tool_choice 并列对齐; 默认关闭, 见 config_loader._set_reasoning_parser）。
 #   - 开关开启 + 模型/引擎默认配置里有 reasoning_parser → 注入启动命令（启用思维解析）。
 #   - 开关开启 但配置无 reasoning_parser → 仅告警, 不凭空注入。
 #   - 开关关闭 → 移除 reasoning_parser, 启动命令不带思维解析（模型仍可能输出 <think>, 只是不被拆解）。

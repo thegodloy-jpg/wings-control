@@ -1,19 +1,25 @@
-# 推理思考模式开关（reasoning_parser 解耦 + 思考强制关闭）
+# 推理思考模式开关（reasoning_parser 解耦 + 思考默认关闭）
 
 ## 需求背景
 
-历史实现中 `reasoning_parser`（思维链解析）被强绑定在 function call 开关（`enable_auto_tool_choice`）上：不开 FC 就拿不到思维链解析，无法独立控制。同时，运维侧存在「关闭推理后要求模型彻底不输出思考内容」的诉求，但 `reasoning_parser` 只控制服务端是否「解析」`<think>`，控制不了模型「是否思考」——两者是推理管线的不同阶段，需要分别治理并由统一开关驱动。
+历史实现中 `reasoning_parser`（思维链解析）被强绑定在 function call 开关（`enable_auto_tool_choice`）上：不开 FC 就拿不到思维链解析，无法独立控制。同时，运维侧存在「关闭推理后要求模型默认不输出思考内容」的诉求，但 `reasoning_parser` 只控制服务端是否「解析」`<think>`，控制不了模型「是否思考」——两者是推理管线的不同阶段，需要分别治理并由统一开关驱动。
 
 ## 需求价值
 
-提供一个独立、统一的推理开关 `--enable-reasoning` / `ENABLE_REASONING`（默认关闭），关闭时：启动命令不注入 `reasoning_parser`（**解析端**关闭）；对可关闭思考的混合推理模型，在网关层强制非思考、且客户端无法绕过（**生成端**关闭），从而「保证关闭后模型不触发思考」。
+提供一个独立、统一的推理开关 `--enable-auto-think-choice` / `ENABLE_AUTO_THINK_CHOICE`（默认关闭），关闭时：启动命令不注入 `reasoning_parser`（**解析端**关闭）；对可关闭思考的混合推理模型，在**拉起服务的启动命令**里注入引擎的服务级默认值，使思考默认关闭（**生成端**关闭），从而「保证默认不触发思考」。
+
+**边界（不兜底）：** 生成端的关闭只作用于「服务级默认值」。引擎语义上请求级 `chat_template_kwargs` 优先级高于服务级默认值；客户端若在请求体里显式反向开启思考，可覆盖该默认值——**此行为由客户端自负，网关不做兜底改写**。
 
 ## 需求详情
 
+- 开关命名与 function call 的 `enable_auto_tool_choice` 并列对齐：思考开关字段为 `enable_auto_think_choice`（CLI `--enable-auto-think-choice` / 环境变量 `ENABLE_AUTO_THINK_CHOICE`）。
 - 开关与 function call **完全解耦**，独立生效；默认 `false`。
-- 适用引擎：`vllm` / `vllm_ascend` / `sglang`（`mindie` 思维解析为服务端内置，不涉及）。
-- 解析端：开则保留模型默认配置中的 `reasoning_parser`，关则剔除；配置中无该字段则不凭空注入。
-- 生成端：关闭时按模型族在网关强制注入 `chat_template_kwargs` 关闭思考，客户端反向开启会被压制。
+- 适用引擎分两段，范围不同：
+  - **解析端解耦**（`reasoning_parser` 脱离 function call，由 `enable_auto_think_choice` 独立驱动注入/剥离）：`vllm` / `vllm_ascend` / `sglang` 三引擎均适用。
+  - **生成端启动关思考**（启动命令注入服务级非思考默认）：仅 `vllm` / `vllm_ascend`；`sglang` 无启动级关闭思考能力，**不适配生成端**（见「生成端引擎范围」），但其解析端解耦照常生效。
+  - `mindie` 思维解析为服务端内置，两段均不涉及。
+- 解析端（vllm / vllm_ascend / sglang 一致）：开则保留模型默认配置中的 `reasoning_parser`，关则剔除；配置中无该字段则不凭空注入。
+- 生成端（仅 vllm / vllm_ascend）：关闭时按模型族在**启动命令**注入 `--default-chat-template-kwargs` 设服务级默认非思考；客户端请求体反向开启不做兜底。`sglang` 跳过此步。
 - 始终推理模型（DeepSeek-R1 / R1-Distill / QwQ / MiniMax-M2）天生必思考、无法关闭，仅打印告警。
 - 兼容 x86（GPU）与 Arm（Ascend NPU）平台。
 
@@ -21,35 +27,36 @@
 
 ```mermaid
 flowchart TD
-    A([启动 parse_launch_args]) --> B{enable_reasoning?}
-    B -->|开启| C[注入 reasoning_parser<br/>清除 WINGS_THINKING_OFF]
+    A([启动 parse_launch_args]) --> B{enable_auto_think_choice?}
+    B -->|开启| C[注入 reasoning_parser<br/>不注入 default-chat-template-kwargs]
     B -->|关闭| D[剥离 reasoning_parser]
     D --> E[resolve_thinking_off_policy<br/>按模型名解析策略]
-    E -->|Qwen3 / GLM-4.5+| F["导出 WINGS_THINKING_OFF<br/>= {enable_thinking:false}"]
-    E -->|DeepSeek-V3.1/V3.2| G["导出 WINGS_THINKING_OFF<br/>= {thinking:false}"]
-    E -->|R1 / QwQ / MiniMax-M2| H["导出 WINGS_THINKING_OFF<br/>= always_on"]
-    E -->|非思考模型| I[不导出]
+    E -->|Qwen3 / GLM-4.5+| F["注入启动参数<br/>--default-chat-template-kwargs<br/>{enable_thinking:false}"]
+    E -->|DeepSeek-V3.1/V3.2| G["注入启动参数<br/>--default-chat-template-kwargs<br/>{thinking:false}"]
+    E -->|R1 / QwQ / MiniMax-M2| H[仅告警一次<br/>不注入]
+    E -->|非思考模型| I[不注入]
 
-    C --> P([proxy 启动 继承 env])
+    C --> P([引擎启动<br/>vllm / vllm_ascend])
     F --> P
     G --> P
     H --> P
     I --> P
 
-    P --> Q[/v1/chat/completions 到达网关/]
-    Q --> R{WINGS_THINKING_OFF?}
-    R -->|无| Z([原样转发后端])
-    R -->|always_on| Y[告警一次] --> Z
-    R -->|dict 策略| X[强制覆盖<br/>chat_template_kwargs] --> W([转发后端<br/>vllm / sglang 均 honor])
+    P --> Q[/v1/chat/completions 到达后端/]
+    Q --> R{请求体是否带 chat_template_kwargs?}
+    R -->|无| Y([用服务级默认<br/>默认非思考])
+    R -->|有| Z([请求级优先，覆盖默认<br/>客户端自负，不兜底])
 ```
+
+> 上图 C/D 的 `reasoning_parser` 注入/剥离（解析端）对 `vllm` / `vllm_ascend` / `sglang` 三引擎一致；F/G/H 的生成端启动注入仅 `vllm` / `vllm_ascend` 走，`sglang` 在 D（剥离 reasoning_parser）之后即结束，不注入 default-chat-template-kwargs。
 
 ## 实现设计
 
-**总体：** 开关从「单段（解析）」升级为「两段契约」——解析端在 launcher 配置合并层裁决，生成端在 proxy 网关层强制执行；二者由同一个 `enable_reasoning` 驱动。
+**总体：** 开关从「单段（解析）」升级为「两段契约」——解析端在 launcher 配置合并层裁决，生成端在 launcher 启动命令组装层注入引擎服务级默认值；二者由同一个 `enable_auto_think_choice` 驱动。**全程不引入网关请求体改写**，生成端只在拉起服务时落地。
 
-**解析端（launcher / config_loader）：** `reasoning_parser` 不再由 `_set_function_call` 管理，改由独立的 `_set_reasoning_parser(params, engine_cmd_parameter)` 依据 `enable_reasoning` 裁决，vllm/vllm_ascend 与 sglang 复用同一函数。取值来源严格对齐 `config/defaults/nvidia_default.json`（vllm/sglang）与 `ascend_default.json`（vllm_ascend）中真实配置的 `reasoning_parser` 字段；sglang 段按官方连字符命名补全（如 `deepseek-r1` / `deepseek-v3` / `minimax-append-think`）。V4-Flash 适配器层不再重复注入，统一由配置合并层裁决，避免绕过开关。
+**解析端（launcher / config_loader，vllm / vllm_ascend / sglang 三引擎一致）：** `reasoning_parser` 不再由 `_set_function_call` 管理，改由独立的 `_set_reasoning_parser(params, engine_cmd_parameter)` 依据 `enable_auto_think_choice` 裁决，三引擎复用同一函数——即 **sglang 的思维解析也与 function call 完全解耦**。取值来源严格对齐 `config/defaults/nvidia_default.json`（vllm / sglang）与 `ascend_default.json`（vllm_ascend）中真实配置的 `reasoning_parser` 字段；sglang 段按官方连字符命名（如 `deepseek-r1` / `deepseek-v3` / `minimax-append-think`）。V4-Flash 适配器层不再重复注入，统一由配置合并层裁决，避免绕过开关。
 
-**生成端（proxy 网关）：** launcher 解析出关闭策略后写入环境变量 `WINGS_THINKING_OFF`，proxy 子进程经 `os.environ.copy()` 继承；网关对 `/v1/chat/completions` 强制注入/覆盖 `chat_template_kwargs`，客户端无法绕过。
+**生成端（launcher 启动命令，仅 vllm / vllm_ascend）：** `enable_auto_think_choice=false` 时，launcher 按模型族解析关闭策略，并把对应的 `--default-chat-template-kwargs '<json>'` 拼进引擎启动命令（vllm / vllm_ascend 同一参数）。该参数为引擎服务级默认值——请求不带 `chat_template_kwargs` 时按此默认非思考；请求带时由请求级覆盖（不兜底）。`sglang` 因无对应启动参数，生成端整段跳过——其思考是否触发完全交由客户端请求体决定。
 
 **策略解析（`utils/model_utils.resolve_thinking_off_policy`）：** 按模型名解析关闭思考所需的 `chat_template_kwargs`，键名按各家官方对齐：
 
@@ -61,25 +68,26 @@ flowchart TD
 | DeepSeek-R1 / R1-Distill / QwQ / MiniMax-M2 | `always_on`（仅告警） | 始终推理，无法关闭 |
 | Qwen2.5 / Llama / GLM-4-9B 等 | `None`（不介入） | 本就不思考 |
 
-**环境变量导出（`wings_control._export_thinking_policy_env`）：** `enable_reasoning=False` 且策略非空时，写 `WINGS_THINKING_OFF`（JSON kwargs 或 `"always_on"`）；开启或非思考模型则清除该变量。
+**启动命令注入（launcher，仅 vllm / vllm_ascend）：** `enable_auto_think_choice=False` 且策略为 dict 时，向启动命令追加 `--default-chat-template-kwargs '<json>'`；策略为 `always_on` → 仅告警一次，不注入（模型天生必思考）；策略为 `None`（非思考模型）或 `enable_auto_think_choice=True` → 不注入。引擎为 `sglang` 时整段不执行。
 
-**网关强制（`proxy/thinking_policy.apply_to_chat_body`）：** dict 策略 → 解析请求体，强制 `payload["chat_template_kwargs"].update(策略)`，覆盖客户端值后重序列化；`always_on` → 仅告警一次，不改写请求体（零额外开销）；解析失败 / 非对象 / 非 chat 路径 → 安全回退原 body（绝不因策略导致请求失败）。
+**启动接线：** 新增开关 `--enable-auto-think-choice` / `ENABLE_AUTO_THINK_CHOICE`（默认 `false`），在 `start_args_compat` 注册并进入 `LaunchArgs`；launcher 在 `parse_launch_args` 组装启动命令时，依据 `enable_auto_think_choice` 完成解析端裁决与生成端注入。
 
-**接入点（`proxy/gateway.py`）：** 流式与非流式两个 forwarder 在 `read_json_body` 之后调用 `apply_to_chat_body`。`make_upstream_headers` 不透传客户端 `Content-Length`，httpx 按新 body 重算长度，改写安全。
+## 生成端引擎范围：为什么启动关思考只支持 vllm / vllm_ascend
 
-**启动接线：** 新增开关 `--enable-reasoning` / `ENABLE_REASONING`（默认 `false`），在 `start_args_compat` 注册并进入 `LaunchArgs`；launcher 在 `parse_launch_args` 后调用 `_export_thinking_policy_env(launch_args)` 导出策略，由 proxy 子进程继承执行。
+> 本节只约束**生成端**。**解析端解耦**（`reasoning_parser` 脱离 function call）对 `vllm` / `vllm_ascend` / `sglang` 三引擎一致生效，sglang 不受本节限制。
 
-## 引擎兼容性：sglang 是否可用？
+**生成端「启动时关闭思考」依赖引擎提供服务级默认 `chat_template_kwargs` 的能力。**
 
-**可用。** 网关方案是「改写请求体里的 `chat_template_kwargs`」，对后端引擎透明——只要引擎的 OpenAI 接口接受并把该字段传给 chat 模板即可。已确认 `vllm` / `vllm_ascend` / `sglang` 三者均支持：SGLang 的 `/v1/chat/completions` 同样接受请求体中的 `chat_template_kwargs`（如 `{"enable_thinking": false}`），并使其 chat 模板生成「空思考块」，从而硬关思考。
+- `vllm` / `vllm_ascend`：原生支持启动参数 `--default-chat-template-kwargs '{"enable_thinking": false}'`（vllm_ascend 复用同一 vLLM OpenAI server）。该值是服务级默认，请求级 `chat_template_kwargs` 优先级更高、可覆盖——符合「客户端自负、不兜底」的约定。
+- `sglang`：**无任何启动级关闭思考的参数**。`--reasoning-parser` 只控制解析，`--chat-template` 需逐模型 fork Jinja 且语义脆弱；官方将「是否思考」仅暴露在请求级（见 sgl-project/sglang#5948，feature request 长期 open）。因此 sglang **不适配生成端**——但其解析端解耦（注入/剥离 `reasoning_parser`）照常生效，思考是否触发由客户端请求体自行决定。
 
-注意：kwarg 键名按**模型族**区分（Qwen3/GLM 用 `enable_thinking`、DeepSeek-V3.1/V3.2 用 `thinking`），**不是按引擎**区分——同一请求体对 vllm 与 sglang 通用。
+> 注：kwarg 键名按**模型族**区分（Qwen3/GLM 用 `enable_thinking`、DeepSeek-V3.1/V3.2 用 `thinking`），不按引擎区分——同一组 kwargs 对 vllm 与 vllm_ascend 通用。
 
 ## reasoning_parser 支持范围（引擎 × 模型）
 
 > 同步自 `wings_control/docs/features/reasoning_parser/reasoning_parser_support.yaml`，供上层用户 / 界面展示。
-> 表中取值为「开启 `--enable-reasoning` 后，该模型在该引擎实际生效的 reasoning_parser」；`—` 表示该引擎下不启用思维解析（配置未配或无该引擎段）。
-> 命名差异：vllm / vllm_ascend 用下划线，sglang 用连字符；`qwen3` / `glm45` 两边一致。
+> 表中取值为「开启 `--enable-auto-think-choice` 后，该模型在该引擎实际生效的 reasoning_parser」；`—` 表示该引擎下不启用思维解析（配置未配或无该引擎段）。
+> 本表是**解析端**视角，故含 `SGLang`（sglang 的 `reasoning_parser` 同样与 function call 解耦）；命名差异：vllm / vllm_ascend 用下划线，sglang 用连字符。
 
 **引擎范围：** `vLLM`（x86 GPU）、`vLLM-Ascend`（Arm NPU）、`SGLang`（x86 GPU）。`MindIE` 思维解析为服务端内置，不走 reasoning_parser，不在本表范围。
 
@@ -96,7 +104,7 @@ flowchart TD
 | DeepSeek-Coder-V2-Instruct（及 -w8a8） | deepseek_r1 | — | deepseek-r1 |
 | DeepSeek-V4 / -Flash / -Pro（及量化/mtp 变体） | deepseek_v4 | deepseek_v4 | deepseek-v4 |
 
-> ⚠️ DeepSeek-V3.1-w8a8 在 vllm/sglang 无精确配置键，回落 default → 得 `deepseek_r1`（非 V3.1 的 `deepseek_v3`）。vllm_ascend 的 DeepseekV3 default 段与 DeepseekV32 整段均未配 reasoning_parser，故昇腾上 V3/V3-0324/R1-0528/V3.2 等回落为 `—`。
+> ⚠️ DeepSeek-V3.1-w8a8 在 vllm / sglang 无精确配置键，回落 default → 得 `deepseek_r1`（非 V3.1 的 `deepseek_v3`）。vllm_ascend 的 DeepseekV3 default 段与 DeepseekV32 整段均未配 reasoning_parser，故昇腾上 V3/V3-0324/R1-0528/V3.2 等回落为 `—`。
 
 **模型范围 —— Qwen3 / GLM / MiniMax / Kimi**
 
@@ -111,7 +119,7 @@ flowchart TD
 | MiniMax-M2.5 / M2.7（及 -w8a8） | minimax_m2_append_think | minimax_m2_append_think | minimax-append-think |
 | Kimi-K2.5（及 -w4a8） | — | kimi_k2 | — |
 
-> Kimi 仅 ascend 配置文件含该架构段，vllm/sglang 默认配置无 Kimi 段，故为 `—`。
+> Kimi 仅 ascend 配置文件含该架构段，vllm 默认配置无 Kimi 段，故为 `—`。
 
 **模型范围 —— 不启用思维解析（三引擎均 `—`）**
 
@@ -124,16 +132,30 @@ GLM-4-9B-0414、Qwen2.5-32B-Instruct、QwQ-32B、LLaMA3-8B / 3.1-70B / 3.1-70B-I
 **CLI / 环境变量**
 
 ```bash
-# 关闭推理（默认）：剥离 reasoning_parser；混合推理模型在网关强制非思考
+# 关闭推理（默认）：剥离 reasoning_parser；混合推理模型在启动命令注入服务级非思考默认
 python -m wings_control --model-name Qwen3-32B ...
 
-# 开启推理：注入 reasoning_parser；不强制非思考
-python -m wings_control --model-name Qwen3-32B --enable-reasoning ...
+# 开启推理：注入 reasoning_parser；不注入非思考默认
+python -m wings_control --model-name Qwen3-32B --enable-auto-think-choice ...
 # 或
-ENABLE_REASONING=true python -m wings_control --model-name Qwen3-32B ...
+ENABLE_AUTO_THINK_CHOICE=true python -m wings_control --model-name Qwen3-32B ...
 ```
 
-**用户原始请求（`/v1/chat/completions`，无需感知开关）**
+**生成端落地：启动命令注入的引擎参数（`enable_auto_think_choice=false`）**
+
+```bash
+# Qwen3 / GLM-4.5+ 族 —— 服务级默认非思考
+vllm serve Qwen3-32B \
+  --default-chat-template-kwargs '{"enable_thinking": false}'
+
+# DeepSeek-V3.1 / V3.2 —— 键名是 thinking
+vllm serve DeepSeek-V3.1 \
+  --default-chat-template-kwargs '{"thinking": false}'
+```
+
+> vllm_ascend 复用同一 vLLM OpenAI server，参数一致。
+
+**用户请求（`/v1/chat/completions`，不带 `chat_template_kwargs`，走服务级默认非思考）**
 
 ```bash
 curl -X POST 'http://127.0.0.1:18000/v1/chat/completions' \
@@ -146,21 +168,7 @@ curl -X POST 'http://127.0.0.1:18000/v1/chat/completions' \
   }'
 ```
 
-**网关改写后转发给后端引擎的请求体（`enable_reasoning=false` + Qwen3）**
-
-```json
-{
-  "model": "Qwen3-32B",
-  "messages": [
-    {"role": "user", "content": "9.11 和 9.9 哪个大？"}
-  ],
-  "chat_template_kwargs": {"enable_thinking": false}
-}
-```
-
-> 即使客户端自带 `"chat_template_kwargs": {"enable_thinking": true}`，也会被强制覆盖为 `false`，无法绕过。
-
-**返回 — 关闭推理（无思维链）**
+**返回 — 关闭推理（走默认，无思维链）**
 
 ```json
 {
@@ -172,7 +180,20 @@ curl -X POST 'http://127.0.0.1:18000/v1/chat/completions' \
 }
 ```
 
-**返回 — 开启推理（`--enable-reasoning`，思维链解析到 `reasoning_content`）**
+**客户端显式反开（自负，不兜底）**
+
+```bash
+# 客户端在请求体里显式开启思考 —— 请求级优先于服务级默认，覆盖生效，由客户端自负
+curl -X POST 'http://127.0.0.1:18000/v1/chat/completions' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen3-32B",
+    "messages": [{"role": "user", "content": "9.11 和 9.9 哪个大？"}],
+    "chat_template_kwargs": {"enable_thinking": true}
+  }'
+```
+
+**返回 — 开启推理（`--enable-auto-think-choice`，思维链解析到 `reasoning_content`）**
 
 ```json
 {
@@ -192,10 +213,12 @@ curl -X POST 'http://127.0.0.1:18000/v1/chat/completions' \
 }
 ```
 
-## 行为对照表（`enable_reasoning=false` 时）
+## 行为对照表（`enable_auto_think_choice=false` 时）
 
-| 模型 | 解析端 | 生成端（vllm / vllm_ascend / sglang 通用） |
+| 模型 | 解析端（vllm / vllm_ascend / sglang） | 生成端（仅 vllm / vllm_ascend） |
 | --- | --- | --- |
-| Qwen3-32B / GLM-4.5+ | 剥离 `reasoning_parser` | 网关强制 `enable_thinking=false`，保证不思考、客户端不可绕过 |
-| DeepSeek-V3.1 / V3.2 | 剥离 `reasoning_parser` | 网关强制 `thinking=false` |
+| Qwen3-32B / GLM-4.5+ | 剥离 `reasoning_parser` | 启动命令注入 `--default-chat-template-kwargs '{"enable_thinking": false}'`，服务级默认非思考；客户端请求体反开自负、不兜底 |
+| DeepSeek-V3.1 / V3.2 | 剥离 `reasoning_parser` | 启动命令注入 `--default-chat-template-kwargs '{"thinking": false}'` |
 | DeepSeek-R1 / MiniMax-M2 | 剥离 `reasoning_parser` | 无法关闭，告警一次（模型天生必思考） |
+
+> `sglang`：解析端与上表一致（剥离 `reasoning_parser`）；生成端不适配——不注入任何启动参数，思考是否触发完全由客户端请求体决定。
