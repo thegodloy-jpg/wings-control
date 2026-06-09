@@ -1,25 +1,23 @@
 # -*- coding: utf-8 -*-
-"""enable_reasoning 关闭时「强制非思考」策略测试。
+"""enable_auto_think_choice 关闭时「思考默认关闭」策略测试。
 
 覆盖：
   - utils.model_utils.resolve_thinking_off_policy（模型名 → 关闭思考 kwargs / always_on / None）
-  - proxy.thinking_policy.apply_to_chat_body（请求体改写 / 客户端覆盖压制 / always_on 仅告警）
+  - core.config_loader._set_thinking_off_default（生成端：启动命令注入服务级默认非思考，
+    仅 vllm/vllm_ascend；客户端请求体反开自负、不兜底，故不再有 proxy 改写）
 """
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "wings_control"))
 
 from utils.model_utils import resolve_thinking_off_policy, THINKING_ALWAYS_ON  # noqa: E402
-import proxy.thinking_policy as tp  # noqa: E402
+from core import config_loader as cl  # noqa: E402
 
 
 class TestResolveThinkingOffPolicy(unittest.TestCase):
@@ -56,65 +54,53 @@ class TestResolveThinkingOffPolicy(unittest.TestCase):
                          THINKING_ALWAYS_ON)
 
 
-class TestApplyToChatBody(unittest.TestCase):
-    """proxy 请求体改写。"""
+class _ModelInfoStub:
+    def __init__(self, model_name: str):
+        self.model_name = model_name
 
-    CHAT = "/v1/chat/completions"
 
-    def _apply(self, env_val, body, path=None):
-        with patch.dict(os.environ, ({"WINGS_THINKING_OFF": env_val} if env_val is not None else {}),
-                        clear=False):
-            if env_val is None:
-                os.environ.pop("WINGS_THINKING_OFF", None)
-            tp.reload_policy()
-            return tp.apply_to_chat_body(json.dumps(body).encode(), path or self.CHAT)
+class TestSetThinkingOffDefault(unittest.TestCase):
+    """生成端：启动命令注入 default_chat_template_kwargs（仅 vllm/vllm_ascend）。"""
 
-    def test_dict_policy_injects_kwargs(self):
-        out = self._apply('{"enable_thinking": false}', {"model": "Qwen3-32B", "messages": []})
-        payload = json.loads(out)
-        self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
+    def _run(self, model_name, enable_auto_think_choice, params=None):
+        params = params if params is not None else {}
+        cl._set_thinking_off_default(
+            params,
+            {"enable_auto_think_choice": enable_auto_think_choice},
+            _ModelInfoStub(model_name),
+        )
+        return params
 
-    def test_dict_policy_overrides_client_attempt(self):
-        # 客户端试图开启 thinking，必须被强制压制为 false。
-        out = self._apply('{"enable_thinking": false}',
-                          {"messages": [], "chat_template_kwargs": {"enable_thinking": True}})
-        payload = json.loads(out)
-        self.assertIs(payload["chat_template_kwargs"]["enable_thinking"], False)
+    def test_qwen3_injects_enable_thinking_false(self):
+        params = self._run("Qwen3-32B", False)
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"enable_thinking": False})
 
-    def test_dict_policy_preserves_other_kwargs(self):
-        out = self._apply('{"thinking": false}',
-                          {"messages": [], "chat_template_kwargs": {"foo": 1}})
-        payload = json.loads(out)
-        self.assertEqual(payload["chat_template_kwargs"], {"foo": 1, "thinking": False})
+    def test_glm_moe_injects_enable_thinking_false(self):
+        params = self._run("GLM-5.1", False)
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"enable_thinking": False})
 
-    def test_always_on_does_not_modify_body(self):
-        body = {"model": "DeepSeek-R1", "messages": []}
-        out = self._apply("always_on", body)
-        self.assertEqual(json.loads(out), body)
+    def test_deepseek_v3_injects_thinking_false(self):
+        params = self._run("DeepSeek-V3.1", False)
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"thinking": False})
 
-    def test_no_policy_is_noop(self):
-        body = {"model": "Qwen3-32B", "messages": []}
-        out = self._apply(None, body)
-        self.assertEqual(json.loads(out), body)
+    def test_always_on_does_not_inject(self):
+        params = self._run("DeepSeek-R1", False)
+        self.assertNotIn("default_chat_template_kwargs", params)
 
-    def test_non_chat_path_is_noop(self):
-        body = {"prompt": "hi", "chat_template_kwargs": {"enable_thinking": True}}
-        out = self._apply('{"enable_thinking": false}', body, path="/v1/completions")
-        self.assertEqual(json.loads(out), body)
+    def test_non_thinking_does_not_inject(self):
+        params = self._run("Qwen2.5-32B-Instruct", False)
+        self.assertNotIn("default_chat_template_kwargs", params)
 
-    def test_invalid_json_body_passthrough(self):
-        with patch.dict(os.environ, {"WINGS_THINKING_OFF": '{"enable_thinking": false}'}):
-            tp.reload_policy()
-            raw = b"not-json"
-            self.assertEqual(tp.apply_to_chat_body(raw, self.CHAT), raw)
+    def test_enabled_does_not_inject(self):
+        # 开启推理 → 不强制非思考。
+        params = self._run("Qwen3-32B", True)
+        self.assertNotIn("default_chat_template_kwargs", params)
 
-    def test_invalid_env_value_disables_policy(self):
-        out = self._apply("not-json-not-always_on", {"messages": []})
-        self.assertNotIn("chat_template_kwargs", json.loads(out))
-
-    def tearDown(self):
-        os.environ.pop("WINGS_THINKING_OFF", None)
-        tp.reload_policy()
+    def test_enabled_clears_residual_default(self):
+        # 开启推理时应清除残留的服务级非思考默认。
+        params = self._run("Qwen3-32B", True,
+                           params={"default_chat_template_kwargs": {"enable_thinking": False}})
+        self.assertNotIn("default_chat_template_kwargs", params)
 
 
 if __name__ == "__main__":

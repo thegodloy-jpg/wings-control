@@ -36,7 +36,6 @@ from .tags import (
     build_backend_url,
 )
 from .speaker_logging import configure_worker_logging
-from .thinking_policy import apply_to_chat_body
 
 # 健康状态机在 `health_router.py` 中维护，gateway 只负责对外暴露结果。
 from .health_router import (
@@ -620,8 +619,6 @@ async def _forward_nonstream(req: Request, upstream_path: str):
 
     #
     body_bytes = await read_json_body(req, rid)
-    # enable_reasoning 关闭时，对 chat/completions 强制注入 chat_template_kwargs 关闭思考。
-    body_bytes = apply_to_chat_body(body_bytes, upstream_path)
     jlog("req_recv", rid=rid, path=str(req.url.path), body_len=len(body_bytes))
 
     #
@@ -923,8 +920,6 @@ async def _forward_stream(req: Request, upstream_path: str):
     rid = req.headers.get("x-request-id")
 
     body_bytes = await read_json_body(req, rid)
-    # enable_reasoning 关闭时，对 chat/completions 强制注入 chat_template_kwargs 关闭思考。
-    body_bytes = apply_to_chat_body(body_bytes, upstream_path)
     jlog("req_recv", rid=rid, path=str(req.url.path), body_len=len(body_bytes))
 
     try:

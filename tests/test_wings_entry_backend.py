@@ -46,7 +46,7 @@ def _launch_args(**overrides):
         "speculative_decode_model_path": "",
         "enable_rag_acc": False,
         "enable_auto_tool_choice": False,
-        "enable_reasoning": False,
+        "enable_auto_think_choice": False,
         "enable_sparse": False,
         "distributed": True,
         "nnodes": 2,

@@ -232,11 +232,13 @@ _RERANK_MODELS = {
 
 
 # ---------------------------------------------------------------------------
-# Thinking-mode 关闭策略（供 --enable-reasoning 关闭时在 proxy 层强制非思考）
+# Thinking-mode 关闭策略（供 --enable-auto-think-choice 关闭时在启动命令注入服务级默认）
 # ---------------------------------------------------------------------------
 # 背景：reasoning_parser 只控制服务端是否「解析」思维链，控制不了模型「是否思考」。
-# 当 enable_reasoning=False 且要求「保证模型不触发思考」时，需在 proxy 注入
-# chat_template_kwargs 强制关闭思考。不同模型族的禁用键名不同（已对齐各家官方/vLLM）：
+# 当 enable_auto_think_choice=False 时，生成端（vllm/vllm_ascend）在启动命令注入
+# --default-chat-template-kwargs 设服务级默认非思考（见 config_loader._set_thinking_off_default）。
+# 注：这是服务级默认，请求级 chat_template_kwargs 优先级更高、可覆盖（客户端自负，不兜底）。
+# 不同模型族的禁用键名不同（已对齐各家官方/vLLM）：
 #   - Qwen3 系列 / GLM-4.5+ MoE 系列 → {"enable_thinking": false}
 #   - DeepSeek-V3.1 / V3.2（混合推理）→ {"thinking": false}
 # 始终推理模型（R1 / QwQ / MiniMax-M2 等）无法关闭思考，返回 "always_on" 仅用于告警。

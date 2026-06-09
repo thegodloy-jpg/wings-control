@@ -37,7 +37,8 @@ from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
 from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
                                is_deepseek_series_modelslim_quant, is_qwen3_series_fp8,
-                               is_glm_moe_dsa_glm51)
+                               is_glm_moe_dsa_glm51, resolve_thinking_off_policy,
+                               THINKING_ALWAYS_ON)
 from utils.device_utils import check_pcie_cards
 
 logger = logging.getLogger(__name__)
@@ -285,7 +286,7 @@ def _build_engine_cmd_parameter(cmd_known_params: Dict[str, Any]) -> Dict[str, A
         "max_num_batched_tokens", "enable_prefix_caching", "enable_speculative_decode",
         "speculative_decode_model_path",
         "enable_rag_acc", "enable_auto_tool_choice",
-        "enable_reasoning",
+        "enable_auto_think_choice",
         "enable_sparse",
     ]
     return {k: cmd_known_params.get(k) for k in keys}
@@ -363,6 +364,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _set_common_params(params, engine_cmd_parameter, engine_param_map_config_path)
     _set_function_call(params, engine_cmd_parameter)
     _set_reasoning_parser(params, engine_cmd_parameter)
+    _set_thinking_off_default(params, engine_cmd_parameter, model_info)
     _set_sequence_length(params, engine_cmd_parameter, model_type=ctx.get("model_type", "llm"))
     _set_parallelism_params(params, ctx)
     _set_kv_cache_config(params, ctx, model_info)
@@ -422,7 +424,7 @@ def _set_function_call(params, engine_cmd_parameter):
         → 移除 tool_call_parser 和 enable_auto_tool_choice，FC 不生效
 
     注意：reasoning_parser 已与 function call 解耦，改由 _set_reasoning_parser
-    依据独立的 --enable-reasoning 开关单独控制。
+    依据独立的 --enable-auto-think-choice 开关单独控制。
     """
     user_wants_fc = (
         engine_cmd_parameter.get("enable_auto_tool_choice")
@@ -444,27 +446,61 @@ def _set_function_call(params, engine_cmd_parameter):
 
 
 def _set_reasoning_parser(params, engine_cmd_parameter):
-    """独立控制 reasoning_parser（思维链解析），与 function call 解耦。
+    """解析端：独立控制 reasoning_parser（思维链解析），与 function call 解耦。
 
-    由 --enable-reasoning / ENABLE_REASONING 开关单独驱动（默认关闭）：
+    由 --enable-auto-think-choice / ENABLE_AUTO_THINK_CHOICE 开关单独驱动（默认关闭）：
       - 开关开启 → 保留模型默认配置中已有的 reasoning_parser；
         若模型/引擎配置未定义 reasoning_parser 则仅打印警告（不凭空注入）。
       - 开关关闭 → 移除 reasoning_parser，启动命令不带思维链解析。
 
-    适用引擎：vllm / vllm_ascend / sglang（mindie 无 reasoning_parser 字段）。
+    适用引擎：vllm / vllm_ascend / sglang（三引擎一致；mindie 无 reasoning_parser 字段）。
     本函数仅作用于配置解析后 params 中已存在的字段，因此实际行为依赖
     nvidia_default.json / ascend_default.json 等默认配置中是否定义了
     对应模型的 reasoning_parser。
     """
-    if engine_cmd_parameter.get("enable_reasoning"):
+    if engine_cmd_parameter.get("enable_auto_think_choice"):
         if params.get("reasoning_parser"):
             logger.info("Reasoning parser enabled (parser=%s)", params["reasoning_parser"])
         else:
             logger.warning(
-                "enable_reasoning is set but model/engine config has no reasoning_parser configured"
+                "enable_auto_think_choice is set but model/engine config has no reasoning_parser configured"
             )
     else:
         params.pop("reasoning_parser", None)
+
+
+def _set_thinking_off_default(params, engine_cmd_parameter, model_info):
+    """生成端：enable_auto_think_choice 关闭时，按模型族注入服务级默认非思考。
+
+    仅 vllm / vllm_ascend 适配（二者复用 vLLM OpenAI server 的
+    --default-chat-template-kwargs；sglang 无对应启动参数，不在此路径调用）。
+    注入的是引擎【服务级默认值】：
+      - 请求不带 chat_template_kwargs → 按此默认非思考；
+      - 请求带 chat_template_kwargs → 由请求级覆盖（客户端自负，不兜底改写）。
+
+    策略来源 resolve_thinking_off_policy（按模型族对齐各家官方键名）：
+      - dict（如 {"enable_thinking": False} / {"thinking": False}）→ 注入；
+      - THINKING_ALWAYS_ON（R1 / QwQ / MiniMax-M2 等天生必思考）→ 仅告警；
+      - None（本就不思考的模型）→ 不介入。
+    """
+    if engine_cmd_parameter.get("enable_auto_think_choice"):
+        # 开启推理 → 不强制非思考，且确保不残留默认值
+        params.pop("default_chat_template_kwargs", None)
+        return
+    model_name = getattr(model_info, "model_name", "") or ""
+    policy = resolve_thinking_off_policy(model_name)
+    if policy is None:
+        return
+    if policy == THINKING_ALWAYS_ON:
+        logger.warning(
+            "enable_auto_think_choice=false but model '%s' is an always-on reasoner "
+            "(e.g. DeepSeek-R1 / QwQ / MiniMax-M2); thinking cannot be disabled at "
+            "startup, only reasoning parsing is affected.", model_name)
+        return
+    params["default_chat_template_kwargs"] = policy
+    logger.info(
+        "[thinking] enable_auto_think_choice=false; inject "
+        "--default-chat-template-kwargs=%s for model '%s'", policy, model_name)
 
 
 def _resolve_gpu_total_memory(ctx: Dict[str, Any]) -> float:

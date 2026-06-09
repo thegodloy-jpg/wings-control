@@ -451,7 +451,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--device-count", str(device_count),
                 "--trust-remote-code",
                 # 官方 V4-Flash 启动命令带 --reasoning-parser，需显式开启 reasoning 开关。
-                "--enable-reasoning",
+                "--enable-auto-think-choice",
             ]
             if extra_argv:
                 argv.extend(extra_argv)
@@ -700,7 +700,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                 "--device-count", str(device_count),
                 "--trust-remote-code",
                 # 官方 V4-Pro 启动命令带 --reasoning-parser，需显式开启 reasoning 开关。
-                "--enable-reasoning",
+                "--enable-auto-think-choice",
                 "--distributed",
                 "--nnodes", str(nnodes),
                 "--node-rank", str(node_rank),

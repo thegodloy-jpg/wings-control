@@ -112,8 +112,8 @@ else
     echo '[wings-accel] WARNING: /accel-volume/install.py not found, skipping speculative decoding runtime deps.'
 fi
 ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-72B --model /models/Qwen3-72B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --speculative-config '"'"'{"model": "/models/Qwen3-0.6B", "draft_tensor_parallel_size": 1, "method" : "draft_model", "num_speculative_tokens": 4}'"'"''
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-72B --model /models/Qwen3-72B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --speculative-config '{"model": "/models/Qwen3-0.6B", "draft_tensor_parallel_size": 1, "method" : "draft_model", "num_speculative_tokens": 4}' &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-72B --model /models/Qwen3-72B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8 --speculative-config '"'"'{"model": "/models/Qwen3-0.6B", "draft_tensor_parallel_size": 1, "method" : "draft_model", "num_speculative_tokens": 4}'"'"''
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-72B --model /models/Qwen3-72B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 --speculative-config '{"model": "/models/Qwen3-0.6B", "draft_tensor_parallel_size": 1, "method" : "draft_model", "num_speculative_tokens": 4}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features enabled)"
 
@@ -169,8 +169,8 @@ FEATURES_EOF
   echo "[Engine] Waiting 5s for port release before restart..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-72B --model /models/Qwen3-72B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-72B --model /models/Qwen3-72B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-72B --model /models/Qwen3-72B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-72B --model /models/Qwen3-72B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features disabled: speculative_decode, fallback mode)"
   echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."
