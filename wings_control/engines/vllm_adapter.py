@@ -2042,7 +2042,9 @@ def _apply_deepseek_v4_flash_runtime_defaults(
     _set_if_not_explicit(engine_config, explicit_keys, "tokenizer_mode", "deepseek_v4")
     _set_if_not_explicit(engine_config, explicit_keys, "tool_call_parser", "deepseek_v4")
     _force_set_if_not_explicit(engine_config, explicit_keys, "enable_auto_tool_choice", True)
-    _set_if_not_explicit(engine_config, explicit_keys, "reasoning_parser", "deepseek_v4")
+    # reasoning_parser 不在适配器层注入：交由配置合并层的 _set_reasoning_parser 按
+    # enable_auto_think_choice 开关裁决（V4-Flash 配置块已带 reasoning_parser=deepseek_v4），
+    # 避免在此重复注入导致关闭开关时被重新加回、绕过 enable_auto_think_choice。
 
 
 def _apply_deepseek_v4_flash_engine_defaults(
