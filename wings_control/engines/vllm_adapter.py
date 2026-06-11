@@ -2184,6 +2184,10 @@ def _apply_glm5_ascend_engine_defaults(
     """
     if params.get("engine") != "vllm_ascend":
         return
+    # PD external-lb：GLM-5 的 PD 参数由 pd_config 注册表控制（官方 GLM5 PD 命令
+    # 使用 --enable-expert-parallel），不走非 PD 路径的 additional_config 注入与 EP 强制关闭。
+    if params.get("_pd_external_lb"):
+        return
     try:
         model_info = ModelIdentifier(
             params.get("model_name"),
@@ -2853,6 +2857,80 @@ def _build_vllm_single_script(
     return env_prefix + f"exec {cmd}{eager_flag}{speculative_extra}{sparse_args}\n"
 
 
+def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
+                                      common_env_cmds: List[str], pd_ext: Dict[str, Any]) -> str:
+    """生成 PD external-lb（模式 A）的 fork 启动脚本。
+
+    对齐官方 launch_online_dp.py：pod 内 fork ``dp_size_local`` 个独立 vllm serve，
+    逐 service：rank = dp_rank_start + i、port = base_port + i、卡组 = [i*tp, (i+1)*tp)。
+    任一 service 退出即整 pod 退出（wait -n + kill 全部 + exit 1），交由编排层整组重启
+    （EP all-to-all 下单 rank 缺失会让整域 hang）。
+
+    base ``cmd`` 由 ``_build_vllm_cmd_parts`` 生成，已含 model / 引擎参数 /
+    kv-transfer-config（含 MooncakeConnectorV1 的 ``__PD_RANK__`` 占位符）。本函数
+    剥离其中的单进程 ``--port`` 与并行度相关 flag，循环里按 service 重新追加。
+    """
+    import re as _re
+
+    tp = pd_ext["tp_size"]
+    local = pd_ext["dp_size_local"]
+    start = pd_ext["dp_rank_start"]
+    dp_size = pd_ext["dp_size"]
+    addr = pd_ext.get("dp_address", "")
+    # rpc 端口来自上层契约 VLLM_LLMDD_RPC_PORT（pd_ext.rpc_port）；缺省按角色给死值
+    rpc = pd_ext.get("rpc_port") or ("12890" if pd_ext.get("role") == "P" else "12777")
+
+    # 端口基址：优先取 base cmd 里的 --port，否则回退 ENGINE_PORT
+    m = _re.search(r"--port\s+(\S+)", cmd)
+    base_port = m.group(1) if m else os.getenv("ENGINE_PORT", "18000")
+
+    # 剥离单进程 --port 与并行度 flag（循环里按 service 重新追加）
+    svc_cmd = cmd
+    for flag in ("--port", "--tensor-parallel-size", "--data-parallel-size",
+                 "--data-parallel-size-local", "--data-parallel-rank",
+                 "--data-parallel-start-rank", "--data-parallel-address",
+                 "--data-parallel-rpc-port"):
+        svc_cmd = _re.sub(rf"\s*{flag}\s+\S+", "", svc_cmd)
+    svc_cmd = _re.sub(r"\s*--data-parallel-external-lb\b", "", svc_cmd)
+    svc_cmd = _re.sub(r"\s*--headless\b", "", svc_cmd)
+    # 占位符 → 让 bash 在单引号 JSON 内展开 shell 变量（engine_id 按 rank，kv_port 按 base+i）
+    svc_cmd = svc_cmd.replace("__PD_RANK__", "'\"$RANK\"'")
+    svc_cmd = svc_cmd.replace("__PD_KVPORT__", "'\"$KVPORT\"'")
+    kv_base = pd_ext.get("kv_port_base", 30000)
+    bootstrap_base = pd_ext.get("bootstrap_base", 23000)
+
+    role_env = params.get("_pd_env") or {}
+    env_lines = list(common_env_cmds)
+    for k, v in role_env.items():
+        env_lines.append(f"export {k}={shlex.quote(str(v))}")
+
+    # fork 主体包进子 shell，使其作为单个可后台化单元被上层监控
+    # （wings_entry._strip_exec_and_backgroundify 给末行 ')' 追加 ' &' + ENGINE_PID=$!）。
+    # 任一 service 退出 → 子 shell exit 1 → 上层 crash-retry 整 pod 重启（EP all-to-all 语义）。
+    fork_body = [
+        "(",
+        "  pids=()",
+        f"  for i in $(seq 0 {local - 1}); do",
+        f"    RANK=$(({start} + i)); PORT=$(({base_port} + i))",
+        f"    KVPORT=$(({kv_base} + i)); BOOTSTRAP=$(({bootstrap_base} + i))",
+        f"    LO=$((i * {tp})); HI=$((LO + {tp} - 1)); CARDS=$(seq -s, $LO $HI)",
+        (f"    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP"
+         f" {svc_cmd} --port $PORT"
+         f" --tensor-parallel-size {tp} --data-parallel-size {dp_size}"
+         f" --data-parallel-rank $RANK --data-parallel-size-local 1"
+         f" --data-parallel-address {shlex.quote(addr)} --data-parallel-rpc-port {rpc}"
+         f" --data-parallel-external-lb &"),
+        "    pids+=($!)",
+        "  done",
+        '  wait -n || true',
+        '  echo "[pd] a service exited, tearing down pod" >&2',
+        '  kill "${pids[@]}" 2>/dev/null || true',
+        "  exit 1",
+        ")",
+    ]
+    return "\n".join(env_lines + fork_body) + "\n"
+
+
 def build_start_script(params: Dict[str, Any]) -> str:
     """生成完整的 bash 启动脚本体（start_command.sh 内容，不含 shebang）。
 
@@ -2893,7 +2971,11 @@ def build_start_script(params: Dict[str, Any]) -> str:
     nnodes = params.get("nnodes", 1)
     common_env_cmds = _build_vllm_common_env_cmds(params, engine)
 
-    if is_distributed and nnodes > 1:
+    pd_ext = params.get("_pd_external_lb")
+    if pd_ext:
+        # PD external-lb（模式 A）：pod 内 fork dp_size_local 个独立 vllm serve
+        script = _build_vllm_pd_external_lb_script(params, cmd, common_env_cmds, pd_ext)
+    elif is_distributed and nnodes > 1:
         script = _build_vllm_distributed_script(params, cmd, common_env_cmds, engine, sparse_args)
     else:
         script = _build_vllm_single_script(params, cmd, common_env_cmds, engine, sparse_args)

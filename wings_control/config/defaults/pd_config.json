@@ -63,7 +63,9 @@
       "extra_config": { "use_ascend_direct": true },
       "common": {
         "enable_expert_parallel": true,
-        "quantization": "ascend"
+        "quantization": "ascend",
+        "max_model_len": 200000,
+        "speculative_config": { "num_speculative_tokens": 3, "method": "deepseek_mtp" }
       },
       "prefill": {
         "engine": {
@@ -109,6 +111,34 @@
           "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
         },
         "env": {}
+      }
+    },
+    "DeepseekV4ForCausalLM": {
+      "_source": "https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/DeepSeek-V4-Flash.html",
+      "connector": "MooncakeHybridConnector",
+      "kv_port": { "P": "30000", "D": "30100" },
+      "extra_config": {},
+      "common": {
+        "enable_expert_parallel": true,
+        "quantization": "ascend",
+        "speculative_config": { "num_speculative_tokens": 3, "method": "deepseek_mtp" }
+      },
+      "prefill": {
+        "engine": {
+          "max_num_batched_tokens": 4096,
+          "max_num_seqs": 64,
+          "gpu_memory_utilization": 0.95
+        },
+        "env": { "VLLM_ASCEND_ENABLE_FLASHCOMM1": "1", "VLLM_ASCEND_ENABLE_FUSED_MC2": "1" }
+      },
+      "decode": {
+        "engine": {
+          "max_num_batched_tokens": 32,
+          "max_num_seqs": 8,
+          "gpu_memory_utilization": 0.92,
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
+        },
+        "env": { "VLLM_ASCEND_ENABLE_FUSED_MC2": "1", "VLLM_ASCEND_ENABLE_MLAPO": "1" }
       }
     }
   }

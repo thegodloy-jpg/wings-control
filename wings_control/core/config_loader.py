@@ -71,11 +71,30 @@ DEFAULT_CONFIG_FILES = {
     "ascend": "vllm_default.json",
     "distributed": "distributed_config.json",
     "engine_parameter_mapping": "engine_parameter_mapping.json",
+    # PD 分离模型配置注册表（按模型架构 key，含 default 兜底条目）
+    "pd_config": "pd_config.json",
     # Engine-specific fallback defaults (used when vllm_default.json
     # has no model-level section for the selected engine)
     "sglang": "sglang_default.json",
     "mindie": "mindie_default.json",
 }
+
+# PD 配置注册表缓存（模块级，首次读取后复用）
+_PD_CONFIG_CACHE: Optional[Dict[str, Any]] = None
+
+
+def _load_pd_config() -> Dict[str, Any]:
+    """加载 PD 分离模型配置注册表（pd_config.json 的 ``pd_config`` 段）。
+
+    返回按模型架构 key 的字典（含 ``default`` 兜底条目）。文件缺失/解析失败时
+    返回空字典（此时 external-lb 路径将无可用条目，回退到原 standalone）。
+    """
+    global _PD_CONFIG_CACHE
+    if _PD_CONFIG_CACHE is None:
+        path = os.path.join(DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILES["pd_config"])
+        cfg = load_json_config(path)
+        _PD_CONFIG_CACHE = cfg.get("pd_config", {}) if isinstance(cfg, dict) else {}
+    return _PD_CONFIG_CACHE
 
 SUPPORTED_DEVICE_TYPES = {"nvidia", "ascend"}
 
@@ -879,6 +898,179 @@ def _get_pd_config(ctx, pd_role):
         logger.info("[PD Config] non-ascend device (%s) detected, role=%s", device, pd_role)
 
     return config
+
+
+def _get_pd_external_lb_params():
+    """读取上层下发的 external-lb DP 参数；未提供或 dp_size<=1 时返回 None。
+
+    触发 external-lb（模式 A，pod 内 fork 多 service）需 PD_ROLE∈{P,D} 且 DP_SIZE>1。
+
+    上层契约（角色域，P/D 各自独立）：
+      DP_SIZE / TP_SIZE / DP_SIZE_LOCAL：本角色全局 DP / 单实例 TP / 本节点 fork 数；
+      Master_IP：本角色 DP 域 head（= --data-parallel-address）；
+      VLLM_LLMDD_RPC_PORT：DP RPC 端口（角色内一致）；
+      NODE_IPS：本角色全部节点 IP（逗号分隔）；HOST_IP：本节点 IP。
+    dp_rank_start 不由上层下发，而是 ``HOST_IP 在 NODE_IPS 中的位置 × DP_SIZE_LOCAL``。
+    旧名 PD_* 作为兜底（PD_DP_SIZE / PD_TP_SIZE / ... / PD_DP_RANK_START）。
+    """
+    role = get_pd_role_env()
+    if not role:
+        return None
+
+    def _first_env(*names):
+        for n in names:
+            v = os.getenv(n)
+            if v not in (None, ""):
+                return v
+        return None
+
+    def _int(default, *names):
+        v = _first_env(*names)
+        try:
+            return int(v) if v is not None else int(default)
+        except (ValueError, TypeError):
+            return int(default)
+
+    raw = _first_env("DP_SIZE", "PD_DP_SIZE")
+    if raw is None:
+        return None
+    try:
+        dp_size = int(raw)
+    except (ValueError, TypeError):
+        return None
+    if dp_size <= 1:
+        return None  # DP_SIZE=1 → standalone，无需 dp 参数
+
+    tp_size = _int("1", "TP_SIZE", "PD_TP_SIZE")
+    dp_size_local = _int("1", "DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
+    dp_address = _first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS") or (get_master_ip() or "")
+    rpc_port = _first_env("VLLM_LLMDD_RPC_PORT", "PD_DP_RPC_PORT") or ""
+
+    # dp_rank_start：优先显式 PD_DP_RANK_START，否则由 HOST_IP 在角色域 NODE_IPS 的位置派生。
+    explicit_start = _first_env("PD_DP_RANK_START")
+    if explicit_start is not None:
+        dp_rank_start = _int("0", "PD_DP_RANK_START")
+    else:
+        node_ips = [ip.strip() for ip in (get_node_ips() or "").split(",") if ip.strip()]
+        host_ip = (_first_env("HOST_IP", "RANK_IP") or get_local_ip() or "").strip()
+        node_rank = node_ips.index(host_ip) if host_ip in node_ips else 0
+        dp_rank_start = node_rank * dp_size_local
+
+    return {
+        "role": role,
+        "dp_size": dp_size,
+        "tp_size": tp_size,
+        "dp_size_local": dp_size_local,
+        "dp_rank_start": dp_rank_start,
+        "dp_address": dp_address,
+        "rpc_port": str(rpc_port),
+    }
+
+
+def _build_pd_external_lb_kv(entry, ext):
+    """用注册表条目构建 external-lb 的 kv_transfer_config。
+
+    连接器/kv_port/extra_config 取自注册表。``kv_connector_extra_config`` 的
+    prefill/decode 全局拓扑：本角色取上层下发的 DP_SIZE/TP_SIZE（权威），对端角色
+    取 PD_PREFILL_*/PD_DECODE_*（缺失则回退本角色并告警，KV 映射可能不准）。
+    MooncakeConnectorV1 需要按 rank 唯一的 engine_id，此处放占位符 ``__PD_RANK__``，
+    由 fork 脚本（vllm_adapter）按实际 dp_rank 替换。
+    """
+    role = ext["role"]
+    kv_role = "kv_producer" if role == "P" else "kv_consumer"
+    me = {"dp_size": ext["dp_size"], "tp_size": ext["tp_size"]}
+
+    def _peer(prefix):
+        dp = os.getenv(f"PD_{prefix}_DP_SIZE")
+        tp = os.getenv(f"PD_{prefix}_TP_SIZE")
+        if dp and tp:
+            try:
+                return {"dp_size": int(dp), "tp_size": int(tp)}
+            except (ValueError, TypeError):
+                pass
+        return None
+
+    if role == "P":
+        prefill, decode = me, _peer("DECODE")
+        if decode is None:
+            logger.warning("[PD external-lb] peer(decode) topology unknown "
+                           "(set PD_DECODE_DP_SIZE/PD_DECODE_TP_SIZE); KV mapping may be wrong")
+            decode = me
+    else:
+        decode, prefill = me, _peer("PREFILL")
+        if prefill is None:
+            logger.warning("[PD external-lb] peer(prefill) topology unknown "
+                           "(set PD_PREFILL_DP_SIZE/PD_PREFILL_TP_SIZE); KV mapping may be wrong")
+            prefill = me
+
+    extra = {"prefill": prefill, "decode": decode}
+    model_extra = entry.get("extra_config") or {}
+    if model_extra:
+        extra.update(model_extra)
+    cfg = {
+        "kv_connector": entry["connector"],
+        "kv_role": kv_role,
+        # kv_port 按 service 偏移（base + 本地 i），避免单 pod 多 service 抢同一端口；
+        # 占位符由 fork 脚本（vllm_adapter）按 base + i 替换。base 见 _apply_pd_external_lb。
+        "kv_port": "__PD_KVPORT__",
+        "kv_connector_extra_config": extra,
+    }
+    if entry["connector"] in ("MooncakeConnectorV1", "MooncakeHybridConnector"):
+        cfg["engine_id"] = "__PD_RANK__"  # fork 脚本按 dp_rank 替换
+    return cfg
+
+
+def _apply_pd_external_lb(cmd_known_params, model_info):
+    """检测 external-lb PD 并应用模型配置注册表（config/defaults/pd_config.json）。
+
+    命中条件：PD_ROLE∈{P,D} 且 PD_DP_SIZE>1。命中后（专属架构优先、回退 default）：
+      1. 合并 common + 角色 engine 参数到 engine_config（不覆盖用户显式键）；
+      2. 用注册表连接器/kv_port/extra 构建 kv_transfer_config（覆盖 standalone 版）；
+      3. 外层标记 _pd_external_lb / _pd_env，并置 distributed=False（不进 Ray/headless）。
+    未命中或注册表无可用条目时原样返回（走原 standalone PD）。
+    """
+    ext = _get_pd_external_lb_params()
+    if not ext:
+        return
+    registry = _load_pd_config()
+    arch = getattr(model_info, "model_architecture", None) or ""
+    entry = registry.get(arch) or registry.get("default")
+    if not entry:
+        logger.warning("[PD external-lb] no registry entry for arch=%s and no default; "
+                       "fall back to standalone PD", arch)
+        return
+
+    role = ext["role"]
+    role_key = "prefill" if role == "P" else "decode"
+    ec = cmd_known_params.setdefault("engine_config", {})
+    explicit = set(cmd_known_params.get("_explicit_cli_keys") or [])
+
+    # 注册表值优先级：用户 CLI/ENV > 注册表 > 基础默认。
+    # 故对非用户显式键直接覆盖（setdefault 会被 vllm_default.json 等基础默认挡住）。
+    merged_engine = {**entry.get("common", {}), **entry.get(role_key, {}).get("engine", {})}
+    for k, v in merged_engine.items():
+        if k not in explicit:
+            ec[k] = v
+
+    if "kv_transfer_config" not in explicit:
+        ec["kv_transfer_config"] = json.dumps(_build_pd_external_lb_kv(entry, ext))
+
+    # 端口偏移基址：fork 脚本按 base + 本地 i 给每个 service 算独立 kv_port / bootstrap_port，
+    # 避免单 pod 内多 service（dp_size_local>1）抢同一端口。
+    try:
+        ext["kv_port_base"] = int(entry["kv_port"][role])
+    except (KeyError, ValueError, TypeError):
+        ext["kv_port_base"] = 30000 if role == "P" else 30100
+    ext["bootstrap_base"] = int(
+        os.getenv("VLLM_MOONCAKE_BOOTSTRAP_PORT", "23000" if role == "P" else "23100")
+    )
+
+    cmd_known_params["_pd_external_lb"] = ext
+    cmd_known_params["_pd_env"] = entry.get(role_key, {}).get("env", {})
+    cmd_known_params["distributed"] = False
+    logger.info("[PD external-lb] arch=%s role=%s connector=%s dp_size=%d local=%d rank_start=%d addr=%s",
+                arch, role, entry["connector"], ext["dp_size"], ext["dp_size_local"],
+                ext["dp_rank_start"], ext["dp_address"])
 
 
 def _is_glm51_nvidia_vllm(ctx, model_info) -> bool:
@@ -2618,6 +2810,10 @@ def load_and_merge_configs(
         explicit_keys = set(final_engine_params.get("_explicit_cli_keys") or [])
         explicit_keys.update(inherited_explicit_keys)
         final_engine_params["_explicit_cli_keys"] = sorted(explicit_keys)
+
+    # 6. PD external-lb：检测并应用 PD 模型配置注册表（pd_config.json）。
+    #    必须在所有合并 + explicit_keys 终定之后，确保不覆盖用户显式键。
+    _apply_pd_external_lb(final_engine_params, model_info)
 
     logger.info("Final engine_config keys: %s", list(engine_config.keys()))
     logger.info("Config merging completed.")

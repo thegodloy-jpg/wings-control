@@ -327,13 +327,101 @@ def run_dry_run(scenario_name: str, scenario: dict) -> None:
     shutil.rmtree(model_dir, ignore_errors=True)
 
 
+# ── PD external-lb 场景（上层契约下发 + pod 内 fork）──
+PD_SCENARIOS = {
+    "glm5": {
+        "description": "GLM-5 PD 分离 (P:dp2×tp16 / D:dp16×tp4)",
+        "architecture": "GlmMoeDsaForCausalLM",
+        "model_name": "glm-5.1-chat",
+        "prefill": {"dp": 2, "tp": 16, "local": 1,
+                    "nodes": ["7.0.0.1", "7.0.0.2"], "rpc": "10521"},
+        "decode": {"dp": 16, "tp": 4, "local": 4,
+                   "nodes": ["7.0.1.1", "7.0.1.2", "7.0.1.3", "7.0.1.4"], "rpc": "10523"},
+    },
+    "v4flash": {
+        "description": "DeepSeek-V4-Flash A3 PD 分离 (P:dp4×tp4 / D:dp16×tp1)",
+        "architecture": "DeepseekV4ForCausalLM",
+        "model_name": "DeepSeek-V4-Flash",
+        "prefill": {"dp": 4, "tp": 4, "local": 4, "nodes": ["8.0.0.1"], "rpc": "10521"},
+        "decode": {"dp": 16, "tp": 1, "local": 16, "nodes": ["8.0.1.1"], "rpc": "10523"},
+    },
+}
+
+
+def run_pd_dry_run(name: str, scenario: dict) -> None:
+    """生成 PD external-lb 场景的 P/D 启动脚本（每角色 node0；D 多节点再出 node1 展示 rank 派生）。"""
+    from core.start_args_compat import parse_launch_args
+    from core.port_plan import derive_port_plan
+    from core.wings_entry import build_launcher_plan
+    from config.settings import settings
+
+    arch = scenario["architecture"]
+    model_name = scenario["model_name"]
+    pf, dc = scenario["prefill"], scenario["decode"]
+    output_dir = os.path.join(SCRIPT_DIR, "build", "output")
+    os.makedirs(output_dir, exist_ok=True)
+
+    logger.info("=" * 80)
+    logger.info("PD 场景: %s — %s", name, scenario["description"])
+    logger.info("=" * 80)
+
+    def _one(role_key, topo, node_idx):
+        role = "P" if role_key == "prefill" else "D"
+        node_ips = ",".join(topo["nodes"])
+        host_ip = topo["nodes"][node_idx]
+        model_dir = create_mock_model_dir(arch, {"quantization_config": {"quant_method": "ascend"}})
+        sv = tempfile.mkdtemp(prefix="sv_", dir=os.path.join(SCRIPT_DIR, "build")).replace("\\", "/")
+        for k in list(os.environ):
+            if k.startswith(("PD_", "DP_", "TP_")) or k in (
+                    "NODE_IPS", "HOST_IP", "Master_IP", "MASTER_IP", "VLLM_LLMDD_RPC_PORT", "RANK_IP"):
+                os.environ.pop(k, None)
+        os.environ.update({
+            "ENGINE": "vllm_ascend", "MODEL_NAME": model_name, "MODEL_PATH": model_dir, "MODEL_TYPE": "auto",
+            "DEVICE_COUNT": str(topo["local"] * topo["tp"]), "DISTRIBUTED": "false", "NNODES": "1",
+            "NODE_RANK": "0", "POD_IP": host_ip, "WINGS_DEVICE": "ascend", "WINGS_ASCEND_PLATFORM": "a3",
+            "SHARED_VOLUME_PATH": sv, "ENGINE_PORT": "18000", "PORT": "18000",
+            # —— 上层契约 ——
+            "PD_ROLE": role, "DP_SIZE": str(topo["dp"]), "TP_SIZE": str(topo["tp"]),
+            "DP_SIZE_LOCAL": str(topo["local"]), "Master_IP": topo["nodes"][0],
+            "VLLM_LLMDD_RPC_PORT": topo["rpc"], "NODE_IPS": node_ips, "HOST_IP": host_ip,
+            # —— KV 全局拓扑（对端角色）——
+            "PD_PREFILL_DP_SIZE": str(pf["dp"]), "PD_PREFILL_TP_SIZE": str(pf["tp"]),
+            "PD_DECODE_DP_SIZE": str(dc["dp"]), "PD_DECODE_TP_SIZE": str(dc["tp"]),
+        })
+        la = parse_launch_args(["--model-name", model_name, "--model-path", model_dir,
+                                "--engine", "vllm_ascend", "--device-count",
+                                str(topo["local"] * topo["tp"]), "--nnodes", "1", "--node-rank", "0"])
+        pp = derive_port_plan(port=la.port, enable_reason_proxy=settings.ENABLE_REASON_PROXY,
+                              health_port=settings.HEALTH_PORT)
+        cmd = build_launcher_plan(la, pp).command
+        fn = f"start_command_pd-{name}-{role}_node{node_idx}.sh"
+        with open(os.path.join(output_dir, fn), "w", encoding="utf-8", newline="\n") as f:
+            f.write(cmd)
+        logger.info("  %s-node%d → %s (%d bytes)", role, node_idx, fn, len(cmd))
+        import shutil
+        shutil.rmtree(model_dir, ignore_errors=True)
+        shutil.rmtree(sv, ignore_errors=True)
+
+    _one("prefill", pf, 0)
+    _one("decode", dc, 0)
+    if len(dc["nodes"]) > 1:
+        _one("decode", dc, 1)  # 展示 dp_rank_start 由 HOST_IP 派生
+
+
 def main():
     parser = argparse.ArgumentParser(description="Wings-infer Dry-Run: 生成 start_command.sh")
     parser.add_argument("--scenario", "-s", choices=list(SCENARIOS.keys()),
                         help="预置场景名称")
+    parser.add_argument("--pd", choices=list(PD_SCENARIOS.keys()),
+                        help="PD external-lb 场景（glm5 / v4flash）")
     parser.add_argument("--list", "-l", action="store_true",
                         help="列出所有预置场景")
     args = parser.parse_args()
+
+    if args.pd:
+        run_pd_dry_run(args.pd, PD_SCENARIOS[args.pd])
+        logger.info("PD DRY RUN COMPLETE — 输出目录: build/output/")
+        return
 
     if args.list:
         print("可用场景:")
