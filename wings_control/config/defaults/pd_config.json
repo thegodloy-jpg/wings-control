@@ -1,0 +1,115 @@
+{
+  "_comment": "PD 分离模型配置注册表。key = 模型架构 (model_architecture)，同时作为 external-lb PD 的门控白名单：取不到条目 = 未注册 = 不应用 PD external-lb（走原 standalone）。新增一个模型的 PD 支持 = 在此加一个架构条目，无需改 Python。各字段语义见 docs/xuqiu/deepseek-v32-pd-disaggregation.md §7.6。数值来源为 vllm-ascend 官方 tutorials，以官方文档为准（部分经摘要，落地前需逐项核对）。",
+  "_schema": {
+    "<ModelArchitecture>": {
+      "connector": "KV 连接器名 (MooncakeLayerwiseConnector | MooncakeConnectorV1 | ...)",
+      "kv_port": { "P": "producer 端口", "D": "consumer 端口" },
+      "extra_config": "kv_connector_extra_config 的模型专属附加字段 (prefill/decode 全局拓扑由运行时按角色填入，不写这里)",
+      "common": "P/D 共用的 engine 参数",
+      "prefill": { "engine": "P 专属 engine 参数", "env": "P 专属环境变量" },
+      "decode": { "engine": "D 专属 engine 参数", "env": "D 专属环境变量" }
+    }
+  },
+  "pd_config": {
+    "default": {
+      "_comment": "未注册模型的 PD 分离兜底模板。仅含通用安全项；特定模型应单独注册条目覆盖。刻意不含 gpu_memory_utilization / enable_expert_parallel（非 MoE 会报错）/ max_num_* / 模型专属算子项。connector=MooncakeConnectorV1 时 engine_id 由运行时按 dp_rank 注入（见设计文档 §8-C2）。FULL_DECODE_ONLY 有 MTE 越界历史(R6)，新模型首次跑建议真机验证，必要时用专属条目覆盖为 enforce_eager。",
+      "connector": "MooncakeConnectorV1",
+      "kv_port": { "P": "30100", "D": "30400" },
+      "extra_config": {},
+      "common": { "trust_remote_code": true, "disable_hybrid_kv_cache_manager": true },
+      "prefill": { "engine": { "enforce_eager": true }, "env": {} },
+      "decode": {
+        "engine": { "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" } },
+        "env": { "TASK_QUEUE_ENABLE": "1" }
+      }
+    },
+    "DeepseekV32ForCausalLM": {
+      "_source": "https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/DeepSeek-V3.2.html",
+      "connector": "MooncakeLayerwiseConnector",
+      "kv_port": { "P": "30000", "D": "30100" },
+      "extra_config": {},
+      "common": {
+        "enable_expert_parallel": true,
+        "quantization": "ascend",
+        "max_model_len": 68000,
+        "no_enable_prefix_caching": true,
+        "speculative_config": { "num_speculative_tokens": 2, "method": "deepseek_mtp" }
+      },
+      "prefill": {
+        "engine": {
+          "max_num_batched_tokens": 32560,
+          "max_num_seqs": 64,
+          "gpu_memory_utilization": 0.82,
+          "enforce_eager": true,
+          "additional_config": { "layer_sharding": ["q_b_proj", "o_proj"], "enable_dsa_cp": true }
+        },
+        "env": { "VLLM_ASCEND_ENABLE_FLASHCOMM1": "1" }
+      },
+      "decode": {
+        "engine": {
+          "max_num_batched_tokens": 12,
+          "max_num_seqs": 4,
+          "gpu_memory_utilization": 0.95,
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [3, 6, 9, 12] },
+          "additional_config": { "recompute_scheduler_enable": true }
+        },
+        "env": { "TASK_QUEUE_ENABLE": "1" }
+      }
+    },
+    "GlmMoeDsaForCausalLM": {
+      "_source": "https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/GLM5.html",
+      "connector": "MooncakeConnectorV1",
+      "kv_port": { "P": "30000", "D": "30100" },
+      "extra_config": { "use_ascend_direct": true },
+      "common": {
+        "enable_expert_parallel": true,
+        "quantization": "ascend"
+      },
+      "prefill": {
+        "engine": {
+          "max_num_batched_tokens": 4096,
+          "max_num_seqs": 64,
+          "gpu_memory_utilization": 0.95
+        },
+        "env": { "VLLM_ASCEND_ENABLE_FLASHCOMM1": "1", "VLLM_ASCEND_ENABLE_FUSED_MC2": "1" }
+      },
+      "decode": {
+        "engine": {
+          "max_num_batched_tokens": 32,
+          "max_num_seqs": 8,
+          "gpu_memory_utilization": 0.92,
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
+        },
+        "env": { "VLLM_ASCEND_ENABLE_MLAPO": "1", "TASK_QUEUE_ENABLE": "1", "VLLM_ASCEND_ENABLE_FUSED_MC2": "1" }
+      }
+    },
+    "Qwen3_5MoeForConditionalGeneration": {
+      "_source": "https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/Qwen3.5-397B-A17B.html",
+      "connector": "MooncakeLayerwiseConnector",
+      "kv_port": { "P": "23010", "D": "36010" },
+      "extra_config": {},
+      "common": {
+        "enable_expert_parallel": true,
+        "quantization": "ascend"
+      },
+      "prefill": {
+        "engine": {
+          "max_num_batched_tokens": 4096,
+          "max_num_seqs": 64,
+          "gpu_memory_utilization": 0.9,
+          "enforce_eager": true
+        },
+        "env": {}
+      },
+      "decode": {
+        "engine": {
+          "max_num_batched_tokens": 128,
+          "max_num_seqs": 32,
+          "gpu_memory_utilization": 0.96,
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
+        },
+        "env": {}
+      }
+    }
+  }
+}
