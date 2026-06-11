@@ -669,6 +669,16 @@ def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = No
         )
         return env_commands
 
+    # [V4-Flash-NV-Day0] NV V4-Flash 用 native --kv_offloading_backend（见 _build_kv_offload_cmd），
+    # 与 LMCache 互斥：此处已通过上方 get_lmcache_env 守卫，说明 LMCACHE_OFFLOAD=true，
+    # 故跳过 LMCache engine 侧 env 导出，避免两套卸载机制并存。
+    if params and engine == "vllm" and _is_deepseek_v4_flash_params(params):
+        logger.info(
+            "[KVCache Offload] DeepSeek-V4-Flash (NV) uses native --kv_offloading_backend; "
+            "skipping LMCache engine-side env exports."
+        )
+        return env_commands
+
     # 跨实例Hash一致
     env_commands.append('export PYTHONHASHSEED=0')
     _append_lmcache_env_export(env_commands, "LMCACHE_OFFLOAD", "true")
@@ -2102,6 +2112,32 @@ def _apply_deepseek_v4_pro_engine_defaults(
         engine_config["data_parallel_start_rank"] = _safe_int(params.get("node_rank")) or 0
 
 
+def _resolve_v4_flash_offload_gb(params: Dict[str, Any]) -> int:
+    """Resolve KV-offload CPU size (GB) shared by ascend ``cpu_swap_space_gb``
+    and NV native ``--kv_offloading_size``.
+
+    取值规则（整节点口径，两路径同源同值）：
+      * ``LMCACHE_MAX_LOCAL_CPU_SIZE`` 未设/非法 → 200（默认平铺，不乘）；
+      * **V4-Flash**：该值视作「每卡」，乘本节点卡数 ``device_count``；
+      * V4-Pro / 其它：直接使用该值（维持原行为）。
+    """
+    raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
+    try:
+        per_card_gb = int(raw_size) if raw_size else None
+    except ValueError:
+        logger.warning(
+            "[DeepSeek-V4 KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
+            "falling back to 200 GB.", raw_size,
+        )
+        per_card_gb = None
+    if per_card_gb is None:
+        return 200
+    if _is_deepseek_v4_flash_params(params):
+        device_count = _safe_int(params.get("device_count")) or 1
+        return device_count * per_card_gb
+    return per_card_gb
+
+
 def _apply_deepseek_v4_cpu_offload(
     params: Dict[str, Any],
     engine_config: Dict[str, Any],
@@ -2127,24 +2163,7 @@ def _apply_deepseek_v4_cpu_offload(
         return
     if "kv_transfer_config" in explicit_keys:
         return
-    raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
-    try:
-        per_card_gb = int(raw_size) if raw_size else None
-    except ValueError:
-        logger.warning(
-            "[DeepSeek-V4 KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
-            "falling back to 200 GB.", raw_size,
-        )
-        per_card_gb = None
-    if per_card_gb is None:
-        cpu_swap_gb = 200
-    elif _is_deepseek_v4_flash_params(params):
-        # 仅 V4-Flash：LMCACHE_MAX_LOCAL_CPU_SIZE 视作「每卡」值，乘本节点卡数
-        device_count = _safe_int(params.get("device_count")) or 1
-        cpu_swap_gb = device_count * per_card_gb
-    else:
-        # V4-Pro / 其它：维持原行为，直接使用该值
-        cpu_swap_gb = per_card_gb
+    cpu_swap_gb = _resolve_v4_flash_offload_gb(params)
     engine_config["kv_transfer_config"] = {
         "kv_connector": "CPUOffloadingConnector",
         "kv_connector_module_path":
@@ -2548,6 +2567,14 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
                 "(coexists with MTP); keeping deepseek_mtp speculative strategy."
             )
             lmcache_effective = False
+        # [V4-Flash-NV-Day0] NV V4-Flash 用 native --kv_offloading_backend，
+        # 与 MTP 共存，不应被 LMCache 误降级为 suffix。
+        if lmcache_effective and engine == "vllm" and _is_deepseek_v4_flash_params(params, model_info):
+            logger.info(
+                "[KVCache Offload] DeepSeek-V4-Flash (NV) uses native KV offload "
+                "(coexists with MTP); keeping mtp speculative strategy."
+            )
+            lmcache_effective = False
         return "suffix" if lmcache_effective else mtp_method
 
     return "suffix"
@@ -2647,6 +2674,10 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         logger.info("[AdvFeature-SpecDecode] Architecture %s → MTP strategy (%s)",
                     model_info.model_architecture, strategy)
         if model_info.model_architecture == "Glm4MoeForCausalLM" and _is_w8a8_quantize(model_info.model_quantize):
+            strategy = "mtp"
+        # [V4-Flash-NV-Day0] NV 上 V4-Flash 用裸 "mtp"；Ascend 维持 "deepseek_mtp"
+        # （官方模板要求，见 _resolve_mtp_method 注释），故按 engine 收口覆盖。
+        if engine == "vllm" and strategy.endswith("_mtp") and _is_deepseek_v4_flash_params(params, model_info):
             strategy = "mtp"
         speculative_config_temp.append(f'"method": "{strategy}"')
         # DeepSeek-V4-Pro / V4-Flash / GLM-5/5.1 官方推荐 num=1；默认不启用，只有
@@ -2774,6 +2805,14 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
         )
         return ""
 
+    # [V4-Flash-NV-Day0] NV V4-Flash 走 IndexCache（use_index_cache），引擎内置、不装补丁。
+    # 刻意不把 DeepseekV4ForCausalLM 加入 INDEXCACHE_ARCHS，使 _collect_indexcache_patch_features
+    # 因架构不在白名单天然返回 []，从而跳过 indexcache 补丁安装。
+    if _is_deepseek_v4_flash_params(params, model_info):
+        logger.info("[KV Sparse] DeepSeek-V4-Flash (NV) → IndexCache use_index_cache "
+                    "(--hf-overrides, no patch install)")
+        return " --hf-overrides '{\"use_index_cache\": true, \"index_topk_freq\": 4}'"
+
     if arch in INDEXCACHE_ARCHS:
         logger.info("[KV Sparse] Architecture %s → IndexCache strategy (--hf-overrides)", arch)
         return " --hf-overrides '{\"index_topk_freq\": 4}'"
@@ -2783,6 +2822,27 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
         engine_config["kv_cache_dtype"] = "fp8"
         engine_config["calculate_kv_scales"] = True
         return ""
+
+
+def _build_kv_offload_cmd(params: Dict[str, Any], engine: str) -> str:
+    """[V4-Flash-NV-Day0] 构建 NV V4-Flash native KV 卸载 CLI 片段。
+
+    - 仅 ``engine == "vllm"`` 且 V4-Flash 生效（Ascend 仍走 CPUOffloadingConnector）。
+    - 复用 ``LMCACHE_OFFLOAD`` 总开关（get_lmcache_env）作为触发条件。
+    - size 复用 ``_resolve_v4_flash_offload_gb``，与 ascend ``cpu_swap_space_gb`` 同源同值。
+    - 与 LMCache env 路径互斥：命中时 ``_build_cache_env_commands`` 跳过 LMCache 导出。
+    - fallback 时由 ``_wings_fallback_no_kv_offload`` 抑制（崩溃回退退回基线命令）。
+    """
+    if engine != "vllm" or not _is_deepseek_v4_flash_params(params):
+        return ""
+    if params.get("_wings_fallback_no_kv_offload"):
+        return ""
+    if not get_lmcache_env():
+        return ""
+    size_gb = _resolve_v4_flash_offload_gb(params)
+    logger.info("[KV Offload] DeepSeek-V4-Flash (NV) → native backend, "
+                "--kv_offloading_size=%dGB", size_gb)
+    return f" --kv_offloading_backend native --kv_offloading_size {size_gb}"
 
 
 def build_start_command(params: Dict[str, Any]) -> str:
@@ -2849,8 +2909,10 @@ def _build_vllm_single_script(
     )
     # A+X 环境下需要 --enforce-eager 绕过 triton 版本冲突（与 Ray 路径一致）
     eager_flag = " --enforce-eager" if _need_enforce_eager(engine) else ""
+    # [V4-Flash-NV-Day0] NV V4-Flash native KV 卸载（与 LMCache 互斥，fallback 自动剥除）
+    kv_offload_extra = _build_kv_offload_cmd(params, engine)
 
-    return env_prefix + f"exec {cmd}{eager_flag}{speculative_extra}{sparse_args}\n"
+    return env_prefix + f"exec {cmd}{eager_flag}{speculative_extra}{sparse_args}{kv_offload_extra}\n"
 
 
 def build_start_script(params: Dict[str, Any]) -> str:

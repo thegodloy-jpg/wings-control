@@ -929,6 +929,21 @@ def _is_deepseek_v4_flash_offload(ctx, model_info) -> bool:
     return "flash" in _v4_offload_identity_text(ctx, model_info)
 
 
+def _is_deepseek_v4_flash_nv(ctx, model_info) -> bool:
+    """[V4-Flash-NV-Day0] Return True for V4-Flash on NVIDIA/vllm.
+
+    该路径用 native ``--kv_offloading_backend``（在 vllm_adapter 生成 CLI），
+    因此 config 合并阶段不注入 LMCacheConnectorV1 kv_transfer_config。
+    """
+    if ctx.get("engine") != "vllm":
+        return False
+    text = _v4_offload_identity_text(ctx, model_info)
+    if not ("v4" in text and "flash" in text):
+        return False
+    arch = getattr(model_info, "model_architecture", "")
+    return arch in _DEEPSEEK_V4_CPU_OFFLOAD_ARCHES
+
+
 def _resolve_v4_offload_device_count(params, ctx) -> int:
     """本节点卡数，用于 V4-Flash 卸载容量按卡放大。"""
     try:
@@ -993,6 +1008,13 @@ def _set_kv_cache_config(params, ctx, model_info=None):
         logger.info(
             "[KVCache Offload] DeepSeek-V4 Flash/Pro on vllm_ascend uses "
             "CPUOffloadingConnector; not injecting LMCacheConnectorV1."
+        )
+        return
+
+    if lmcache_offload and model_info is not None and _is_deepseek_v4_flash_nv(ctx, model_info):
+        logger.info(
+            "[KVCache Offload] DeepSeek-V4-Flash on NVIDIA/vllm uses native "
+            "--kv_offloading_backend; not injecting LMCacheConnectorV1."
         )
         return
 

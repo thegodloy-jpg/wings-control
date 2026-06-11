@@ -103,7 +103,7 @@ SCENARIOS = {
         },
     },
     "v4flash-nv-h20-8": {
-        "description": "DeepSeek-V4-Flash + NVIDIA H20 单机8卡 (投机推理开)",
+        "description": "DeepSeek-V4-Flash + NVIDIA H20 单机8卡 (投机推理 + IndexCache + native KV 卸载)",
         "architecture": "DeepseekV4ForCausalLM",
         "model_name": "DeepSeek-V4-Flash",
         "engine": "vllm",
@@ -114,7 +114,9 @@ SCENARIOS = {
         "head_node_addr": "127.0.0.1",
         "node_ips": "192.168.1.100",
         "enable_speculative_decode": True,
-        "enable_sparse": False,
+        "enable_sparse": True,
+        "enable_kv_offload": True,
+        "lmcache_max_local_cpu_size": 25,
         "platform": "",
         "config_json_extra": {},
     },
@@ -219,14 +221,20 @@ def setup_env(scenario: dict, model_dir: str) -> None:
         "NETWORK_INTERFACE": "eth0",
         "PORT": "18000",
         "ENABLE_ACCEL": "false",
-        "LMCACHE_OFFLOAD": "false",
+        "LMCACHE_OFFLOAD": "true" if scenario.get("enable_kv_offload") else "false",
         "SHARED_VOLUME_PATH": shared_vol,
         # 硬件设备类型（决定加载 ascend_default.json 还是 nvidia_default.json）
         "WINGS_DEVICE": device_type,
         # 平台标识（A2/A3 细分）
         "WINGS_ASCEND_PLATFORM": scenario.get("platform", ""),
     }
+    # KV 卸载容量（每卡 GB，V4-Flash 乘本节点卡数；仅在开启卸载时注入）
+    if scenario.get("enable_kv_offload") and scenario.get("lmcache_max_local_cpu_size"):
+        env["LMCACHE_MAX_LOCAL_CPU_SIZE"] = str(scenario["lmcache_max_local_cpu_size"])
     os.environ.update(env)
+    # 未开启卸载的场景需清除上一轮残留，避免跨场景串味
+    if not scenario.get("enable_kv_offload"):
+        os.environ.pop("LMCACHE_MAX_LOCAL_CPU_SIZE", None)
 
 
 def run_dry_run(scenario_name: str, scenario: dict) -> None:

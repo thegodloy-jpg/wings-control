@@ -1284,6 +1284,9 @@ def _build_advanced_feature_fallback_cmd(merged: dict) -> str:
                 "[AdvFeature] Removed kv_transfer_config "
                 "from engine_config for fallback (LMCache Offload was enabled)"
             )
+        # [V4-Flash-NV-Day0] NV V4-Flash native 卸载是构建期 CLI flag（非 kv_transfer_config），
+        # 需显式抑制，否则 fallback 重建命令仍会带上 --kv_offloading_backend。
+        merged_no_features["_wings_fallback_no_kv_offload"] = True
     fallback_body = start_engine_service(merged_no_features)
     fallback_cmd = _strip_exec_and_backgroundify(fallback_body)
     fallback_cmd += "ENGINE_PID=$!\n"
