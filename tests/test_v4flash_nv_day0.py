@@ -86,7 +86,7 @@ class TestIndexCache(unittest.TestCase):
 
 
 class TestSparseSwitchGating(unittest.TestCase):
-    """端到端：IndexCache 由 enable_sparse 上层开关门控，非写死强制开。"""
+    """端到端：NV V4-Flash IndexCache 默认强制开（方案 A，绕过 enable_sparse，关不掉）。"""
 
     def test_sparse_on_emits_hf_overrides(self):
         params = _v4_flash_params(enable_sparse=True)
@@ -96,22 +96,23 @@ class TestSparseSwitchGating(unittest.TestCase):
             script = vllm_adapter.build_start_script(params)
         self.assertIn("use_index_cache", script)
 
-    def test_sparse_off_no_hf_overrides(self):
+    def test_sparse_off_still_emits_hf_overrides(self):
+        """显式 enable_sparse=False 也关不掉（与 GLM-5.1-Ascend 同范式：强制开）。"""
         params = _v4_flash_params(enable_sparse=False)
         with patch.object(vllm_adapter, "ModelIdentifier",
                           return_value=_FakeModelInfo("DeepseekV4ForCausalLM")), \
              patch.dict("os.environ", {}, clear=True):
             script = vllm_adapter.build_start_script(params)
-        self.assertNotIn("use_index_cache", script)
-        self.assertNotIn("--hf-overrides", script)
+        self.assertIn("use_index_cache", script)
 
-    def test_sparse_missing_no_hf_overrides(self):
+    def test_sparse_missing_emits_hf_overrides(self):
+        """未传 enable_sparse → 默认开。"""
         params = _v4_flash_params()  # 未传 enable_sparse
         with patch.object(vllm_adapter, "ModelIdentifier",
                           return_value=_FakeModelInfo("DeepseekV4ForCausalLM")), \
              patch.dict("os.environ", {}, clear=True):
             script = vllm_adapter.build_start_script(params)
-        self.assertNotIn("use_index_cache", script)
+        self.assertIn("use_index_cache", script)
 
 
 class TestNativeKvOffload(unittest.TestCase):

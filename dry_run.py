@@ -103,7 +103,7 @@ SCENARIOS = {
         },
     },
     "v4flash-nv-h20-8": {
-        "description": "DeepSeek-V4-Flash + NVIDIA H20 单机8卡 (投机推理 + IndexCache + native KV 卸载)",
+        "description": "DeepSeek-V4-Flash + NVIDIA H20 单机8卡 (投机推理 + IndexCache默认强制开 + native KV 卸载)",
         "architecture": "DeepseekV4ForCausalLM",
         "model_name": "DeepSeek-V4-Flash",
         "engine": "vllm",
@@ -114,7 +114,8 @@ SCENARIOS = {
         "head_node_addr": "127.0.0.1",
         "node_ips": "192.168.1.100",
         "enable_speculative_decode": True,
-        "enable_sparse": True,
+        # [V4-Flash-NV-Day0] 不传 --enable-sparse：验证 IndexCache 由强制闸默认开（方案 A）
+        "enable_sparse": False,
         "enable_kv_offload": True,
         "lmcache_max_local_cpu_size": 25,
         "platform": "",

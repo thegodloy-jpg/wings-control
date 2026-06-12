@@ -2774,6 +2774,21 @@ def _force_kv_sparse_for_glm51_ascend(params: Dict[str, Any], engine: str) -> bo
     )
 
 
+def _force_kv_sparse_for_v4flash_nv(params: Dict[str, Any], engine: str) -> bool:
+    """[V4-Flash-NV-Day0] NV V4-Flash 默认启用 KV 稀疏（IndexCache）。
+
+    范围：
+      * engine == ``vllm``（NV；vllm_ascend 的 V4-Flash 在 _build_kv_sparse_cmd 内提前 return 空串）
+      * 架构/名称判定为 DeepSeek-V4-Flash
+
+    行为：绕过 ``enable_sparse`` 开关，强制走 IndexCache ``use_index_cache`` 路径
+    （与 _force_kv_sparse_for_glm51_ascend 同范式：强制开、关不掉）。
+    """
+    if engine != "vllm":
+        return False
+    return _is_deepseek_v4_flash_params(params)
+
+
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     """构建 KV 稀疏特性的启动命令参数。
 
@@ -2969,7 +2984,8 @@ def build_start_script(params: Dict[str, Any]) -> str:
     # FP8 路径会就地修改 engine_config，避免 --kv-cache-dtype 重复
     # [GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 强制开启，绕过 enable_sparse 开关
     should_emit_sparse = bool(params.get("enable_sparse")) or \
-        _force_kv_sparse_for_glm51_ascend(params, engine)
+        _force_kv_sparse_for_glm51_ascend(params, engine) or \
+        _force_kv_sparse_for_v4flash_nv(params, engine)
     sparse_args = _build_kv_sparse_cmd(params, engine) if should_emit_sparse else ""
     # GLM-4.7-W8A8 引擎参数注入（必须在 _build_vllm_cmd_parts 之前，且只动 W8A8 量化变体）
     _inject_glm47_w8a8_engine_config(params, force_non_explicit=True)

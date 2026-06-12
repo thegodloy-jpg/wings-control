@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_uzfmzper", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_j7bq_rf5", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -160,14 +160,14 @@ fi
 ENGINE_START_EPOCH=$(date +%s)
 export VLLM_EARS_TOLERANCE=0.5
 echo "[wings-env] export VLLM_EARS_TOLERANCE=${VLLM_EARS_TOLERANCE:-}"
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_uzfmzper --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --speculative-config '"'"'{"method": "mtp", "num_speculative_tokens": 1}'"'"' --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"' --kv_offloading_backend native --kv_offloading_size 200'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_uzfmzper --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --speculative-config '{"method": "mtp", "num_speculative_tokens": 1}' --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' --kv_offloading_backend native --kv_offloading_size 200 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_j7bq_rf5 --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --speculative-config '"'"'{"method": "mtp", "num_speculative_tokens": 1}'"'"' --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"' --kv_offloading_backend native --kv_offloading_size 200'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_j7bq_rf5 --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --speculative-config '{"method": "mtp", "num_speculative_tokens": 1}' --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' --kv_offloading_backend native --kv_offloading_size 200 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features enabled)"
 
 # --- Engine process wait and exception handling (with advanced feature fallback) ---
 echo "[AdvFeature] Engine process monitor started, PID=$ENGINE_PID"
-echo "[AdvFeature] Active advanced features: speculative_decode, sparse_kv, lmcache_offload"
+echo "[AdvFeature] Active advanced features: speculative_decode, lmcache_offload"
 if wait "$ENGINE_PID"; then
   echo "[Engine] Engine process exited normally"
   echo "[引擎] 停止日志解析进程..."
@@ -181,10 +181,10 @@ else
   # 一刀切策略：高级特性启用时崩溃 → 无条件禁用所有高级特性重试一次
   echo "[AdvFeature] ┌── Advanced Feature Fallback Triggered ──"
   echo "[AdvFeature] │ Reason: Engine crashed (exit_code=$EXIT_CODE, runtime=${ENGINE_DURATION}s)"
-  echo "[AdvFeature] │ Features disabled: speculative_decode, sparse_kv, lmcache_offload"
+  echo "[AdvFeature] │ Features disabled: speculative_decode, lmcache_offload"
   echo "[AdvFeature] │ Action: Restarting engine without advanced features"
   echo "[AdvFeature] └── Fallback command about to execute..."
-  echo "[Engine] Falling back to basic mode (disabled: speculative_decode, sparse_kv, lmcache_offload)..."
+  echo "[Engine] Falling back to basic mode (disabled: speculative_decode, lmcache_offload)..."
   # 更新 advanced_features.json：引擎级特性全部置 false，RAG 保持不变
   cat > "/shared-volume\advanced_features.json" <<'FEATURES_EOF'
 {
@@ -217,10 +217,10 @@ FEATURES_EOF
   echo "[Engine] Waiting 5s for port release before restart..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_uzfmzper --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_uzfmzper --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_j7bq_rf5 --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"''
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_j7bq_rf5 --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' &
 ENGINE_PID=$!
-echo "[Engine] Engine PID: $ENGINE_PID (advanced features disabled: speculative_decode, sparse_kv, lmcache_offload, fallback mode)"
+echo "[Engine] Engine PID: $ENGINE_PID (advanced features disabled: speculative_decode, lmcache_offload, fallback mode)"
   echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."
   if wait "$ENGINE_PID"; then
     echo "[Engine] Engine process exited normally (fallback mode)"
