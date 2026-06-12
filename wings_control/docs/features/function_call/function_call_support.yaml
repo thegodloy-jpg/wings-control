@@ -136,7 +136,7 @@ architectures:
 
   - name: Qwen3MoeForCausalLM
     config:
-      vllm:        {default: hermes, Qwen3-Coder-480B-A35B-Instruct: qwen3_xml, Qwen3-Coder-30B-A3B-Instruct: qwen3_xml}
+      vllm:        {default: hermes, Qwen3-Coder-480B-A35B-Instruct: qwen3_coder, Qwen3-Coder-30B-A3B-Instruct: qwen3_coder}
       sglang:      {default: qwen, Qwen3-Coder-480B-A35B-Instruct: qwen3_coder, Qwen3-Coder-30B-A3B-Instruct: qwen3_coder}
       vllm_ascend: {default: hermes, Qwen3-235B-A22B: hermes}
       mindie:      {default: qwen3, Qwen3-235B-A22B: qwen3}
@@ -154,21 +154,23 @@ architectures:
 
   - name: Qwen3_5ForConditionalGeneration
     config:
-      vllm:        {default: hermes}
+      vllm:        {default: qwen3_coder}
       sglang:      {default: qwen}
-      vllm_ascend: {default: hermes}
+      vllm_ascend: {default: qwen3_coder}
     models:
-      Qwen3.5-27B:          {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
-      Qwen3.5-27B-Instruct: {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
+      Qwen3.5-27B:          {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.5-27B-Instruct: {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
 
   - name: Qwen3_5MoeForConditionalGeneration
     config:
-      vllm:        {default: hermes}
+      vllm:        {default: qwen3_coder}
       sglang:      {default: qwen}
-      vllm_ascend: {default: hermes}
+      vllm_ascend: {default: qwen3_coder}
     models:
-      Qwen3.5-397-A17B:      {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
-      Qwen3.5-397-A17B-w8a8: {vllm: hermes, vllm_ascend: hermes, sglang: qwen}
+      Qwen3.5-397-A17B:      {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.5-397-A17B-w8a8: {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.5-397B-A17B:     {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.6-35B-A3B:       {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
 
   - name: MiniMaxM2ForCausalLM
     config:

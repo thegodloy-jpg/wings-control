@@ -403,12 +403,14 @@
           "vllm_ascend": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v32"
+            "tool_call_parser": "deepseek_v32",
+            "reasoning_parser": "deepseek_v3"
           },
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v32"
+            "tool_call_parser": "deepseek_v32",
+            "reasoning_parser": "deepseek_v3"
           }
         }
       },
@@ -492,22 +494,24 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "no_enable_prefix_caching": true,
+            "enable_prefix_caching": true,
+            "mamba_cache_mode": "align",
             "async_scheduling": true,
             "compilation_config": "{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}",
             "additional_config": "{\"enable_cpu_binding\":true}",
-            "tool_call_parser": "hermes",
+            "tool_call_parser": "qwen3_coder",
             "reasoning_parser": "qwen3"
           },
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "no_enable_prefix_caching": true,
+            "enable_prefix_caching": true,
+            "mamba_cache_mode": "align",
             "async_scheduling": true,
             "compilation_config": "{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}",
             "additional_config": "{\"enable_cpu_binding\":true}",
-            "tool_call_parser": "hermes",
+            "tool_call_parser": "qwen3_coder",
             "reasoning_parser": "qwen3"
           }
         }
@@ -518,14 +522,98 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "hermes",
+            "enable_expert_parallel": true,
+            "max_num_seqs": 128,
+            "max_num_batched_tokens": 16384,
+            "gpu_memory_utilization": 0.9,
+            "enable_prefix_caching": true,
+            "async_scheduling": true,
+            "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "additional_config": {"enable_cpu_binding": true},
+            "tool_call_parser": "qwen3_coder",
             "reasoning_parser": "qwen3"
           },
           "vllm_ascend_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "hermes",
+            "enable_expert_parallel": true,
+            "max_num_seqs": 128,
+            "max_num_batched_tokens": 16384,
+            "gpu_memory_utilization": 0.9,
+            "enable_prefix_caching": true,
+            "async_scheduling": true,
+            "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "additional_config": {"enable_cpu_binding": true},
+            "tool_call_parser": "qwen3_coder",
+            "reasoning_parser": "qwen3"
+          }
+        },
+        "Qwen3.6-35B-A3B": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 262144,
+            "task": "generate",
+            "quantization": "ascend",
+            "enable_expert_parallel": true,
+            "max_num_seqs": 128,
+            "max_num_batched_tokens": 16384,
+            "gpu_memory_utilization": 0.9,
+            "enable_prefix_caching": true,
+            "async_scheduling": true,
+            "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "additional_config": {"enable_cpu_binding": true, "multistream_overlap_shared_expert": true},
+            "tool_call_parser": "qwen3_coder",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 262144,
+            "task": "generate",
+            "quantization": "ascend",
+            "enable_expert_parallel": true,
+            "max_num_seqs": 128,
+            "max_num_batched_tokens": 16384,
+            "gpu_memory_utilization": 0.9,
+            "enable_prefix_caching": true,
+            "async_scheduling": true,
+            "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "additional_config": {"enable_cpu_binding": true, "multistream_overlap_shared_expert": true},
+            "tool_call_parser": "qwen3_coder",
+            "reasoning_parser": "qwen3"
+          }
+        },
+        "Qwen3.5-397B-A17B": {
+          "vllm_ascend": {
+            "trust_remote_code": true,
+            "max_model_len": 133000,
+            "task": "generate",
+            "quantization": "ascend",
+            "enable_expert_parallel": true,
+            "max_num_seqs": 128,
+            "max_num_batched_tokens": 16384,
+            "gpu_memory_utilization": 0.9,
+            "enable_prefix_caching": true,
+            "async_scheduling": true,
+            "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "additional_config": {"enable_cpu_binding": true},
+            "tool_call_parser": "qwen3_coder",
+            "reasoning_parser": "qwen3"
+          },
+          "vllm_ascend_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 133000,
+            "task": "generate",
+            "quantization": "ascend",
+            "enable_expert_parallel": true,
+            "max_num_seqs": 128,
+            "max_num_batched_tokens": 16384,
+            "gpu_memory_utilization": 0.9,
+            "enable_prefix_caching": true,
+            "async_scheduling": true,
+            "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+            "additional_config": {"enable_cpu_binding": true},
+            "tool_call_parser": "qwen3_coder",
             "reasoning_parser": "qwen3"
           }
         }

@@ -168,12 +168,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "qwen3_xml"
+            "tool_call_parser": "qwen3_coder"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "qwen3_xml"
+            "tool_call_parser": "qwen3_coder"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -190,12 +190,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "qwen3_xml"
+            "tool_call_parser": "qwen3_coder"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "qwen3_xml"
+            "tool_call_parser": "qwen3_coder"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -265,13 +265,13 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "deepseek_v32",
-            "reasoning_parser": "deepseek_r1"
+            "reasoning_parser": "deepseek_v3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "tool_call_parser": "deepseek_v32",
-            "reasoning_parser": "deepseek_r1"
+            "reasoning_parser": "deepseek_v3"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -409,14 +409,14 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "hermes",
+            "tool_call_parser": "qwen3_coder",
             "reasoning_parser": "qwen3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "hermes",
+            "tool_call_parser": "qwen3_coder",
             "reasoning_parser": "qwen3"
           },
           "sglang": {
@@ -437,14 +437,14 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "hermes",
+            "tool_call_parser": "qwen3_coder",
             "reasoning_parser": "qwen3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "hermes",
+            "tool_call_parser": "qwen3_coder",
             "reasoning_parser": "qwen3"
           },
           "sglang": {

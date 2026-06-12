@@ -31,6 +31,7 @@ from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft, is_deepsee
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env
+from utils.shell_env_utils import dedupe_env_exports
 from utils.file_utils import safe_write_file, WriteOptions
 from utils.vllm_helpers import (
     _format_cli_arg, _safe_int, _is_w8a8_quantize, _is_w4a8_quantize, _deep_merge_user_priority,
@@ -2518,6 +2519,19 @@ def _build_speculative_env_commands(params: Dict[str, Any], engine: str) -> List
     return ['export VLLM_EARS_TOLERANCE=0.5']
 
 
+# Qwen3.5 系列（混合/线性注意力）架构集合：dense 27B 与 MoE 397B-A17B。
+# 二者共用 qwen3_5_mtp 投机方法，且默认 cudagraph_mode 均为 FULL_DECODE_ONLY。
+_QWEN35_ARCHES = (
+    "Qwen3_5ForConditionalGeneration",
+    "Qwen3_5MoeForConditionalGeneration",
+)
+
+
+def _is_qwen35_arch(model_architecture: Optional[str]) -> bool:
+    """Return whether the architecture is a Qwen3.5 (hybrid linear-attn) family model."""
+    return model_architecture in _QWEN35_ARCHES
+
+
 def _resolve_mtp_method(model_architecture: str) -> str:
     mtp_methods_by_arch = {
         "DeepseekV3ForCausalLM": "mtp",
@@ -2688,6 +2702,12 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
             speculative_config_temp.append('"num_speculative_tokens": 1')
         else:
             speculative_config_temp.append('"num_speculative_tokens": 3')
+        # [Qwen3.5-MTP] Qwen3.5 默认 cudagraph_mode=FULL_DECODE_ONLY，全图 decode replay
+        # 会把 MTP 头一并捕获，触发 MTE 越界类崩溃（参见 GLM-5 aclgraph 案例）。这里只让
+        # MTP/草稿头退回 eager（spec config 内部开关），主模型仍享受全图编译性能；与顶层
+        # --enforce-eager（ASCEND_ENFORCE_EAGER 控制、整模型退 eager）是两个不同的旋钮。
+        if _is_qwen35_arch(model_info.model_architecture):
+            speculative_config_temp.append('"enforce_eager": true')
         if model_info.model_architecture == "Glm4MoeForCausalLM" and _is_w8a8_quantize(model_info.model_quantize):
             speculative_config_temp.append('"speculative_token_range": "256,512"')
         return _format_speculative_result(speculative_config_temp)
@@ -2890,6 +2910,9 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     cmds.extend(_build_ascend910_9362_env_commands(params, engine))
     cmds = _filter_vllm_ascend_ray_incompatible_env(cmds, params, engine)
     cmds.extend(_build_vllm_ascend_forced_env_commands(params, engine))
+    # 多个 builder（内联 set_vllm_ascend_env.sh / 架构块 / forced 软默认）会重复导出同名变量，
+    # 这里收口去重，保证每个变量最终只有一条 export 生效（等价最终值，不动累加型与块内导出）。
+    cmds = dedupe_env_exports(cmds)
     return cmds
 
 

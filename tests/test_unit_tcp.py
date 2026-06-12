@@ -113,19 +113,22 @@ class TestNvidiaVllmParserMapping(unittest.TestCase):
         self.assertEqual(ec.get("reasoning_parser"), "qwen3")
 
     # UT-TCP-03
-    def test_tcp03_qwen3moe_coder_480b_qwen3_xml(self):
-        """Qwen3MoeForCausalLM + Qwen3-Coder-480B-A35B-Instruct → qwen3_xml（无 reasoning）。"""
+    def test_tcp03_qwen3moe_coder_480b_qwen3_coder(self):
+        """Qwen3MoeForCausalLM + Qwen3-Coder-480B-A35B-Instruct → qwen3_coder（无 reasoning）。
+
+        vLLM 官方 recipe（Qwen3-Coder Usage Guide）推荐 ``--tool-call-parser qwen3_coder``。
+        """
         ec = self._ec("Qwen3MoeForCausalLM",
                       model_name="Qwen3-Coder-480B-A35B-Instruct")
-        self.assertEqual(ec.get("tool_call_parser"), "qwen3_xml")
+        self.assertEqual(ec.get("tool_call_parser"), "qwen3_coder")
         self.assertNotIn("reasoning_parser", ec)
 
     # UT-TCP-04
-    def test_tcp04_qwen3moe_coder_30b_qwen3_xml(self):
-        """Qwen3MoeForCausalLM + Qwen3-Coder-30B-A3B-Instruct → qwen3_xml（无 reasoning）。"""
+    def test_tcp04_qwen3moe_coder_30b_qwen3_coder(self):
+        """Qwen3MoeForCausalLM + Qwen3-Coder-30B-A3B-Instruct → qwen3_coder（无 reasoning）。"""
         ec = self._ec("Qwen3MoeForCausalLM",
                       model_name="Qwen3-Coder-30B-A3B-Instruct")
-        self.assertEqual(ec.get("tool_call_parser"), "qwen3_xml")
+        self.assertEqual(ec.get("tool_call_parser"), "qwen3_coder")
         self.assertNotIn("reasoning_parser", ec)
 
     # UT-TCP-05
@@ -143,11 +146,14 @@ class TestNvidiaVllmParserMapping(unittest.TestCase):
         self.assertEqual(ec.get("reasoning_parser"), "deepseek_v3")
 
     # UT-TCP-07
-    def test_tcp07_deepseekv32_deepseek_v32_r1(self):
-        """DeepseekV32ForCausalLM → deepseek_v32 / deepseek_r1。"""
+    def test_tcp07_deepseekv32_deepseek_v32_v3(self):
+        """DeepseekV32ForCausalLM → deepseek_v32 / deepseek_v3。
+
+        vLLM 官方 recipe（DeepSeek-V3.2）用 ``--reasoning-parser deepseek_v3``（非 deepseek_r1）。
+        """
         ec = self._ec("DeepseekV32ForCausalLM")
         self.assertEqual(ec.get("tool_call_parser"), "deepseek_v32")
-        self.assertEqual(ec.get("reasoning_parser"), "deepseek_r1")
+        self.assertEqual(ec.get("reasoning_parser"), "deepseek_v3")
 
     # UT-TCP-08
     def test_tcp08_glm4moe_glm47_glm45(self):
@@ -223,6 +229,18 @@ class TestNvidiaVllmParserMapping(unittest.TestCase):
         self.assertEqual(ec.get("tool_call_parser"), "hermes")
         self.assertNotIn("reasoning_parser", ec)
 
+    def test_qwen35_vllm_uses_qwen3_coder(self):
+        """Qwen3.5/3.6（Qwen3_5* dense & MoE）+ vLLM → qwen3_coder / qwen3。
+
+        vLLM 官方 recipe（Qwen3.5 & Qwen3.6 Usage Guide）推荐
+        ``--tool-call-parser qwen3_coder``（非 hermes）。
+        """
+        for arch in ("Qwen3_5ForConditionalGeneration",
+                     "Qwen3_5MoeForConditionalGeneration"):
+            ec = self._ec(arch)
+            self.assertEqual(ec.get("tool_call_parser"), "qwen3_coder", arch)
+            self.assertEqual(ec.get("reasoning_parser"), "qwen3", arch)
+
 
 # ---------------------------------------------------------------------------
 # UT-TCP-15~19  vLLM-Ascend + Ascend NPU
@@ -292,6 +310,14 @@ class TestAscendVllmAscendParserMapping(unittest.TestCase):
         ec = self._ec("GlmMoeDsaForCausalLM")
         self.assertEqual(ec.get("tool_call_parser"), "glm47")
         self.assertEqual(ec.get("reasoning_parser"), "glm45")
+
+    def test_qwen35_ascend_uses_qwen3_coder(self):
+        """Qwen3.5/3.6（Qwen3_5* dense & MoE）+ vllm_ascend → qwen3_coder / qwen3。"""
+        for arch in ("Qwen3_5ForConditionalGeneration",
+                     "Qwen3_5MoeForConditionalGeneration"):
+            ec = self._ec(arch)
+            self.assertEqual(ec.get("tool_call_parser"), "qwen3_coder", arch)
+            self.assertEqual(ec.get("reasoning_parser"), "qwen3", arch)
 
 
 # ---------------------------------------------------------------------------

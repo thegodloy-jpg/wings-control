@@ -163,6 +163,7 @@ _LLM_MODELS = {
         "GLM-5-FP8",
         "GLM-5-w4a8",
         "GLM-5.1",
+        "GLM-5.1-w8a8",
         "GLM-5.1-FP8"
         ],
     "Glm4MoeForCausalLM": [
@@ -189,11 +190,13 @@ _LLM_MODELS = {
         ],
     "Qwen3_5ForConditionalGeneration": [
         "Qwen3.5-27B",
-        "Qwen3.5-27B-Instruct"
+        "Qwen3.5-27B-w8a8"
         ],
     "Qwen3_5MoeForConditionalGeneration": [
-        "Qwen3.5-397-A17B",
-        "Qwen3.5-397-A17B-w8a8"
+        "Qwen3.5-397-A17B-w8a8",
+        "Qwen3.5-397B-A17B",
+        "Qwen3.6-35B-A3B",
+        "Qwen3.6-35B-A3B-w8a8"
         ],
     "MiniMaxM2ForCausalLM": [
         "MiniMax-M2.5",
