@@ -190,7 +190,9 @@ _LLM_MODELS = {
         ],
     "Qwen3_5ForConditionalGeneration": [
         "Qwen3.5-27B",
-        "Qwen3.5-27B-w8a8"
+        "Qwen3.5-27B-w8a8",
+        "Qwen3.6-27B",
+        "Qwen3.6-27B-w8a8"
         ],
     "Qwen3_5MoeForConditionalGeneration": [
         "Qwen3.5-397-A17B-w8a8",
