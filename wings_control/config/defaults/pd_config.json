@@ -23,6 +23,62 @@
         "env": { "TASK_QUEUE_ENABLE": "1" }
       }
     },
+    "Qwen3MoeForCausalLM": {
+      "_source": "用户自定义 3P1D launch_online_dp / run_dp_template.sh 对齐；Qwen3-30B-A3B。external-lb(DP fork)专用条目。",
+      "_confirm": "落地前需真机确认的值：quantization(当前 platform 跑的是非量化 dtype=auto，故此处不设 ascend；若权重是 w8a8 再加 quantization=ascend)；disable_hybrid_kv_cache_manager=false(对齐模板 --no-disable，与 default 的 true 相反)；decode 的 max_num_batched_tokens/max_num_seqs 沿用模板 120/60，按真机吞吐再调；prefill/decode 的 HCCL 超时与 buffer 取自模板。",
+      "connector": "MooncakeConnectorV1",
+      "kv_port": { "P": "30000", "D": "30100" },
+      "extra_config": {},
+      "common": {
+        "trust_remote_code": true,
+        "enable_expert_parallel": true,
+        "enable_prefix_caching": true,
+        "disable_hybrid_kv_cache_manager": false
+      },
+      "prefill": {
+        "engine": {
+          "max_num_batched_tokens": 8192,
+          "max_num_seqs": 4,
+          "gpu_memory_utilization": 0.9,
+          "enforce_eager": true,
+          "additional_config": { "enable_cpu_binding": "True" }
+        },
+        "env": {
+          "HCCL_INTRA_ROCE_ENABLE": "1",
+          "USE_MULTI_GROUPS_KV_CACHE": "1",
+          "USE_MULTI_BLOCK_POOL": "1",
+          "ASCEND_BUFFER_POOL": "4:8",
+          "HCCL_BUFFSIZE": "2560",
+          "TASK_QUEUE_ENABLE": "1",
+          "VLLM_RPC_TIMEOUT": "3600000",
+          "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS": "30000",
+          "HCCL_EXEC_TIMEOUT": "204",
+          "HCCL_CONNECT_TIMEOUT": "120"
+        }
+      },
+      "decode": {
+        "engine": {
+          "max_num_batched_tokens": 120,
+          "max_num_seqs": 60,
+          "gpu_memory_utilization": 0.88,
+          "async_scheduling": true,
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
+        },
+        "env": {
+          "HCCL_INTRA_ROCE_ENABLE": "1",
+          "VLLM_ASCEND_ENABLE_FUSED_MC2": "1",
+          "USE_MULTI_GROUPS_KV_CACHE": "1",
+          "USE_MULTI_BLOCK_POOL": "1",
+          "ASCEND_BUFFER_POOL": "4:8",
+          "HCCL_BUFFSIZE": "1024",
+          "TASK_QUEUE_ENABLE": "1",
+          "VLLM_RPC_TIMEOUT": "3600000",
+          "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS": "30000",
+          "HCCL_EXEC_TIMEOUT": "2000",
+          "HCCL_CONNECT_TIMEOUT": "1200"
+        }
+      }
+    },
     "DeepseekV32ForCausalLM": {
       "_source": "https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/DeepSeek-V3.2.html",
       "connector": "MooncakeLayerwiseConnector",
