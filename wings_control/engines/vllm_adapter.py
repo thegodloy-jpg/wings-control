@@ -2012,11 +2012,10 @@ def _apply_deepseek_v4_flash_capacity_and_topology(
 
     max_model_len / max_num_batched_tokens / max_num_seqs / gpu_memory_utilization
     等共用默认由 ascend_default.json 的 DeepSeek-V4-Flash 条目承载，loader 已注入
-    engine_config，此处不再重复 force-set；A3 官方长上下文例外，需要默认提升到
-    1024000，并允许用户通过 CLI/配置显式覆盖。
+    engine_config，此处不再重复 force-set。max_model_len 完全由用户控制（JSON 默认 +
+    --input-length/--output-length 合成或 config-file 覆盖），不再按平台注入长上下文默认。
     """
     if platform == "a3":
-        _force_set_if_not_explicit(engine_config, explicit_keys, "max_model_len", 1024000)
         _force_set_if_not_explicit(engine_config, explicit_keys, "api_server_count", 1)
     default_tp = _default_deepseek_v4_flash_tensor_parallel_size(platform)
     tp_size = _safe_int(engine_config.get("tensor_parallel_size")) or default_tp

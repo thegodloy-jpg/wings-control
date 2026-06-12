@@ -79,14 +79,24 @@ class OfficialVllmAscendAlignmentTest(unittest.TestCase):
         )
 
     def test_deepseek_v4_flash_a3_real_user_launch_matches_official_single_node(self):
-        """Official DeepSeek-V4-Flash A3 example uses DP4/TP4 and 1M context."""
+        """Official DeepSeek-V4-Flash A3 example uses DP4/TP4 and 1M context.
+
+        max_model_len 完全由用户控制（不再按 A3 平台注入长上下文默认），因此官方
+        1M 上下文需用户显式给出：这里通过 ``--input-length`` + ``--output-length``
+        合成 1024000（512000 + 512000），由 _set_sequence_length 计算为 max_model_len。
+        """
         script = self._build_script(
             architecture="DeepseekV4ForCausalLM",
             model_name="DeepSeek-V4-Flash-w8a8-mtp",
             hardware={"device": "ascend", "count": 16, "details": [{"name": "910c"}]},
             env={"WINGS_ASCEND_PLATFORM": "A3"},
-            # 官方 V4-Flash 启动命令带 --reasoning-parser，需显式开启 reasoning 开关。
-            argv_extra=["--enable-auto-think-choice"],
+            # 官方 V4-Flash 启动命令带 --reasoning-parser，需显式开启 reasoning 开关；
+            # 1M 上下文由用户显式传入（input+output=1024000），不再依赖平台默认。
+            argv_extra=[
+                "--enable-auto-think-choice",
+                "--input-length", "512000",
+                "--output-length", "512000",
+            ],
         )
 
         self._assert_official_fragments(script, [
