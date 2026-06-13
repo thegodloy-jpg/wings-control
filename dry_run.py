@@ -370,24 +370,37 @@ def run_pd_dry_run(name: str, scenario: dict) -> None:
         node_ips = ",".join(topo["nodes"])
         host_ip = topo["nodes"][node_idx]
         model_dir = create_mock_model_dir(arch, {"quantization_config": {"quant_method": "ascend"}})
-        sv = tempfile.mkdtemp(prefix="sv_", dir=os.path.join(SCRIPT_DIR, "build")).replace("\\", "/")
         for k in list(os.environ):
             if k.startswith(("PD_", "DP_", "TP_")) or k in (
-                    "NODE_IPS", "HOST_IP", "Master_IP", "MASTER_IP", "VLLM_LLMDD_RPC_PORT", "RANK_IP"):
+                    "NODE_IPS", "HOST_IP", "Master_IP", "MASTER_IP", "VLLM_LLMDD_RPC_PORT",
+                    "RANK_IP", "POD_IP"):
                 os.environ.pop(k, None)
+        # 精简 env：只保留「无 CLI 等价 / 无默认（或默认不对）」的真·环境变量。探针验证移除后命令字节级不变：
+        #   - CLI 承载/argparse 默认：ENGINE/MODEL_NAME/MODEL_PATH/MODEL_TYPE/DISTRIBUTED/NNODES/NODE_RANK/PORT/ENGINE_PORT
+        #   - 有默认且不影响 PD 命令：SHARED_VOLUME_PATH（默认 /shared-volume，仅 LMCache 用）
         os.environ.update({
-            "ENGINE": "vllm_ascend", "MODEL_NAME": model_name, "MODEL_PATH": model_dir, "MODEL_TYPE": "auto",
-            "DEVICE_COUNT": str(topo["local"] * topo["tp"]), "DISTRIBUTED": "false", "NNODES": "1",
-            "NODE_RANK": "0", "POD_IP": host_ip, "WINGS_DEVICE": "ascend", "WINGS_ASCEND_PLATFORM": "a3",
-            "SHARED_VOLUME_PATH": sv, "ENGINE_PORT": "18000", "PORT": "18000",
-            # —— 上层契约 ——
-            "PD_ROLE": role, "DP_SIZE": str(topo["dp"]), "TP_SIZE": str(topo["tp"]),
+            # —— ② 平台/硬件（无 CLI 等价，真机由 K8s/镜像注入）——
+            # ⚠️ WINGS_ASCEND_PLATFORM 必填：缺省时 _resolve_deepseek_v4_flash_platform 回退 a2（非 a3！），
+            #    A3 部署须显式 a3，或靠硬件探测（/shared-volume/hardware_info.json 含 910c / ASCEND_A3_ENABLE=1）。
+            "WINGS_DEVICE": "ascend", "WINGS_ASCEND_PLATFORM": "a3",
+            # DEVICE_COUNT：hardware_detect/device_utils 直读取硬件 count（--device-count 另喂 launcher）
+            "DEVICE_COUNT": str(topo["local"] * topo["tp"]),
+            # RANK_IP：上层(MaaS)下发的本 pod 唯一 IP，是标识本机的唯一真相源。
+            # get_local_ip() 读它；current_ip(→HCCL_IF_IP) 与 PD 的 HOST_IP 均回退到它，
+            # 故不单独设 POD_IP / HOST_IP（重复设置）。
+            "RANK_IP": host_ip,
+            # —— ① 上层 PD 契约（无 CLI，必须 env）——
+            # DP_SIZE/TP_SIZE 不再单独下发：从本角色全局拓扑 PD_{ROLE}_* 派生（见 _get_pd_external_lb_params）。
+            # DP_SIZE_LOCAL 不可派生（=卡/节点÷tp，依赖节点数），仍须下发。
+            # VLLM_LLMDD_RPC_PORT 可省（默认 P=12890/D=12777）；此处显式给例值以贴合自定义部署。
+            "PD_ROLE": role,
             "DP_SIZE_LOCAL": str(topo["local"]), "Master_IP": topo["nodes"][0],
-            "VLLM_LLMDD_RPC_PORT": topo["rpc"], "NODE_IPS": node_ips, "HOST_IP": host_ip,
-            # —— KV 全局拓扑（对端角色）——
+            "VLLM_LLMDD_RPC_PORT": topo["rpc"], "NODE_IPS": node_ips,
+            # —— ① KV 全局拓扑（P/D 互相感知对方；本角色 dp/tp 亦由此派生）——
             "PD_PREFILL_DP_SIZE": str(pf["dp"]), "PD_PREFILL_TP_SIZE": str(pf["tp"]),
             "PD_DECODE_DP_SIZE": str(dc["dp"]), "PD_DECODE_TP_SIZE": str(dc["tp"]),
         })
+        # CLI 入参（承载 model/engine/device-count/nnodes/node-rank；其 env 兜底名见 build_parser）
         la = parse_launch_args(["--model-name", model_name, "--model-path", model_dir,
                                 "--engine", "vllm_ascend", "--device-count",
                                 str(topo["local"] * topo["tp"]), "--nnodes", "1", "--node-rank", "0"])
@@ -400,7 +413,6 @@ def run_pd_dry_run(name: str, scenario: dict) -> None:
         logger.info("  %s-node%d → %s (%d bytes)", role, node_idx, fn, len(cmd))
         import shutil
         shutil.rmtree(model_dir, ignore_errors=True)
-        shutil.rmtree(sv, ignore_errors=True)
 
     _one("prefill", pf, 0)
     _one("decode", dc, 0)

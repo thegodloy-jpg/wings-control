@@ -63,14 +63,15 @@
 export PD_ROLE=P
 export WINGS_DEVICE=ascend WINGS_DEVICE_COUNT=4
 # —— external-lb fork 编排（dp>1 的命脉）——
-export DP_SIZE=2 TP_SIZE=2 DP_SIZE_LOCAL=2
-export Master_IP=<P_IP> NODE_IPS=<P_IP> HOST_IP=<P_IP>     # 单 pod，三者同 = P 自己
+export DP_SIZE=2 TP_SIZE=2 DP_SIZE_LOCAL=2        # DP_SIZE/TP_SIZE 亦可由 PD_PREFILL_* 派生（此处显式给）
+export Master_IP=<P_IP> NODE_IPS=<P_IP> RANK_IP=<P_IP>     # 单 pod，三者同 = P 自己；
+#   RANK_IP=本机唯一真相源（HCCL_IF_IP 与 rank_start 都回退到它），不必再设 POD_IP/HOST_IP
 export VLLM_LLMDD_RPC_PORT=12321 VLLM_MOONCAKE_BOOTSTRAP_PORT=23000
 export ENGINE_PORT=17000
 # —— 对端（decode）拓扑，给 mooncake KV 映射；必须和 D 实际一致 ——
 export PD_DECODE_DP_SIZE=2 PD_DECODE_TP_SIZE=2
-export PD_CONNECTOR_TYPE=MooncakeConnectorV1
-export ASCEND_ENFORCE_EAGER=true
+# 注：external-lb 下连接器取自注册表(Qwen3MoeForCausalLM=MooncakeConnectorV1)、enforce-eager 由注册表(prefill)给，
+#     PD_CONNECTOR_TYPE / ASCEND_ENFORCE_EAGER 在该路径不被消费，故不设。
 ```
 
 ### 3.2 wings-control 启动命令
@@ -100,6 +101,7 @@ for i in $(seq 0 1); do
     --data-parallel-size 2 --data-parallel-rank $RANK --data-parallel-size-local 1 \
     --data-parallel-address <P_IP> --data-parallel-rpc-port 12321 --data-parallel-external-lb \
     --enable-expert-parallel --enable-prefix-caching --enforce-eager \
+    --max-num-batched-tokens 8192 --max-num-seqs 4 \
     --additional-config '{"enable_cpu_binding":"True"}' \
     --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_producer",
       "kv_port":"'"$KVPORT"'","engine_id":"'"$RANK"'",
@@ -118,16 +120,15 @@ D-1 / D-2 **只差 `HOST_IP`**（`Master_IP`/`NODE_IPS` 两端写法完全一致
 ```bash
 export PD_ROLE=D
 export WINGS_DEVICE=ascend WINGS_DEVICE_COUNT=2
-export DP_SIZE=2 TP_SIZE=2 DP_SIZE_LOCAL=1
+export DP_SIZE=2 TP_SIZE=2 DP_SIZE_LOCAL=1        # DP_SIZE/TP_SIZE 亦可由 PD_DECODE_* 派生（此处显式给）
 export Master_IP=<D1_IP>                 # = data-parallel-address，指向 D-1（rank0）
 export NODE_IPS=<D1_IP>,<D2_IP>          # 顺序即 rank：D-1=0, D-2=1（两 pod 写法一致）
-export HOST_IP=<本D_IP>                  # D-1 填 <D1_IP> / D-2 填 <D2_IP>
+export RANK_IP=<本D_IP>                  # D-1 填 <D1_IP> / D-2 填 <D2_IP>；本机唯一真相源(HCCL_IF_IP/rank_start)，不必再设 POD_IP/HOST_IP
 export VLLM_LLMDD_RPC_PORT=12321 VLLM_MOONCAKE_BOOTSTRAP_PORT=23100
 export ENGINE_PORT=17000
 # —— 对端（prefill）拓扑；必须和 P 实际一致 ——
 export PD_PREFILL_DP_SIZE=2 PD_PREFILL_TP_SIZE=2
-export PD_CONNECTOR_TYPE=MooncakeConnectorV1
-export ASCEND_ENFORCE_EAGER=true
+# 注：连接器/enforce-eager 由注册表决定；PD_CONNECTOR_TYPE / ASCEND_ENFORCE_EAGER 在 external-lb 不被消费，故不设。
 ```
 
 ### 4.2 wings-control 启动命令（D-1 / D-2 相同）
@@ -138,7 +139,9 @@ bash /opt/wings-control/wings_start.sh \
   --model-path /usr/local/serving/models/ \
   --device-count 2 --port 18000 \
   --input-length 4096 --output-length 4096 \
-  --gpu-memory-utilization 0.9 --trust-remote-code --seed 42
+  --gpu-memory-utilization 0.88 --trust-remote-code --seed 42
+# 注：D 最终 gpu-mem=0.88（注册表 decode 值，dry-run 实测）。传 0.88 或省略本项都得 0.88；
+#     传默认值 0.9 也不覆盖（0.9 等于 argparse 默认、不算「显式」，注册表 0.88 仍生效）——要自定义须传非默认值。
 ```
 
 ### 4.3 wings 生成的引擎命令（每个 D pod fork 1 个；仅核对，**不用手动执行**）
@@ -155,7 +158,8 @@ for i in $(seq 0 0); do
     --port $PORT --tensor-parallel-size 2 \
     --data-parallel-size 2 --data-parallel-rank $RANK --data-parallel-size-local 1 \
     --data-parallel-address <D1_IP> --data-parallel-rpc-port 12321 --data-parallel-external-lb \
-    --enable-expert-parallel --async-scheduling \
+    --enable-expert-parallel --async-scheduling --enable-prefix-caching \
+    --max-num-batched-tokens 120 --max-num-seqs 60 --gpu-memory-utilization 0.88 \
     --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
     --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_consumer",
       "kv_port":"'"$KVPORT"'","engine_id":"'"$RANK"'",

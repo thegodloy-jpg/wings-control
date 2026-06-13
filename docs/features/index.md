@@ -10,6 +10,7 @@
 | MoE Expert Parallel | `--enable-expert-parallel` | MoE 模型专家并行 | 本页 |
 | 分布式 | `--distributed`、`RANK_IP`、`MASTER_IP`、`NODE_IPS`、`NNODES` | 多节点引擎启动能力 | 本页 |
 | PD 分离 | `PD_ROLE=P/D` | Prefill / Decode 分离 | [pd-disaggregation.md](pd-disaggregation.md) |
+| PD + LMCache 同时启用 | `PD_ROLE=P/D` + `LMCACHE_OFFLOAD=true` | MultiConnector 同时承载 PD 传输与 KV 卸载（Ascend/NV） | [pd-lmcache-coexist.md](pd-lmcache-coexist.md) |
 | Sparse KV | `--enable-sparse` | 稀疏 KV Cache | [../design/advanced-features-dataflow.md](../design/advanced-features-dataflow.md) |
 | 投机推理 | `--enable-speculative-decode`、`--speculative-decode-model-path` | 生成 `--speculative-config` | [../design/advanced-features-dataflow.md](../design/advanced-features-dataflow.md) |
 | Function Call / Tool Choice | `--enable-auto-tool-choice` | 自动工具选择与 tool call parser | [../design/model-engine-function-call-analysis.md](../design/model-engine-function-call-analysis.md) |

@@ -23,6 +23,7 @@ Key Responsibilities:
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, Tuple
 import argparse
+import copy
 import json
 import logging
 import math
@@ -931,7 +932,11 @@ def _get_pd_external_lb_params():
         except (ValueError, TypeError):
             return int(default)
 
-    raw = _first_env("DP_SIZE", "PD_DP_SIZE")
+    # DP_SIZE/TP_SIZE 优先显式；缺省时从本角色全局拓扑 PD_{ROLE}_* 派生（P→PREFILL / D→DECODE）。
+    # 全局拓扑 PD_PREFILL_*/PD_DECODE_* 已含本角色 dp/tp（P/D 互相感知对方），故上层可只下发这 4 个，
+    # 不必再单独给 DP_SIZE/TP_SIZE（二者等于本角色在全局拓扑中的那一项）。
+    role_prefix = "PREFILL" if role == "P" else "DECODE"
+    raw = _first_env("DP_SIZE", "PD_DP_SIZE", f"PD_{role_prefix}_DP_SIZE")
     if raw is None:
         return None
     try:
@@ -941,7 +946,7 @@ def _get_pd_external_lb_params():
     if dp_size <= 1:
         return None  # DP_SIZE=1 → standalone，无需 dp 参数
 
-    tp_size = _int("1", "TP_SIZE", "PD_TP_SIZE")
+    tp_size = _int("1", "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
     dp_size_local = _int("1", "DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
     dp_address = _first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS") or (get_master_ip() or "")
     rpc_port = _first_env("VLLM_LLMDD_RPC_PORT", "PD_DP_RPC_PORT") or ""
@@ -1007,6 +1012,11 @@ def _build_pd_external_lb_kv(entry, ext):
     model_extra = entry.get("extra_config") or {}
     if model_extra:
         extra.update(model_extra)
+    # L2：角色级 extra_config（如 Qwen3.5 consumer 专属 kv_buffer_device），覆盖/追加于全局 extra_config。
+    role_key = "prefill" if role == "P" else "decode"
+    role_extra = (entry.get(role_key) or {}).get("extra_config") or {}
+    if role_extra:
+        extra.update(role_extra)
     cfg = {
         "kv_connector": entry["connector"],
         "kv_role": kv_role,
@@ -1018,6 +1028,29 @@ def _build_pd_external_lb_kv(entry, ext):
     if entry["connector"] in ("MooncakeConnectorV1", "MooncakeHybridConnector"):
         cfg["engine_id"] = "__PD_RANK__"  # fork 脚本按 dp_rank 替换
     return cfg
+
+
+def _resolve_ascend_platform() -> str:
+    """返回当前 Ascend 平台标识 'a2' / 'a3' / ''（供 PD 注册表 platform_overrides 用）。
+
+    与 ``vllm_adapter._get_engine_config_platform`` 的 env 信号保持一致：
+      1. 显式声明：WINGS_ASCEND_PLATFORM / ASCEND_PLATFORM / ENGINE_IMAGE_FLAVOR
+         （归一 a2/a3/atlas-*/910b/910c）；
+      2. 次级信号（无显式声明时）：ENGINE_VERSION 镜像后缀 ``-a3``（如 "0.13.0rc3-a3"）
+         或 ASCEND_A3_ENABLE 真值 → a3。
+    解析不到返回空串 —— 不应用平台 overlay（退化为基条目，对 V4-Flash 即 a3 默认值）。
+    """
+    val = (os.getenv("WINGS_ASCEND_PLATFORM") or os.getenv("ASCEND_PLATFORM")
+           or os.getenv("ENGINE_IMAGE_FLAVOR") or "").strip().lower()
+    if val in {"a3", "atlas-a3", "atlas_a3", "910c"}:
+        return "a3"
+    if val in {"a2", "atlas-a2", "atlas_a2", "910b"}:
+        return "a2"
+    # 无显式声明时的次级信号（与 vllm_adapter 对齐）：ENGINE_VERSION 的 -a3 后缀 / ASCEND_A3_ENABLE
+    if os.getenv("ENGINE_VERSION", "").strip().lower().endswith("-a3") or \
+            os.getenv("ASCEND_A3_ENABLE", "").strip().lower() in {"1", "true", "yes"}:
+        return "a3"
+    return ""
 
 
 def _apply_pd_external_lb(cmd_known_params, model_info):
@@ -1040,6 +1073,16 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
                        "fall back to standalone PD", arch)
         return
 
+    # 注册表来自模块级缓存(_load_pd_config)；下面会对 entry 做 overlay/pop —— 先 deepcopy 防污染缓存。
+    entry = copy.deepcopy(entry)
+    # L4 平台 overlay：基条目放平台无关值，platform_overrides[<plat>] 深合并覆盖（A2/A3 等）。
+    # 无 platform_overrides 的条目或平台解析为空 → 不动，退化为基条目（向后兼容）。
+    plat = _resolve_ascend_platform()
+    overrides = entry.pop("platform_overrides", None)
+    if overrides and plat and plat in overrides:
+        entry = _merge_configs(entry, overrides[plat])
+        logger.info("[PD external-lb] applied platform_overrides[%s] for arch=%s", plat, arch)
+
     role = ext["role"]
     role_key = "prefill" if role == "P" else "decode"
     ec = cmd_known_params.setdefault("engine_config", {})
@@ -1047,10 +1090,22 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
 
     # 注册表值优先级：用户 CLI/ENV > 注册表 > 基础默认。
     # 故对非用户显式键直接覆盖（setdefault 会被 vllm_default.json 等基础默认挡住）。
+    # 注册表来自模块级缓存(_load_pd_config)，且 dict 值（如 additional_config）会被下游模型
+    # 默认注入器就地深合并 —— 必须 deepcopy 后再写入，否则会污染缓存并跨次调用泄漏。
+    # ec 与 _pd_engine_overrides 各持一份独立 deepcopy：注入器只会改动 ec 那份，重申用的这份保持原值。
     merged_engine = {**entry.get("common", {}), **entry.get(role_key, {}).get("engine", {})}
     for k, v in merged_engine.items():
         if k not in explicit:
-            ec[k] = v
+            ec[k] = copy.deepcopy(v)
+
+    # 暂存注册表已应用的 engine 覆盖：模型默认注入器（vllm_adapter._prepare_engine_config
+    # 内的 _apply_*_engine_defaults，运行在本函数之后）会用 _force_set_* / _merge_dict_default_*
+    # 回填部分键（如 enable_prefix_caching、compilation_config、max_model_len），覆盖掉这里写入的
+    # 注册表值。故把注册表覆盖透传给 vllm_adapter，在所有注入器之后重申，使 pd_config 成为 PD
+    # external-lb 引擎参数的唯一真相源。None 值表示「该角色应删除该 base 键」。
+    cmd_known_params["_pd_engine_overrides"] = {
+        k: copy.deepcopy(v) for k, v in merged_engine.items() if k not in explicit
+    }
 
     if "kv_transfer_config" not in explicit:
         ec["kv_transfer_config"] = json.dumps(_build_pd_external_lb_kv(entry, ext))
@@ -1066,7 +1121,11 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
     )
 
     cmd_known_params["_pd_external_lb"] = ext
-    cmd_known_params["_pd_env"] = entry.get(role_key, {}).get("env", {})
+    # L3：common_env（P/D 共用）+ 角色 env（角色覆盖共用）。PD 脚本侧会对合并后的整段 env 去重。
+    cmd_known_params["_pd_env"] = {
+        **entry.get("common_env", {}),
+        **entry.get(role_key, {}).get("env", {}),
+    }
     cmd_known_params["distributed"] = False
     logger.info("[PD external-lb] arch=%s role=%s connector=%s dp_size=%d local=%d rank_start=%d addr=%s",
                 arch, role, entry["connector"], ext["dp_size"], ext["dp_size_local"],

@@ -114,29 +114,62 @@
     },
     "GlmMoeDsaForCausalLM": {
       "_source": "https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/GLM5.html",
+      "_fix": "2026-06-13 对齐官方 GLM5 PD：max_model_len 拆角色级(P=131072/D=200000)；P 关 prefix/compilation 加 enforce_eager；D 关 prefix/chunked 补 capture_sizes；补 tool/reasoning parser；additional_config 补 recompute/enable_dsa_cp/layer_sharding。compilation_config=null 表示该角色应删除 base 注入的图捕获。",
       "connector": "MooncakeConnectorV1",
       "kv_port": { "P": "30000", "D": "30100" },
       "extra_config": { "use_ascend_direct": true },
+      "common_env": {
+        "HCCL_BUFFSIZE": "256",
+        "ASCEND_AGGREGATE_ENABLE": "1",
+        "ACL_OP_INIT_MODE": "1",
+        "ASCEND_A3_ENABLE": "1",
+        "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT": "480"
+      },
       "common": {
         "enable_expert_parallel": true,
         "quantization": "ascend",
-        "max_model_len": 200000,
+        "seed": 1024,
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "glm47",
+        "reasoning_parser": "glm45",
         "speculative_config": { "num_speculative_tokens": 3, "method": "deepseek_mtp" }
       },
       "prefill": {
         "engine": {
+          "max_model_len": 131072,
           "max_num_batched_tokens": 4096,
           "max_num_seqs": 64,
-          "gpu_memory_utilization": 0.95
+          "gpu_memory_utilization": 0.95,
+          "enforce_eager": true,
+          "enable_prefix_caching": false,
+          "enable_chunked_prefill": true,
+          "compilation_config": null,
+          "additional_config": {
+            "fuse_muls_add": true,
+            "multistream_overlap_shared_expert": true,
+            "recompute_scheduler_enable": true,
+            "ascend_compilation_config": { "enable_npugraph_ex": true },
+            "enable_dsa_cp": true,
+            "layer_sharding": ["q_b_proj", "o_proj"]
+          }
         },
         "env": { "VLLM_ASCEND_ENABLE_FLASHCOMM1": "1", "VLLM_ASCEND_ENABLE_FUSED_MC2": "1" }
       },
       "decode": {
         "engine": {
+          "max_model_len": 200000,
           "max_num_batched_tokens": 32,
           "max_num_seqs": 8,
           "gpu_memory_utilization": 0.92,
-          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
+          "enable_prefix_caching": false,
+          "enable_chunked_prefill": false,
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes": [4, 8, 12, 16, 20, 24, 28, 32] },
+          "additional_config": {
+            "fuse_muls_add": true,
+            "multistream_overlap_shared_expert": true,
+            "recompute_scheduler_enable": true,
+            "ascend_compilation_config": { "enable_npugraph_ex": true }
+          }
         },
         "env": { "VLLM_ASCEND_ENABLE_MLAPO": "1", "TASK_QUEUE_ENABLE": "1", "VLLM_ASCEND_ENABLE_FUSED_MC2": "1" }
       }
@@ -146,16 +179,21 @@
       "connector": "MooncakeLayerwiseConnector",
       "kv_port": { "P": "23010", "D": "36010" },
       "extra_config": {},
+      "_fix": "2026-06-13 静态补齐(无 dry-run 场景，未经命令验证)：common 补 max_model_len/no_enable_prefix_caching/speculative_config(qwen3_5_mtp)；P/D additional_config 补 recompute_scheduler_enable/enable_cpu_binding。官方 D 消费端 extra 的 kv_buffer_device=npu 经 L2 角色级 extra_config(decode.extra_config)下发，仅 D 不污染 P。",
       "common": {
         "enable_expert_parallel": true,
-        "quantization": "ascend"
+        "quantization": "ascend",
+        "max_model_len": 16384,
+        "no_enable_prefix_caching": true,
+        "speculative_config": { "method": "qwen3_5_mtp", "num_speculative_tokens": 3, "enforce_eager": true }
       },
       "prefill": {
         "engine": {
           "max_num_batched_tokens": 4096,
           "max_num_seqs": 64,
           "gpu_memory_utilization": 0.9,
-          "enforce_eager": true
+          "enforce_eager": true,
+          "additional_config": { "recompute_scheduler_enable": true, "enable_cpu_binding": true }
         },
         "env": {}
       },
@@ -164,37 +202,70 @@
           "max_num_batched_tokens": 128,
           "max_num_seqs": 32,
           "gpu_memory_utilization": 0.96,
-          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" },
+          "additional_config": { "recompute_scheduler_enable": true, "enable_cpu_binding": true }
         },
-        "env": {}
+        "env": {},
+        "extra_config": { "kv_buffer_device": "npu" }
       }
     },
     "DeepseekV4ForCausalLM": {
       "_source": "https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/DeepSeek-V4-Flash.html",
+      "_fix": "2026-06-13 对齐官方 A3 1P1D：批量/显存/seed/max_model_len/speculative 对齐；P enforce_eager 关 async/prefix/compilation；补 reasoning_parser/model_loader_extra_config/no_disable_hybrid_kv_cache_manager(Hybrid 连接器保留 HMA)。compilation_config=null 表示 P 删除 base 的 FULL_DECODE_ONLY。注意：本条目对齐 A3；A2(4P1D) 需另按平台分。engine_id 仍由 fork 脚本按 dp_rank 注入(待真机确认 Hybrid 是否要求 role 级常量)。",
       "connector": "MooncakeHybridConnector",
       "kv_port": { "P": "30000", "D": "30100" },
       "extra_config": {},
       "common": {
         "enable_expert_parallel": true,
         "quantization": "ascend",
-        "speculative_config": { "num_speculative_tokens": 3, "method": "deepseek_mtp" }
+        "max_model_len": 1048576,
+        "seed": 1024,
+        "block_size": 128,
+        "enable_prefix_caching": false,
+        "no_enable_prefix_caching": true,
+        "enable_chunked_prefill": false,
+        "tokenizer_mode": "deepseek_v4",
+        "tool_call_parser": "deepseek_v4",
+        "reasoning_parser": "deepseek_v4",
+        "enable_auto_tool_choice": true,
+        "no_disable_hybrid_kv_cache_manager": true,
+        "model_loader_extra_config": { "enable_multithread_load": "true", "num_threads": 128 },
+        "speculative_config": { "num_speculative_tokens": 1, "method": "mtp", "enforce_eager": true }
       },
       "prefill": {
         "engine": {
-          "max_num_batched_tokens": 4096,
-          "max_num_seqs": 64,
-          "gpu_memory_utilization": 0.95
+          "max_num_batched_tokens": 8192,
+          "max_num_seqs": 16,
+          "gpu_memory_utilization": 0.9,
+          "enforce_eager": true,
+          "async_scheduling": false,
+          "compilation_config": null,
+          "additional_config": { "enable_cpu_binding": true, "enable_shared_expert_dp": true, "enable_dsa_cp": true }
         },
         "env": { "VLLM_ASCEND_ENABLE_FLASHCOMM1": "1", "VLLM_ASCEND_ENABLE_FUSED_MC2": "1" }
       },
       "decode": {
         "engine": {
-          "max_num_batched_tokens": 32,
-          "max_num_seqs": 8,
-          "gpu_memory_utilization": 0.92,
-          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
+          "max_num_batched_tokens": 120,
+          "max_num_seqs": 60,
+          "gpu_memory_utilization": 0.9,
+          "async_scheduling": true,
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" },
+          "additional_config": {
+            "ascend_compilation_config": { "enable_npugraph_ex": true, "enable_static_kernel": false },
+            "enable_cpu_binding": true,
+            "multistream_overlap_shared_expert": true,
+            "recompute_scheduler_enable": true
+          }
         },
         "env": { "VLLM_ASCEND_ENABLE_FUSED_MC2": "1", "VLLM_ASCEND_ENABLE_MLAPO": "1" }
+      },
+      "platform_overrides": {
+        "a2": {
+          "_confirm": "A2(4P1D) 值摘自官方文档(部分经摘要)，落地前需逐项核对：官方 A2 的 P 另有 async_scheduling/enable_prefix_caching(与 A3 P 相反)，gpu_memory_utilization/max_model_len 未核；此处仅 overlay 高置信的 batched/seqs，其余继承基条目(A3)。",
+          "prefill": { "engine": { "max_num_batched_tokens": 4096 } },
+          "decode": { "engine": { "max_num_batched_tokens": 60, "max_num_seqs": 30 } }
+        }
       }
     }
   }

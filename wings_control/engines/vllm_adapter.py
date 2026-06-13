@@ -32,6 +32,7 @@ from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft, is_deepsee
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env
 from utils.file_utils import safe_write_file, WriteOptions
+from utils.shell_env_utils import dedupe_env_exports
 from utils.vllm_helpers import (
     _format_cli_arg, _safe_int, _is_w8a8_quantize, _is_w4a8_quantize, _deep_merge_user_priority,
     _is_empty_engine_config_value, _parse_dict_like_config, Glm47DefaultMergeResult, Glm47InjectionStats,
@@ -1881,6 +1882,21 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
                 ", ".join(removed_keys),
             )
 
+    # PD external-lb：pd_config.json 注册表是 PD 引擎参数的唯一真相源。上面的模型默认注入器
+    # （_apply_*_engine_defaults）用 _force_set_* / _merge_dict_default_* 回填了部分键，会覆盖
+    # _apply_pd_external_lb 写入的注册表值；故在所有注入器之后重申注册表覆盖。
+    # 仅 PD external-lb 命中（非 PD 部署 _pd_engine_overrides 为空 → 行为字节级不变）。
+    # value=None 表示该角色应删除该 base 键（如 Prefill 删除 base 注入的 compilation_config）。
+    pd_overrides = params.get("_pd_engine_overrides")
+    if pd_overrides:
+        for k, v in pd_overrides.items():
+            if k in explicit_keys:
+                continue
+            if v is None:
+                engine_config.pop(k, None)
+            else:
+                engine_config[k] = v
+
     removed_task = engine_config.pop("task", None)
     if removed_task and removed_task != "generate":
         logger.info("[vLLM] Mapping deprecated task=%s to --runner pooling", removed_task)
@@ -2834,6 +2850,10 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     cmds.extend(_build_ascend910_9362_env_commands(params, engine))
     cmds = _filter_vllm_ascend_ray_incompatible_env(cmds, params, engine)
     cmds.extend(_build_vllm_ascend_forced_env_commands(params, engine))
+    # 多个 builder（内联 set_vllm_ascend_env.sh / 架构块 / forced 软默认）会重复导出同名变量，
+    # 这里收口去重，保证每个变量最终只有一条 export 生效（等价最终值，不动累加型与块内导出）。
+    # 借鉴 master af5420d 的 env-export dedup（utils/shell_env_utils.dedupe_env_exports）。
+    cmds = dedupe_env_exports(cmds)
     return cmds
 
 
@@ -2903,6 +2923,9 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     env_lines = list(common_env_cmds)
     for k, v in role_env.items():
         env_lines.append(f"export {k}={shlex.quote(str(v))}")
+    # L3：common_env/角色 env 追加在 base 之后（bash 后者生效）；对整段去重，使注册表覆盖值收口、
+    # 消掉 base 的同名重复（common_env_cmds 内部已去重，这里把角色 env 一并纳入再收口一次）。
+    env_lines = dedupe_env_exports(env_lines)
 
     # fork 主体包进子 shell，使其作为单个可后台化单元被上层监控
     # （wings_entry._strip_exec_and_backgroundify 给末行 ')' 追加 ' &' + ENGINE_PID=$!）。

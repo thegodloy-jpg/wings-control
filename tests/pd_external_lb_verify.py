@@ -284,9 +284,53 @@ echo "PHASE=teardown alive_mocks=$ALIVE block_alive=$(kill -0 $BLOCK 2>/dev/null
     shutil.rmtree(workdir, ignore_errors=True)
 
 
+def layer_f():
+    """层 F：注册表表达力修复（L2 角色 extra / L3 common_env / L4 平台 overlay / L5 键存活）。"""
+    print("\n== 层 F：注册表表达力修复（L2/L3/L4/L5）==")
+
+    # ── L4：V4-Flash 平台 overlay（a3 基条目 vs a2 overlay）──
+    v4_a3_p = _gen("DeepseekV4ForCausalLM", "P", 4, 4, 4, "8.0.0.1", "8.0.0.1", "V4P",
+                   extra_env={"WINGS_ASCEND_PLATFORM": "a3"})
+    check("L4 a3(基): P batched 8192", "--max-num-batched-tokens 8192" in v4_a3_p)
+    v4_a2_p = _gen("DeepseekV4ForCausalLM", "P", 4, 4, 4, "8.0.0.1", "8.0.0.1", "V4P",
+                   extra_env={"WINGS_ASCEND_PLATFORM": "a2"})
+    check("L4 a2 overlay: P batched 4096（覆盖 8192）", "--max-num-batched-tokens 4096" in v4_a2_p)
+    v4_a2_d = _gen("DeepseekV4ForCausalLM", "D", 16, 1, 16, "8.0.1.1", "8.0.1.1", "V4D",
+                   extra_env={"WINGS_ASCEND_PLATFORM": "a2"})
+    check("L4 a2 overlay: D batched 60 / seqs 30",
+          "--max-num-batched-tokens 60" in v4_a2_d and "--max-num-seqs 30" in v4_a2_d)
+    check("L4 a2 继承基条目: max-model-len 1048576", "--max-model-len 1048576" in v4_a2_d)
+
+    # ── L3：GLM5 common_env 覆盖 base 且整段去重 ──
+    glm_p = _gen("GlmMoeDsaForCausalLM", "P", 2, 16, 1, "7.0.0.1", "7.0.0.1", "GP")
+    seg = glm_p.split("for i in")[0]  # 首个 exec path 的 env 段
+    check("L3 common_env: HCCL_BUFFSIZE=256 生效", "export HCCL_BUFFSIZE=256" in seg)
+    check("L3 dedupe: 无残留 HCCL_BUFFSIZE=1024", "export HCCL_BUFFSIZE=1024" not in seg)
+    check("L3 common_env: Mooncake 共用 env 注入",
+          "export VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT=480" in seg
+          and "export ASCEND_AGGREGATE_ENABLE=1" in seg)
+
+    # ── L2：Qwen3.5 角色级 extra_config（D 有 kv_buffer_device，P 无）──
+    q_d = _gen("Qwen3_5MoeForConditionalGeneration", "D", 16, 2, 8, "5.0.1.1", "5.0.1.1", "Q5D")
+    q_p = _gen("Qwen3_5MoeForConditionalGeneration", "P", 8, 2, 4, "5.0.0.1", "5.0.0.1", "Q5P")
+    check("L2 D: kv_buffer_device=npu 在消费端 KV extra", "kv_buffer_device" in q_d)
+    check("L2 P: 不含 kv_buffer_device（不污染 P）", "kv_buffer_device" not in q_p)
+
+    # ── L5：注册表「易被注入器回填」的键全部存活（锁防回退）──
+    check("L5 GLM5-P: enforce-eager 存活", "--enforce-eager" in glm_p)
+    check("L5 GLM5-P: prefix 关（无 --enable-prefix-caching）", "--enable-prefix-caching" not in glm_p)
+    check("L5 GLM5-P: compilation 删（无 --compilation-config）", "--compilation-config" not in glm_p)
+    check("L5 GLM5-P: max-model-len 131072 存活", "--max-model-len 131072" in glm_p)
+    check("L5 V4-P(a3): async 关 + compilation 删",
+          "--async-scheduling" not in v4_a3_p and "--compilation-config" not in v4_a3_p)
+    check("L5 V4-P(a3): --no-enable-prefix-caching 存活", "--no-enable-prefix-caching" in v4_a3_p)
+    check("L5 V4-P(a3): speculative method=mtp 存活", '"method":"mtp"' in v4_a3_p)
+
+
 def main():
     layer_a()
     layer_bce()
+    layer_f()
     if BASH:
         layer_d()
     else:
