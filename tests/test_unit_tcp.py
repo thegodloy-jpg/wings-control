@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import sys
@@ -22,12 +23,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "wings_control"))
 sys.path.insert(0, str(TESTS_DIR))
 
 from core.config_loader import (  # noqa: E402
+    _resolve_reasoning_parser_support,
     _set_function_call,
     _set_reasoning_parser,
     load_and_merge_configs,
@@ -132,11 +136,11 @@ class TestNvidiaVllmParserMapping(unittest.TestCase):
         self.assertNotIn("reasoning_parser", ec)
 
     # UT-TCP-05
-    def test_tcp05_deepseekv3_default_deepseek_v3_r1(self):
-        """DeepseekV3ForCausalLM（default）→ deepseek_v3 / deepseek_r1。"""
+    def test_tcp05_deepseekv3_uses_deepseek_v3_reasoning_parser(self):
+        """DeepSeek-V3 使用 deepseek_v3 reasoning parser。"""
         ec = self._ec("DeepseekV3ForCausalLM", model_name="DeepSeek-V3")
         self.assertEqual(ec.get("tool_call_parser"), "deepseek_v3")
-        self.assertEqual(ec.get("reasoning_parser"), "deepseek_r1")
+        self.assertEqual(ec.get("reasoning_parser"), "deepseek_v3")
 
     # UT-TCP-06
     def test_tcp06_deepseekv3_v31_deepseek_v31(self):
@@ -241,6 +245,15 @@ class TestNvidiaVllmParserMapping(unittest.TestCase):
             self.assertEqual(ec.get("tool_call_parser"), "qwen3_coder", arch)
             self.assertEqual(ec.get("reasoning_parser"), "qwen3", arch)
 
+    def test_kimik25_vllm_uses_kimi_k2_parsers(self):
+        """Kimi-K2.5 + NVIDIA vLLM → kimi_k2 / kimi_k2。"""
+        ec = self._ec(
+            "KimiK25ForConditionalGeneration",
+            model_name="Kimi-K2.5",
+        )
+        self.assertEqual(ec.get("tool_call_parser"), "kimi_k2")
+        self.assertEqual(ec.get("reasoning_parser"), "kimi_k2")
+
 
 # ---------------------------------------------------------------------------
 # UT-TCP-15~19  vLLM-Ascend + Ascend NPU
@@ -318,6 +331,191 @@ class TestAscendVllmAscendParserMapping(unittest.TestCase):
             ec = self._ec(arch)
             self.assertEqual(ec.get("tool_call_parser"), "qwen3_coder", arch)
             self.assertEqual(ec.get("reasoning_parser"), "qwen3", arch)
+
+
+class TestDeepseekReasoningParserParity(unittest.TestCase):
+    """DeepSeek 同一模型在 vLLM 与 vLLM-Ascend 下使用相同 reasoning parser。"""
+
+    NVIDIA_HW = nvidia_hardware(device_count=8, memory_gb=80)
+    ASCEND_HW = ascend_hardware(device_count=8)
+
+    def test_reasoning_parser_is_not_stored_in_default_json_files(self):
+        def collect_reasoning_parser_paths(value, path=""):
+            found = []
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    child_path = f"{path}.{key}" if path else key
+                    if key == "reasoning_parser":
+                        found.append(child_path)
+                    found.extend(collect_reasoning_parser_paths(child, child_path))
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    found.extend(
+                        collect_reasoning_parser_paths(child, f"{path}[{index}]")
+                    )
+            return found
+
+        violations = {}
+        for filename in ("nvidia_default.json", "ascend_default.json"):
+            config_path = ROOT / "wings_control" / "config" / "defaults" / filename
+            config = json.loads(config_path.read_text(encoding="utf-8-sig"))
+            paths = collect_reasoning_parser_paths(config)
+            if paths:
+                violations[filename] = paths
+
+        self.assertEqual(violations, {})
+
+    def test_deepseek_v3_family_matches_configured_reasoning_mapping(self):
+        expected_by_model = {
+            "DeepSeek-R1": "deepseek_r1",
+            "DeepSeek-R1-0528": "deepseek_r1",
+            "DeepSeek-V3": "deepseek_v3",
+            "DeepSeek-V3-0324": "deepseek_v3",
+            "DeepSeek-V3.1": "deepseek_v3",
+            "DeepSeek-Coder-V2-Instruct": None,
+            "DeepSeek-R1-w8a8": "deepseek_r1",
+            "DeepSeek-R1-0528-w8a8": "deepseek_r1",
+            "DeepSeek-V3-w8a8": "deepseek_v3",
+            "DeepSeek-V3-0324-w8a8": "deepseek_v3",
+            "DeepSeek-V3.1-w8a8": "deepseek_v3",
+            "DeepSeek-Coder-V2-Instruct-w8a8": None,
+        }
+
+        for model_name, expected_parser in expected_by_model.items():
+            with self.subTest(model=model_name):
+                vllm_config = _load_engine_config(
+                    self.NVIDIA_HW,
+                    "DeepseekV3ForCausalLM",
+                    "vllm",
+                    model_name=model_name,
+                )
+                ascend_config = _load_engine_config(
+                    self.ASCEND_HW,
+                    "DeepseekV3ForCausalLM",
+                    "vllm_ascend",
+                    model_name=model_name,
+                )
+
+                self.assertEqual(vllm_config.get("reasoning_parser"), expected_parser)
+                self.assertEqual(ascend_config.get("reasoning_parser"), expected_parser)
+
+    def test_reasoning_support_table_keeps_vllm_engines_in_sync(self):
+        support_path = (
+            ROOT
+            / "wings_control"
+            / "docs"
+            / "features"
+            / "reasoning_parser"
+            / "reasoning_parser_support.yaml"
+        )
+        support = yaml.safe_load(support_path.read_text(encoding="utf-8-sig"))
+
+        mismatches = []
+        for architecture in support["architectures"]:
+            for model_name, engines in architecture.get("models", {}).items():
+                if "vllm" not in engines or "vllm_ascend" not in engines:
+                    continue
+                if engines["vllm"] != engines["vllm_ascend"]:
+                    mismatches.append(
+                        (
+                            architecture["name"],
+                            model_name,
+                            engines["vllm"],
+                            engines["vllm_ascend"],
+                        )
+                    )
+
+        self.assertEqual(mismatches, [])
+
+    def test_reasoning_support_models_match_model_utils_inventory(self):
+        model_utils_path = ROOT / "wings_control" / "utils" / "model_utils.py"
+        model_utils_tree = ast.parse(
+            model_utils_path.read_text(encoding="utf-8-sig")
+        )
+        model_inventory = None
+        for node in model_utils_tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            if any(
+                isinstance(target, ast.Name) and target.id == "_LLM_MODELS"
+                for target in node.targets
+            ):
+                model_inventory = ast.literal_eval(node.value)
+                break
+        self.assertIsNotNone(model_inventory)
+
+        support_path = (
+            ROOT
+            / "wings_control"
+            / "docs"
+            / "features"
+            / "reasoning_parser"
+            / "reasoning_parser_support.yaml"
+        )
+        support = yaml.safe_load(support_path.read_text(encoding="utf-8-sig"))
+        support_inventory = {
+            architecture["name"]: list(architecture.get("models", {}))
+            for architecture in support["architectures"]
+        }
+
+        self.assertEqual(support_inventory, model_inventory)
+
+    def test_yaml_model_rows_are_runtime_reasoning_source(self):
+        support_path = (
+            ROOT
+            / "wings_control"
+            / "docs"
+            / "features"
+            / "reasoning_parser"
+            / "reasoning_parser_support.yaml"
+        )
+        support = yaml.safe_load(support_path.read_text(encoding="utf-8-sig"))
+
+        mismatches = []
+        for architecture in support["architectures"]:
+            for model_name, engines in architecture.get("models", {}).items():
+                for engine, expected_parser in engines.items():
+                    found, actual_parser = _resolve_reasoning_parser_support(
+                        architecture["name"],
+                        model_name,
+                        f"{engine}_distributed",
+                    )
+                    if not found or actual_parser != expected_parser:
+                        mismatches.append(
+                            (
+                                architecture["name"],
+                                model_name,
+                                engine,
+                                expected_parser,
+                                found,
+                                actual_parser,
+                            )
+                        )
+
+        self.assertEqual(mismatches, [])
+
+    def test_deepseek_v32_family_uses_deepseek_v3_on_both_engines(self):
+        for model_name in (
+            "DeepSeek-V3.2",
+            "DeepSeek-V3.2-w8a8",
+            "DeepSeek-V3.2-Exp",
+        ):
+            with self.subTest(model=model_name):
+                vllm_config = _load_engine_config(
+                    self.NVIDIA_HW,
+                    "DeepseekV32ForCausalLM",
+                    "vllm",
+                    model_name=model_name,
+                )
+                ascend_config = _load_engine_config(
+                    self.ASCEND_HW,
+                    "DeepseekV32ForCausalLM",
+                    "vllm_ascend",
+                    model_name=model_name,
+                )
+
+                self.assertEqual(vllm_config.get("reasoning_parser"), "deepseek_v3")
+                self.assertEqual(ascend_config.get("reasoning_parser"), "deepseek_v3")
 
 
 # ---------------------------------------------------------------------------

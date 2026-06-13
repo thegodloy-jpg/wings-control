@@ -2832,7 +2832,7 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
                 "[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 → "
                 "IndexCache via --hf-overrides (no patch install)"
             )
-            return " --hf-overrides '{\"index_topk_freq\": 8}'"
+            return " --hf-overrides '{\"index_topk_freq\": 4}'"
         logger.info(
             "[KV Sparse] engine=vllm_ascend arch=%s not GLM-5.1; "
             "KV sparse is no-op on ascend", arch,

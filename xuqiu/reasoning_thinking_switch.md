@@ -83,47 +83,37 @@ flowchart TD
 
 ## reasoning_parser 支持范围（引擎 × 模型）
 
-> 同步自 `wings_control/docs/features/reasoning_parser/reasoning_parser_support.yaml`，供上层用户 / 界面展示。
-> 表中取值为「开启 `--enable-auto-think-choice` 后，该模型在该引擎实际生效的 reasoning_parser」；`—` 表示该引擎下不启用思维解析（配置未配或无该引擎段）。
-> vllm / vllm_ascend 取值用下划线命名。`SGLang` 已移出 reasoning，不在本表。
+> 权威来源：`wings_control/docs/features/reasoning_parser/reasoning_parser_support.yaml`（运行时唯一真值，config_loader 合并时注入）；本表由其同步生成，供上层用户 / 界面展示。
+> 表中取值为「开启 `--enable-auto-think-choice` 后该模型实际生效的 reasoning_parser」；`—` 表示不启用思维解析。
+> **`vLLM`（x86 GPU）与 `vLLM-Ascend`（Arm NPU）当前对每个模型取值完全一致**，故合并为单列。`SGLang` 已移出 reasoning、`MindIE` 思维解析为服务端内置——均不在本表。
 
-**引擎范围：** `vLLM`（x86 GPU）、`vLLM-Ascend`（Arm NPU）。`SGLang` 已不参与 reasoning、`MindIE` 思维解析为服务端内置——二者均不在本表范围。
+**DeepSeek 系列**
 
-**模型范围 —— DeepSeek 系列**
+| 模型 | reasoning_parser |
+| --- | --- |
+| DeepSeek-R1 / R1-0528（及 -w8a8） | deepseek_r1 |
+| DeepSeek-V3 / V3-0324 / V3.1（及 -w8a8） | deepseek_v3 |
+| DeepSeek-V3.2 / V3.2-Exp（及 -w8a8） | deepseek_v3 |
+| DeepSeek-V4 / -Flash / -Pro（及量化 / mtp 变体） | deepseek_v4 |
+| DeepSeek-Coder-V2-Instruct（及 -w8a8） | — |
 
-| 模型 | vLLM | vLLM-Ascend |
-| --- | --- | --- |
-| DeepSeek-R1 / R1-w8a8 | deepseek_r1 | deepseek_r1 |
-| DeepSeek-R1-0528 / -w8a8 | deepseek_r1 | — |
-| DeepSeek-V3 / -0324（及 -w8a8） | deepseek_r1 | — |
-| DeepSeek-V3.1 | deepseek_v3 | deepseek_v3 |
-| DeepSeek-V3.1-w8a8 | deepseek_r1 ⚠️ | deepseek_v3 |
-| DeepSeek-V3.2 / -Exp / -0715 | deepseek_r1 | — |
-| DeepSeek-Coder-V2-Instruct（及 -w8a8） | deepseek_r1 | — |
-| DeepSeek-V4 / -Flash / -Pro（及量化/mtp 变体） | deepseek_v4 | deepseek_v4 |
+**Qwen3 / GLM / MiniMax / Kimi**
 
-> ⚠️ DeepSeek-V3.1-w8a8 在 vllm 无精确配置键，回落 default → 得 `deepseek_r1`（非 V3.1 的 `deepseek_v3`）。vllm_ascend 的 DeepseekV3 default 段与 DeepseekV32 整段均未配 reasoning_parser，故昇腾上 V3/V3-0324/R1-0528/V3.2 等回落为 `—`。
+| 模型 | reasoning_parser |
+| --- | --- |
+| Qwen3-32B / 30B-A3B / 235B-A22B / Next-80B-A3B-Instruct | qwen3 |
+| Qwen3.5-27B / Qwen3.6-27B（及 -w8a8） | qwen3 |
+| Qwen3.5-397(B)-A17B / Qwen3.6-35B-A3B（及 -w8a8） | qwen3 |
+| GLM-5 / 5-FP8 / 5-w4a8 / 5.1 / 5.1-w8a8 / 5.1-FP8 | glm45 |
+| GLM-4.7（及 -w8a8） | glm45 |
+| MiniMax-M2.5 / M2.7（及 -w8a8） | minimax_m2_append_think |
+| Kimi-K2.5 / K2.7（及 -w4a8） | kimi_k2 |
 
-**模型范围 —— Qwen3 / GLM / MiniMax / Kimi**
-
-| 模型 | vLLM | vLLM-Ascend |
-| --- | --- | --- |
-| Qwen3-32B / 30B-A3B / 235B-A22B | qwen3 | qwen3 |
-| Qwen3-Next-80B-A3B-Instruct | qwen3 | qwen3 |
-| Qwen3.5-27B / -Instruct | qwen3 | qwen3 |
-| Qwen3.5-397-A17B（及 -w8a8） | qwen3 | qwen3 |
-| GLM-5 / 5-FP8 / 5-w4a8 / 5.1 / 5.1-FP8 | glm45 | glm45 |
-| GLM-4.7（及 -w8a8） | glm45 | glm45 |
-| MiniMax-M2.5 / M2.7（及 -w8a8） | minimax_m2_append_think | minimax_m2_append_think |
-| Kimi-K2.5（及 -w4a8） | — | kimi_k2 |
-
-> Kimi 仅 ascend 配置文件含该架构段，vllm 默认配置无 Kimi 段，故为 `—`。
-
-**模型范围 —— 不启用思维解析（两引擎均 `—`）**
+**不启用思维解析（`—`）**
 
 GLM-4-9B-0414、Qwen2.5-32B-Instruct、QwQ-32B、LLaMA3-8B / 3.1-70B / 3.1-70B-Instruct / Meta-Llama-3.1-70B-Instruct、DeepSeek-R1-Distill-Qwen-1.5B/7B/14B/32B、DeepSeek-R1-Distill-Llama-8B/70B。
 
-> ⚠️ 其中 DeepSeek-R1-Distill-* 与 QwQ-32B 本质是推理型模型，但当前默认配置未配 reasoning_parser，开启开关也不会注入（仅告警）；如需启用可在对应配置文件补该字段。
+> ⚠️ 其中 DeepSeek-R1-Distill-* 与 QwQ-32B 本质是推理型模型，但当前 YAML 统一置 null（不启用），开启开关也不会注入（仅告警）；如需启用可在 `reasoning_parser_support.yaml` 对应模型补 `deepseek_r1`。
 
 ## 接口与示例
 

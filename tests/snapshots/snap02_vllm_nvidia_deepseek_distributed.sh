@@ -122,8 +122,8 @@ if [ "$RAY_WAIT_OK" != "1" ]; then
 fi
 echo "[ray-wait] OK: $COUNT ray nodes joined."
 
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_v3 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_v3 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -186,8 +186,8 @@ if [ "$RAY_WAIT_OK" != "1" ]; then
 fi
 echo "[ray-wait] OK: $COUNT ray nodes joined."
 
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_r1 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_v3 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser deepseek_v3 --reasoning-parser deepseek_v3 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V3 --model /models/DeepSeek-V3 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 16 --distributed-executor-backend ray &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

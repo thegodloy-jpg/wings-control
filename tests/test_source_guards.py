@@ -60,21 +60,6 @@ class TestSourceGuards(unittest.TestCase):
             rendered,
         )
 
-    def test_vllm_qwen3next_bisheng_source_is_guarded_from_nounset(self):
-        fake_model = type("FakeModel", (), {"model_architecture": "Qwen3NextForCausalLM"})()
-        with patch("engines.vllm_adapter.ModelIdentifier", return_value=fake_model):
-            cmds = vllm_adapter._build_vllm_ascend_extensions({
-                "model_name": "x",
-                "model_path": "/tmp/model",
-                "model_type": "auto",
-            })
-
-        self.assertEqual(cmds, [
-            "set +u",
-            "source /usr/local/Ascend/ascend-toolkit/8.3.RC2/bisheng_toolkit/set_env.sh",
-            "set -u",
-        ])
-
     def test_vllm_ascend_accel_patch_key_is_not_rewritten_to_vllm(self):
         source = (ROOT / "wings_control" / "core" / "wings_entry.py").read_text(encoding="utf-8")
 

@@ -84,7 +84,7 @@ MindIE 2.3.0 的 Function Call 可与以下特性同时启用：
 | # | 模型 | 架构 | MindIE FC | 匹配 Processor | 推荐 parser | 细粒度分析 |
 |---|------|------|:---:|------|------|------|
 | 1 | **GLM4.7** | Glm4MoeForCausalLM | ❌ | 无 | — | GLM4.7 是 MoE 架构（~100B），与 GLM-4-9B 不同。MindIE 有 `ToolsCallProcessorChatglmV4`（适用 GLM-4-9B），但 **GLM4.7 使用全新的 MoE 架构**，其 FC 输出格式与 GLM-4-9B 不兼容，MindIE 2.3.0 未适配 |
-| 2 | **Qwen3.5-397-A17B** | Qwen3_5MoeForConditionalGeneration | ❌ | 无 | — | Qwen3.5 是 2026 年新发布的多模态 MoE 架构，MindIE 2.3.0（2025.12 发布）不包含此架构支持。`Qwen3_5MoeForConditionalGeneration` 与 `Qwen3MoeForCausalLM` 是不同的模型类 |
+| 2 | **Qwen3.5-397B-A17B** | Qwen3_5MoeForConditionalGeneration | ❌ | 无 | — | Qwen3.5 是 2026 年新发布的多模态 MoE 架构，MindIE 2.3.0（2025.12 发布）不包含此架构支持。`Qwen3_5MoeForConditionalGeneration` 与 `Qwen3MoeForCausalLM` 是不同的模型类 |
 | 3 | **Qwen3.5-27B** | Qwen3_5ForConditionalGeneration | ❌ | 无 | — | 同上，Qwen3.5 非 MoE 版本，但同属新架构，MindIE 2.3.0 未支持 |
 | 4 | **MiniMax-M2.5** | MiniMaxM2ForCausalLM | ❌ | 无 | — | MiniMax 为第三方模型厂商，MindIE 无原生适配。其 FC 输出格式为自定义格式（非 Hermes/JSON），无法复用已有 Processor |
 | 5 | **DeepSeek V3.2** | DeepseekV32ForCausalLM | ❌ | 无 | — | V3.2 使用全新的 `DeepseekV32ForCausalLM` 架构（相比 V3/V3.1 的 `DeepseekV3ForCausalLM` 有显著变化），MindIE 2.3.0 未针对此新架构适配 FC |
@@ -171,7 +171,7 @@ W8A8 显存估算 = 模型参数量(B) × 1 Byte (权重)
 | 推荐配置 | TP=8 + EP=8, 可支持较大 batch |
 | W8A8 量化模型可用性 | 需自行量化或社区提供 |
 
-#### 2.3.2 Qwen3.5-397-A17B（397B MoE, 激活 17B）
+#### 2.3.2 Qwen3.5-397B-A17B（397B MoE, 激活 17B）
 
 | 项目 | 数值 |
 |------|------|
@@ -282,7 +282,7 @@ W8A8 显存估算 = 模型参数量(B) × 1 Byte (权重)
 | **GLM4.7** | ~100B MoE | ~130 GB | ✅ | TP=8+EP | 充裕 |
 | **GPT-OSS-120B** | ~120B | ~145 GB | ✅ | TP=4~8 | 充裕 |
 | **DeepSeek-Coder-V2** | 236B MoE | ~265 GB | ✅ | TP=8+EP | 较充裕 |
-| **Qwen3.5-397-A17B** | 397B MoE | ~450 GB | ⚠️ **勉强** | TP=8+EP | ~60 GB 余量，需限 batch |
+| **Qwen3.5-397B-A17B** | 397B MoE | ~450 GB | ⚠️ **勉强** | TP=8+EP | ~60 GB 余量，需限 batch |
 | **MiniMax-M2.5** | ~456B MoE | ~516 GB | ❌ **不可行** | — | 超出 4 GB |
 | **DeepSeek V3.1** | ~671B MoE | ~731 GB | ❌ **不可行** | — | 需 2 台 16 卡 |
 | **DeepSeek V3.2** | ~685B MoE | ~745 GB | ❌ **不可行** | — | 需 2 台 16 卡 |
@@ -301,9 +301,9 @@ W8A8 显存估算 = 模型参数量(B) × 1 Byte (权重)
 
 | 结论 | 说明 |
 |------|------|
-| **W8A8 单机可部署：6/10 模型** | Qwen3.5-27B, LLaMA3.1-70B, GLM4.7, GPT-OSS-120B, DeepSeek-Coder-V2, Qwen3.5-397-A17B（勉强） |
+| **W8A8 单机可部署：6/10 模型** | Qwen3.5-27B, LLaMA3.1-70B, GLM4.7, GPT-OSS-120B, DeepSeek-Coder-V2, Qwen3.5-397B-A17B（勉强） |
 | **W8A8 单机不可部署：3/10 模型** | MiniMax-M2.5, DeepSeek V3.1, DeepSeek V3.2 均需多机 |
-| **Qwen3.5-397-A17B 是临界模型** | W8A8 下约 450 GB，512 GB 卡空间余量仅 ~60 GB，必须严格限制 batch_size 和 max_model_len |
+| **Qwen3.5-397B-A17B 是临界模型** | W8A8 下约 450 GB，512 GB 卡空间余量仅 ~60 GB，必须严格限制 batch_size 和 max_model_len |
 | **DeepSeek V3.1/V3.2 必须 2 机 16 卡** | 即使 W8A8 也需 ~700+ GB，单机远远不够 |
 | **910B 不支持 FP8** | 无法直接使用 DeepSeek 官方 FP8 权重，需转 INT8 |
 
@@ -401,7 +401,7 @@ W8A8 显存估算 = 模型参数量(B) × 1 Byte (权重)
 | 模型 | 架构 | vllm parser | vllm-ascend parser | sglang parser | MindIE parser | FC 覆盖评估 |
 |------|------|------|------|------|------|------|
 | **GLM4.7** | Glm4MoeForCausalLM | ✅ `glm47` | ✅ `glm47` | ❌ 无 | ❌ 无 | 2/4 引擎支持 |
-| **Qwen3.5-397-A17B** | Qwen3_5MoeForConditionalGeneration | ✅ `hermes` | ✅ `hermes` | ✅ `qwen25` | ❌ 无 | 3/4 引擎支持 |
+| **Qwen3.5-397B-A17B** | Qwen3_5MoeForConditionalGeneration | ✅ `hermes` | ✅ `hermes` | ✅ `qwen25` | ❌ 无 | 3/4 引擎支持 |
 | **Qwen3.5-27B** | Qwen3_5ForConditionalGeneration | ✅ `hermes` | ✅ `hermes` | ✅ `qwen25` | ❌ 无 | 3/4 引擎支持 |
 | **MiniMax-M2.5** | MiniMaxM2ForCausalLM | ✅ `minimax_m2` | ✅ `minimax_m2` | ❌ 无 | ❌ 无 | 2/4 引擎支持 |
 | **DeepSeek V3.2** | DeepseekV32ForCausalLM | ✅ `deepseekv32` | ✅ `deepseekv32` | ✅ `deepseekv3` | ❌ 无 | 3/4 引擎支持 |
@@ -600,7 +600,7 @@ def _inject_function_call_config(engine_config, overrides):
 
 - [ ] 向华为提需求：MindIE ≥2.4.0 需支持 DeepSeek V3.2、GLM4.7 MoE、MiniMax-M2.5、Qwen3.5 的 FC
 - [ ] 跟进 sglang 社区对 GLM4.7 (`glm47`) 和 MiniMax-M2.5 (`minimax_m2`) parser 的支持进展
-- [ ] 准备 Qwen3.5-397-A17B 的 W8A8 量化方案（SmoothQuant / GPTQ-INT8），验证单机 8×910B 部署
+- [ ] 准备 Qwen3.5-397B-A17B 的 W8A8 量化方案（SmoothQuant / GPTQ-INT8），验证单机 8×910B 部署
 
 ### 5.3 推荐引擎选择策略
 

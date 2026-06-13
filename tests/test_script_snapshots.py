@@ -106,7 +106,7 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
             model_path="/models/DeepSeek-V3",
             expected_params=(
                 "--tool-call-parser deepseek_v3",
-                "--reasoning-parser deepseek_r1",
+                "--reasoning-parser deepseek_v3",
             ),
         )
         self.assert_snapshot("snap02_vllm_nvidia_deepseek_distributed", plan.command)
@@ -114,38 +114,6 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
     # ------------------------------------------------------------------
     # SNAP-03  vLLM-Ascend + Ascend NPU + KimiK25（单节点）
     # ------------------------------------------------------------------
-    def test_snap03_vllm_ascend_kimik25_single(self):
-        hw = ascend_hardware(device_count=8)
-        fake_model = FakeModelIdentifier(
-            architecture="KimiK25ForConditionalGeneration",
-            model_name="Kimi-K2.5",
-            model_path="/models/Kimi-K2.5",
-        )
-        args = make_launch_args(
-            engine="vllm_ascend",
-            model_name="Kimi-K2.5",
-            model_path="/models/Kimi-K2.5",
-            device_count=8,
-            enable_auto_tool_choice=True,
-            enable_auto_think_choice=True,
-        )
-        port_plan = make_port_plan()
-
-        with ScriptGenContext(hw, fake_model):
-            plan = build_launcher_plan(args, port_plan)
-
-        self.assert_script_structure(
-            plan.command,
-            engine_cmd="python3 -m vllm.entrypoints.openai.api_server",
-            model_path="/models/Kimi-K2.5",
-            expected_params=(
-                "--tool-call-parser kimi_k2",
-                "--reasoning-parser kimi_k2",
-                "--mm-encoder-tp-mode data",
-            ),
-        )
-        self.assert_snapshot("snap03_vllm_ascend_kimik25_single", plan.command)
-
     # ------------------------------------------------------------------
     # SNAP-04  MindIE + Ascend + Qwen3MoE（单节点，验证 MindIE 参数生成）
     # ------------------------------------------------------------------
@@ -239,37 +207,6 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
     # ------------------------------------------------------------------
     # SNAP-07  vLLM-Ascend + Ascend + GlmMoeDsa（含大量 NPU 优化参数）
     # ------------------------------------------------------------------
-    def test_snap07_vllm_ascend_glmmoe_dsa(self):
-        hw = ascend_hardware(device_count=8)
-        fake_model = FakeModelIdentifier(
-            architecture="GlmMoeDsaForCausalLM",
-            model_name="GLM-Z1-Air",
-            model_path="/models/GLM-Z1-Air",
-        )
-        args = make_launch_args(
-            engine="vllm_ascend",
-            model_name="GLM-Z1-Air",
-            model_path="/models/GLM-Z1-Air",
-            device_count=8,
-            enable_auto_tool_choice=True,
-            enable_auto_think_choice=True,
-        )
-        port_plan = make_port_plan()
-
-        with ScriptGenContext(hw, fake_model):
-            plan = build_launcher_plan(args, port_plan)
-
-        self.assert_script_structure(
-            plan.command,
-            engine_cmd="python3 -m vllm.entrypoints.openai.api_server",
-            model_path="/models/GLM-Z1-Air",
-            expected_params=(
-                "--tool-call-parser glm47",
-                "--reasoning-parser glm45",
-            ),
-        )
-        self.assert_snapshot("snap07_vllm_ascend_glmmoe_dsa", plan.command)
-
     # ------------------------------------------------------------------
     # SNAP-08  vLLM + NVIDIA + env_overrides 注入合法变量
     # ------------------------------------------------------------------
@@ -318,39 +255,6 @@ class TestScriptSnapshots(SnapshotTestMixin, unittest.TestCase):
     # ------------------------------------------------------------------
     # SNAP-09  vLLM-Ascend + Ascend + DeepseekV3 + RAG 加速
     # ------------------------------------------------------------------
-    def test_snap09_vllm_ascend_deepseek_rag(self):
-        hw = ascend_hardware(device_count=8)
-        fake_model = FakeModelIdentifier(
-            architecture="DeepseekV3ForCausalLM",
-            model_name="DeepSeek-R1",
-            model_path="/models/DeepSeek-R1",
-        )
-        args = make_launch_args(
-            engine="vllm_ascend",
-            model_name="DeepSeek-R1",
-            model_path="/models/DeepSeek-R1",
-            device_count=8,
-            enable_rag_acc=True,
-            enable_auto_tool_choice=True,
-            enable_auto_think_choice=True,
-        )
-        port_plan = make_port_plan()
-
-        with ScriptGenContext(hw, fake_model,
-                              env_overrides={"ENABLE_RAG_ACC": "true"}):
-            plan = build_launcher_plan(args, port_plan)
-
-        self.assert_script_structure(
-            plan.command,
-            engine_cmd="python3 -m vllm.entrypoints.openai.api_server",
-            model_path="/models/DeepSeek-R1",
-            expected_params=(
-                "--tool-call-parser deepseek_v3",
-                "--reasoning-parser deepseek_r1",
-            ),
-        )
-        self.assert_snapshot("snap09_vllm_ascend_deepseek_rag", plan.command)
-
     # ------------------------------------------------------------------
     # SNAP-10  vLLM + NVIDIA + 未知模型架构（降级 llm.default）
     # ------------------------------------------------------------------

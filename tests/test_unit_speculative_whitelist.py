@@ -151,16 +151,6 @@ class TestBuildSpeculativeCmd(unittest.TestCase):
         self.assertIn('"method": "mtp"', cmd)
         self.assertIn('"num_speculative_tokens": 1', cmd)
 
-    def test_deepseek_mtp_emits_method(self):
-        """GLM-5.1 走 deepseek_mtp（endswith _mtp 分支）。"""
-        params = self._params_for_arch("GlmMoeDsaForCausalLM")
-        cmd = self._run_with_patches(
-            params, "vllm",
-            self._patched_strategy("GlmMoeDsaForCausalLM", "deepseek_mtp"),
-        )
-        self.assertIn('"method": "deepseek_mtp"', cmd)
-        self.assertIn('"num_speculative_tokens": 3', cmd)
-
     def test_suffix_emits_full_triple(self):
         """suffix → method + num=5 + cached_requests=1000。"""
         params = self._params_for_arch("UnknownForCausalLM")

@@ -72,15 +72,18 @@ architectures:
       vllm_ascend: {default: deepseek_v32}
     models:
       DeepSeek-V3.2:      {vllm: deepseek_v32, vllm_ascend: deepseek_v32, sglang: deepseekv32}
+      DeepSeek-V3.2-w8a8: {vllm: deepseek_v32, vllm_ascend: deepseek_v32, sglang: deepseekv32}
       DeepSeek-V3.2-Exp:  {vllm: deepseek_v32, vllm_ascend: deepseek_v32, sglang: deepseekv32}
-      DeepSeek-V3.2-0715: {vllm: deepseek_v32, vllm_ascend: deepseek_v32, sglang: deepseekv32}
 
   - name: KimiK25ForConditionalGeneration
     config:
+      vllm:        {default: kimi_k2}
       vllm_ascend: {default: kimi_k2}
     models:
-      Kimi-K2.5:      {vllm_ascend: kimi_k2}
-      Kimi-K2.5-w4a8: {vllm_ascend: kimi_k2}
+      Kimi-K2.5:      {vllm: kimi_k2, vllm_ascend: kimi_k2}
+      Kimi-K2.5-w4a8: {vllm: kimi_k2, vllm_ascend: kimi_k2}
+      Kimi-K2.7:      {vllm: kimi_k2, vllm_ascend: kimi_k2}
+      Kimi-K2.7-w4a8: {vllm: kimi_k2, vllm_ascend: kimi_k2}
 
   - name: Glm4ForCausalLM
     config:
@@ -96,11 +99,12 @@ architectures:
       sglang:      {default: glm}
       vllm_ascend: {default: glm47}
     models:
-      GLM-5:      {vllm: glm47, vllm_ascend: glm47, sglang: glm}
-      GLM-5-FP8:  {vllm: glm47, vllm_ascend: glm47, sglang: glm}
-      GLM-5-w4a8: {vllm: glm47, vllm_ascend: glm47, sglang: glm}
-      GLM-5.1:    {vllm: glm47, vllm_ascend: glm47, sglang: glm}
-      GLM-5.1-FP8: {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5:        {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5-FP8:    {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5-w4a8:   {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5.1:      {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5.1-w8a8: {vllm: glm47, vllm_ascend: glm47, sglang: glm}
+      GLM-5.1-FP8:  {vllm: glm47, vllm_ascend: glm47, sglang: glm}
 
   - name: Glm4MoeForCausalLM
     config:
@@ -158,8 +162,10 @@ architectures:
       sglang:      {default: qwen}
       vllm_ascend: {default: qwen3_coder}
     models:
-      Qwen3.5-27B:          {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
-      Qwen3.5-27B-Instruct: {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.5-27B:      {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.5-27B-w8a8: {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.6-27B:      {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.6-27B-w8a8: {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
 
   - name: Qwen3_5MoeForConditionalGeneration
     config:
@@ -167,10 +173,10 @@ architectures:
       sglang:      {default: qwen}
       vllm_ascend: {default: qwen3_coder}
     models:
-      Qwen3.5-397-A17B:      {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
-      Qwen3.5-397-A17B-w8a8: {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
-      Qwen3.5-397B-A17B:     {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
-      Qwen3.6-35B-A3B:       {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.5-397B-A17B-w8a8: {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.5-397B-A17B:      {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.6-35B-A3B:        {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
+      Qwen3.6-35B-A3B-w8a8:   {vllm: qwen3_coder, vllm_ascend: qwen3_coder, sglang: qwen}
 
   - name: MiniMaxM2ForCausalLM
     config:

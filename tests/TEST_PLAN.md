@@ -60,7 +60,7 @@
 | 11 | `GlmMoeDsaForCausalLM` | ✅（大量 NPU 优化） | ✅ | default |
 | 12 | `LlamaForCausalLM` | ✅ | ✅ | default |
 | 13 | `MiniMaxM2ForCausalLM` | ✅（存在 Issue #4） | ✅ | default |
-| 14 | `KimiK25ForConditionalGeneration` | ✅ | ❌（无专属，降级 default） | default |
+| 14 | `KimiK25ForConditionalGeneration` | ✅ | ✅ | default |
 | 15 | `(未知架构)` | — | — | — |
 
 ---
@@ -111,9 +111,9 @@
 | UT-TCP-02 | Qwen3MoeForCausalLM | default | True | `hermes` | `qwen3` |
 | UT-TCP-03 | Qwen3MoeForCausalLM | Qwen3-Coder-480B-A35B-Instruct | True | `qwen3_xml` | None |
 | UT-TCP-04 | Qwen3MoeForCausalLM | Qwen3-Coder-30B-A3B-Instruct | True | `qwen3_xml` | None |
-| UT-TCP-05 | DeepseekV3ForCausalLM | default | True | `deepseek_v3` | `deepseek_r1` |
-| UT-TCP-06 | DeepseekV3ForCausalLM | DeepSeek-V3.1 | True | `deepseek_v31` | `deepseek_r1` |
-| UT-TCP-07 | DeepseekV32ForCausalLM | default | True | `deepseek_v32` | `deepseek_r1` |
+| UT-TCP-05 | DeepseekV3ForCausalLM | DeepSeek-V3 | True | `deepseek_v3` | `deepseek_v3` |
+| UT-TCP-06 | DeepseekV3ForCausalLM | DeepSeek-V3.1 | True | `deepseek_v31` | `deepseek_v3` |
+| UT-TCP-07 | DeepseekV32ForCausalLM | default | True | `deepseek_v32` | `deepseek_v3` |
 | UT-TCP-08 | Glm4MoeForCausalLM | default | True | `glm47` | `glm45` |
 | UT-TCP-09 | GlmMoeDsaForCausalLM | default | True | `glm47` | `glm45` |
 | UT-TCP-10 | LlamaForCausalLM | default | True | `llama3_json` | None |
@@ -121,6 +121,7 @@
 | UT-TCP-12 | Qwen3NextForCausalLM | default | True | `hermes` | `qwen3` |
 | UT-TCP-13 | MiniMaxM2ForCausalLM | default | True | `minimax_m2` | `minimax_m2` |
 | UT-TCP-14 | **任意架构** | default | **False** | None（无） | None（无） |
+| UT-TCP-14K | KimiK25ForConditionalGeneration | Kimi-K2.5 | True | `kimi_k2` | `kimi_k2` |
 
 #### vLLM-Ascend（Ascend NPU）
 
@@ -128,7 +129,7 @@
 |--------|---------|--------------|---------------------|---------------------|
 | UT-TCP-15 | KimiK25ForConditionalGeneration | default | `kimi_k2` | `kimi_k2` |
 | UT-TCP-16 | DeepseekV3ForCausalLM | DeepSeek-R1-w8a8 | `deepseek_v3` | `deepseek_r1` |
-| UT-TCP-17 | DeepseekV3ForCausalLM | DeepSeek-V3.1 | `deepseek_v31` | `deepseek_r1` |
+| UT-TCP-17 | DeepseekV3ForCausalLM | DeepSeek-V3.1 | `deepseek_v31` | `deepseek_v3` |
 | UT-TCP-18 | Qwen3MoeForCausalLM | default | `hermes` | `qwen3` |
 | UT-TCP-19 | GlmMoeDsaForCausalLM | default | `glm47` | `glm45` |
 
@@ -321,7 +322,7 @@
 | 测试 ID | 引擎 | 期望行为 |
 |--------|------|---------|
 | IT-K2-01 | vllm_ascend | 完整专属参数：`kimi_k2` parsers + `mm_encoder_tp_mode=data` + `max_num_seqs=16` + `no_enable_prefix_caching=True` |
-| IT-K2-02 | vllm（NVIDIA） | 降级到 `llm.default`：`max_model_len=4096`，**无** kimi 专属参数 |
+| IT-K2-02 | vllm（NVIDIA） | 官方 Kimi 配置：`kimi_k2` parsers + `mm_encoder_tp_mode=data` + `max_model_len=4096` |
 
 #### MiniMaxM2ForCausalLM（已知 Issue #4：序列长度不对称）
 
@@ -616,7 +617,7 @@ tests/
 | Issue # | 位置 | 描述 | 相关测试 |
 |---------|------|------|---------|
 | #1（已修复） | `wings_entry.py:_parse_env_file` | env key 未验证，存在命令注入风险 | UT-EV-06~08 |
-| #2 | `nvidia_default.json` | `KimiK25ForConditionalGeneration` 无 NVIDIA 专属配置，降级 default | IT-K2-02, SNAP-15 |
+| #2（已修复） | `nvidia_default.json` | `KimiK25ForConditionalGeneration` 已补 NVIDIA vLLM 专属配置 | IT-K2-02, UT-TCP-14K, SNAP-15 |
 | #3 | `ascend_default.json:379-489` | `MiniMaxM2ForCausalLM` vllm_ascend=34816 vs mindie=4096，序列长度不对称 | IT-MM-01~03, SNAP-16 |
 | #4（已修复） | `nvidia_default.json:467` | 缩进错误（11 空格→12 空格） | — |
 | #5（已修复） | `ascend_default.json` | `GlmMoeDsaForCausalLM` 存在重复 JSON key，`json.load()` last-wins 导致第一条目（含 `quantization:ascend`、`seed:1024`、NPU 优化）被静默覆盖 | 无（需新增 GAP-9：JSON 重复 key 自动检测测试） |

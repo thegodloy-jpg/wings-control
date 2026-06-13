@@ -149,11 +149,13 @@ _LLM_MODELS = {
     "KimiK25ForConditionalGeneration": [
         "Kimi-K2.5",
         "Kimi-K2.5-w4a8",
+        "Kimi-K2.7",
+        "Kimi-K2.7-w4a8",
         ],
     "DeepseekV32ForCausalLM": [
         "DeepSeek-V3.2",
+        "DeepSeek-V3.2-w8a8",
         "DeepSeek-V3.2-Exp",
-        "DeepSeek-V3.2-0715"
         ],
     "Glm4ForCausalLM": [
         "GLM-4-9B-0414"
@@ -195,7 +197,7 @@ _LLM_MODELS = {
         "Qwen3.6-27B-w8a8"
         ],
     "Qwen3_5MoeForConditionalGeneration": [
-        "Qwen3.5-397-A17B-w8a8",
+        "Qwen3.5-397B-A17B-w8a8",
         "Qwen3.5-397B-A17B",
         "Qwen3.6-35B-A3B",
         "Qwen3.6-35B-A3B-w8a8"

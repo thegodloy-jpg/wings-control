@@ -59,8 +59,8 @@
 | LLM | `Qwen3ForCausalLM` | `Qwen3-32B` | 已知架构，Embedding 场景存在同架构特殊分类 |
 | LLM | `Qwen3MoeForCausalLM` | `Qwen3-30B-A3B`、`Qwen3-235B-A22B` | 已知 MoE 架构，Expert Parallel 需结合引擎/硬件 |
 | LLM | `Qwen3NextForCausalLM` | `Qwen3-Next-80B-A3B-Instruct` | 已知架构，需结合引擎验证 |
-| LLM | `Qwen3_5ForConditionalGeneration` | `Qwen3.5-27B`、`Qwen3.5-27B-Instruct` | 已知架构，当前示例主线模型 |
-| LLM | `Qwen3_5MoeForConditionalGeneration` | `Qwen3.5-397-A17B`、`Qwen3.5-397-A17B-w8a8` | 已知 MoE 架构，需结合引擎/硬件 |
+| LLM | `Qwen3_5ForConditionalGeneration` | `Qwen3.5-27B`、`Qwen3.6-27B` | 已知架构，当前示例主线模型 |
+| LLM | `Qwen3_5MoeForConditionalGeneration` | `Qwen3.5-397B-A17B`、`Qwen3.5-397B-A17B-w8a8` | 已知 MoE 架构，需结合引擎/硬件 |
 | LLM | `MiniMaxM2ForCausalLM` | `MiniMax-M2.5`、`MiniMax-M2.7-w8a8` | 已知架构，需结合引擎验证 |
 | LLM | `LlamaForCausalLM` | `LLaMA3.1-70B-Instruct`、`DeepSeek-R1-Distill-Llama-70B` | 已知架构，需结合引擎验证 |
 | Embedding | `XLMRobertaModel` | `bge-m3` | 已知 embedding 类型 |

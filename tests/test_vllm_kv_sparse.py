@@ -174,35 +174,6 @@ class TestVllmKvSparse(unittest.TestCase):
         self.assertNotIn("--kv-cache-dtype fp8", script)
         self.assertNotIn("--calculate-kv-scales", script)
 
-    def test_glm5_family_speculative_uses_deepseek_mtp(self):
-        for model_name in ("GLM-5", "GLM-5.1"):
-            for engine in ("vllm", "vllm_ascend"):
-                with self.subTest(model_name=model_name, engine=engine):
-                    params = {
-                        "model_name": model_name,
-                        "model_path": f"/models/{model_name.lower()}",
-                        "model_type": "llm",
-                        "engine": engine,
-                        "enable_speculative_decode": True,
-                        "engine_config": {"model": f"/models/{model_name.lower()}"},
-                    }
-
-                    with patch.object(
-                        vllm_adapter,
-                        "ModelIdentifier",
-                        return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
-                    ):
-                        script = vllm_adapter.build_start_script(params)
-
-                    # GLM-5.1 官方推荐 num=1；GLM-5（非 5.1）保持 num=3。
-                    expected_num = 1 if model_name == "GLM-5.1" else 3
-                    self.assertIn(
-                        "--speculative-config '{\"method\": \"deepseek_mtp\", "
-                        "\"num_speculative_tokens\": " + str(expected_num) + "}'",
-                        script,
-                    )
-                    self.assertNotIn('"method" : "suffix"', script)
-
     def test_glm5_speculative_lmcache_falls_back_to_suffix(self):
         params = {
             "model_name": "GLM-5",

@@ -21,6 +21,7 @@ Key Responsibilities:
 # -*- coding: utf-8 -*-
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Dict, Any, Optional, Tuple
 import argparse
 import json
@@ -28,6 +29,8 @@ import logging
 import math
 import os
 from pathlib import Path
+
+import yaml
 
 from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd_role_env, \
     get_config_force_env, get_soft_fp8_env, get_soft_fp4_env, get_speculative_decoding_env, \
@@ -64,6 +67,13 @@ def _resolve_default_config_dir() -> str:
 
 # 配置目录单例（模块加载时解析一次）
 DEFAULT_CONFIG_DIR = _resolve_default_config_dir()
+REASONING_PARSER_SUPPORT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "features"
+    / "reasoning_parser"
+    / "reasoning_parser_support.yaml"
+)
 
 # 各设备类型和引擎对应的默认配置文件名映射
 DEFAULT_CONFIG_FILES = {
@@ -454,9 +464,8 @@ def _set_reasoning_parser(params, engine_cmd_parameter):
       - 开关关闭 → 移除 reasoning_parser，启动命令不带思维链解析。
 
     适用引擎：vllm / vllm_ascend / sglang（三引擎一致；mindie 无 reasoning_parser 字段）。
-    本函数仅作用于配置解析后 params 中已存在的字段，因此实际行为依赖
-    nvidia_default.json / ascend_default.json 等默认配置中是否定义了
-    对应模型的 reasoning_parser。
+    本函数仅作用于配置解析后 params 中已存在的字段；模型对应 parser 由
+    docs/features/reasoning_parser/reasoning_parser_support.yaml 注入。
     """
     if engine_cmd_parameter.get("enable_auto_think_choice"):
         if params.get("reasoning_parser"):
@@ -2464,6 +2473,95 @@ def _resolve_model_lookup_keys(cmd_known_params: Dict[str, Any]) -> Tuple[str, s
     return model_name_lower, engine, engine_key
 
 
+@lru_cache(maxsize=1)
+def _load_reasoning_parser_support() -> Dict[str, Any]:
+    """Load the reasoning parser matrix keyed by model architecture."""
+    try:
+        with REASONING_PARSER_SUPPORT_PATH.open("r", encoding="utf-8-sig") as stream:
+            support = yaml.safe_load(stream) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning(
+            "Failed to load reasoning parser support file %s: %s",
+            REASONING_PARSER_SUPPORT_PATH,
+            exc,
+        )
+        return {}
+
+    architectures = support.get("architectures", [])
+    if not isinstance(architectures, list):
+        logger.warning(
+            "Invalid reasoning parser support format: architectures must be a list"
+        )
+        return {}
+    return {
+        item["name"]: item
+        for item in architectures
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+
+
+def _resolve_reasoning_parser_support(
+    model_architecture: str,
+    model_name: str,
+    engine: str,
+) -> Tuple[bool, Optional[str]]:
+    """Resolve one parser value from reasoning_parser_support.yaml.
+
+    Concrete model rows, including explicit ``null``, take precedence over the
+    architecture config map. Distributed vLLM variants share their base engine
+    mapping.
+    """
+    base_engine = engine.removesuffix("_distributed")
+    if base_engine not in {"vllm", "vllm_ascend"}:
+        return False, None
+
+    architecture = _load_reasoning_parser_support().get(model_architecture)
+    if not architecture:
+        return False, None
+
+    model_name_lower = (model_name or "").lower()
+    models = architecture.get("models", {})
+    if isinstance(models, dict):
+        for supported_name, engine_values in models.items():
+            if str(supported_name).lower() != model_name_lower:
+                continue
+            if isinstance(engine_values, dict) and base_engine in engine_values:
+                return True, engine_values[base_engine]
+
+    config = architecture.get("config", {})
+    engine_config = config.get(base_engine, {}) if isinstance(config, dict) else {}
+    if not isinstance(engine_config, dict):
+        return False, None
+    for configured_name, parser in engine_config.items():
+        if configured_name != "default" and configured_name.lower() == model_name_lower:
+            return True, parser
+    if "default" in engine_config:
+        return True, engine_config["default"]
+    return False, None
+
+
+def _apply_reasoning_parser_support(
+    engine_specific_defaults: Dict[str, Any],
+    model_architecture: str,
+    model_name: str,
+    engine_key: str,
+) -> Dict[str, Any]:
+    """Merge the YAML-backed reasoning parser into model defaults."""
+    resolved = dict(engine_specific_defaults)
+    found, parser = _resolve_reasoning_parser_support(
+        model_architecture,
+        model_name,
+        engine_key,
+    )
+    if not found:
+        return resolved
+    if parser:
+        resolved["reasoning_parser"] = parser
+    else:
+        resolved.pop("reasoning_parser", None)
+    return resolved
+
+
 def _get_model_specific_config(hardware_env: Dict[str, Any],
                              cmd_known_params: Dict[str, Any],
                              model_info) -> Dict[str, Any]:
@@ -2512,6 +2610,12 @@ def _get_model_specific_config(hardware_env: Dict[str, Any],
         engine_specific_defaults = models_dict.get(default_key, {}).get(engine_key, {})
         logger.info("The default deploy configuration of the model type %s will be used.", model_type)
 
+    engine_specific_defaults = _apply_reasoning_parser_support(
+        engine_specific_defaults,
+        model_architecture,
+        cmd_known_params.get("model_name", ""),
+        engine_key,
+    )
     return _merge_cmd_params(hardware_env, engine_specific_defaults, cmd_known_params, model_info)
 
 

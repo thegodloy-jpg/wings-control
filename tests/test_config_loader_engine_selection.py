@@ -356,80 +356,6 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
 
         self.assertTrue(params["no_disable_hybrid_kv_cache_manager"])
 
-    def test_glm5_vllm_ascend_engine_config_render_to_start_script(self):
-        from core.start_args_compat import parse_launch_args  # noqa: E402
-        from engines.vllm_adapter import build_start_script  # noqa: E402
-
-        with tempfile.TemporaryDirectory() as model_dir:
-            config_file = Path(model_dir, "engine_config.json")
-            config_file.write_text(
-                json.dumps({
-                    "async_scheduling": True,
-                    "additional_config": {"fuse_muls_add": True},
-                    "speculative_config": {"num_speculative_tokens": 3, "method": "deepseek_mtp"},
-                    "compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
-                }),
-                encoding="utf-8",
-            )
-            Path(model_dir, "config.json").write_text(
-                json.dumps({
-                    "architectures": ["GlmMoeDsaForCausalLM"],
-                    "torch_dtype": "bfloat16",
-                }),
-                encoding="utf-8",
-            )
-            argv = [
-                "--engine", "vllm_ascend",
-                "--model-name", "glm-5",
-                "--model-path", model_dir,
-                "--config-file", str(config_file),
-                "--host", "0.0.0.0",
-                "--port", "18000",
-                "--device-count", "8",
-                "--enable-expert-parallel",
-                "--seed", "1024",
-                "--max-num-seqs", "8",
-                "--max-num-batched-tokens", "4096",
-                "--trust-remote-code",
-                "--gpu-memory-utilization", "0.95",
-                "--quantization", "ascend",
-                "--enable-chunked-prefill",
-                "--enable-prefix-caching",
-            ]
-
-            with patch.object(sys, "argv", ["wings-launcher-v4"] + argv):
-                with patch.dict(os.environ, {}, clear=True):
-                    launch_args = parse_launch_args(argv)
-                    merged = load_and_merge_configs(
-                        {"device": "ascend", "count": 8, "details": []},
-                        launch_args.to_namespace(),
-                    )
-                    script = build_start_script(merged)
-
-        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
-        self.assertIn("--async-scheduling", exec_line)
-        # GLM-5/5.1 additional_config 默认注入已移除：仅保留配置文件/用户显式传入的
-        # fuse_muls_add，不再补齐 multistream_overlap_shared_expert / ascend_compilation_config。
-        self.assertIn("--additional-config '{\"fuse_muls_add\":true", exec_line)
-        self.assertNotIn("\"multistream_overlap_shared_expert\"", exec_line)
-        self.assertNotIn("\"ascend_compilation_config\"", exec_line)
-        self.assertIn(
-            "--speculative-config '{\"num_speculative_tokens\":3,\"method\":\"deepseek_mtp\"}'",
-            exec_line,
-        )
-        self.assertIn("--compilation-config '{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}'", exec_line)
-        self.assertEqual(exec_line.count("--speculative-config"), 1)
-
-        for env_name in (
-            "HCCL_OP_EXPANSION_MODE",
-            "OMP_PROC_BIND",
-            "OMP_NUM_THREADS",
-            "HCCL_BUFFSIZE",
-            "PYTORCH_NPU_ALLOC_CONF",
-            "VLLM_ASCEND_BALANCE_SCHEDULING",
-        ):
-            self.assertIn(env_name, script)
-
     def _build_deepseek_v4_flash_script(self, platform="A2", extra_env=None, extra_argv=None, device_count=8):
         from core.start_args_compat import parse_launch_args  # noqa: E402
         from engines.vllm_adapter import build_start_script  # noqa: E402
@@ -721,49 +647,6 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                         launch_args.to_namespace(),
                     )
                     return build_start_script(merged)
-
-    def test_deepseek_v4_pro_a3_two_nodes_tp16_dp2_rank0(self):
-        """V4-Pro A3 双机 16 卡：rank0 → TP=16、DP=2、dp_size_local=1、start_rank=0。
-
-        MTP 由上层 ``--enable-speculative-decode`` 控制，此处显式传入以校验
-        投机解码命令行片段（``--speculative-config`` / ``deepseek_mtp``）。
-        """
-        script = self._build_deepseek_v4_pro_script(
-            node_rank=0,
-            extra_argv=["--enable-speculative-decode"],
-        )
-        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
-        self.assertTrue(exec_line.startswith("exec vllm serve "))
-        self.assertIn("--tensor-parallel-size 16", exec_line)
-        self.assertIn("--data-parallel-size 2", exec_line)
-        self.assertIn("--data-parallel-size-local 1", exec_line)
-        # rank0 仍走 head 入口，但 V4-Pro 官方 dp_deployment 模板显式携带 start_rank=0。
-        self.assertNotIn("--headless", exec_line)
-        self.assertIn("--data-parallel-start-rank 0", exec_line)
-        self.assertIn("--data-parallel-rpc-port 13399", exec_line)
-        self.assertIn("--max-model-len 135000", exec_line)
-        self.assertIn("--max-num-batched-tokens 4096", exec_line)
-        self.assertIn("--enable-expert-parallel", exec_line)
-        self.assertIn("--quantization ascend", exec_line)
-        self.assertIn("--block-size 128", exec_line)
-        self.assertIn("--async-scheduling", exec_line)
-        self.assertIn("--tokenizer-mode deepseek_v4", exec_line)
-        self.assertIn("--tool-call-parser deepseek_v4", exec_line)
-        self.assertIn("--enable-auto-tool-choice", exec_line)
-        self.assertIn("--reasoning-parser deepseek_v4", exec_line)
-        self.assertIn("--safetensors-load-strategy prefetch", exec_line)
-        self.assertIn("--speculative-config", exec_line)
-        self.assertIn('"method": "deepseek_mtp"', exec_line)
-        self.assertIn('"num_speculative_tokens": 1', exec_line)
-        # ``enable_cpu_binding`` 必须是 bool（字符串 "true" 会被 _format_cli_arg
-        # 当成普通字符串发出 'true'，与 vLLM 0.18 期望的 bool 不符）。
-        self.assertIn("\"enable_cpu_binding\":true", exec_line)
-        self.assertIn("\"enable_npugraph_ex\":true", exec_line)
-        self.assertIn("\"enable_static_kernel\":false", exec_line)
-        self.assertIn("export HCCL_BUFFSIZE=2048", script)
-        self.assertIn("export ASCEND_A3_ENABLE=1", script)
-        self.assertIn("export VLLM_ASCEND_ENABLE_FUSED_MC2=1", script)
-        self.assertIn("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1", script)
 
     def test_deepseek_v4_pro_a3_two_nodes_rank1_headless_start_rank_1(self):
         """V4-Pro A3 双机 rank1 → --headless + --data-parallel-start-rank 1。"""

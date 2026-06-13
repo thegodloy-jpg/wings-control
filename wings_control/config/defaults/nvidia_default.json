@@ -24,14 +24,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v3",
-            "reasoning_parser": "deepseek_r1"
+            "tool_call_parser": "deepseek_v3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v3",
-            "reasoning_parser": "deepseek_r1"
+            "tool_call_parser": "deepseek_v3"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -48,14 +46,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v3",
-            "reasoning_parser": "deepseek_r1"
+            "tool_call_parser": "deepseek_v3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v3",
-            "reasoning_parser": "deepseek_r1"
+            "tool_call_parser": "deepseek_v3"
           },
           "sglang": {
             "H20-96G": {
@@ -91,18 +87,76 @@
             "tool_call_parser": "deepseekv3"
           }
         },
-        "DeepSeek-V3.1": {
+        "DeepSeek-R1-0528": {
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v31",
-            "reasoning_parser": "deepseek_v3"
+            "tool_call_parser": "deepseek_v3"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v31",
-            "reasoning_parser": "deepseek_v3"
+            "tool_call_parser": "deepseek_v3"
+          }
+        },
+        "DeepSeek-R1-w8a8": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          }
+        },
+        "DeepSeek-R1-0528-w8a8": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          }
+        },
+        "DeepSeek-Coder-V2-Instruct": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          }
+        },
+        "DeepSeek-Coder-V2-Instruct-w8a8": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          }
+        },
+        "DeepSeek-V3.1": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v31"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v31"
           },
           "sglang": {
             "H20-96G": {
@@ -137,6 +191,18 @@
             "context_length": 4096,
             "tool_call_parser": "deepseekv31"
           }
+        },
+        "DeepSeek-V3.1-w8a8": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "deepseek_v3"
+          }
         }
       },
       "Qwen3MoeForCausalLM": {
@@ -144,14 +210,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "hermes",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "hermes"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "hermes",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "hermes"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -214,14 +278,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "hermes",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "hermes"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "hermes",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "hermes"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -264,14 +326,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v32",
-            "reasoning_parser": "deepseek_v3"
+            "tool_call_parser": "deepseek_v32"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "deepseek_v32",
-            "reasoning_parser": "deepseek_v3"
+            "tool_call_parser": "deepseek_v32"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -294,8 +354,7 @@
             "block_size": 256,
             "enable_expert_parallel": true,
             "tokenizer_mode": "deepseek_v4",
-            "tool_call_parser": "deepseek_v4",
-            "reasoning_parser": "deepseek_v4"
+            "tool_call_parser": "deepseek_v4"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
@@ -304,8 +363,7 @@
             "block_size": 256,
             "enable_expert_parallel": true,
             "tokenizer_mode": "deepseek_v4",
-            "tool_call_parser": "deepseek_v4",
-            "reasoning_parser": "deepseek_v4"
+            "tool_call_parser": "deepseek_v4"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -326,8 +384,7 @@
             "block_size": 256,
             "enable_expert_parallel": true,
             "tokenizer_mode": "deepseek_v4",
-            "tool_call_parser": "deepseek_v4",
-            "reasoning_parser": "deepseek_v4"
+            "tool_call_parser": "deepseek_v4"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
@@ -336,8 +393,7 @@
             "block_size": 256,
             "enable_expert_parallel": true,
             "tokenizer_mode": "deepseek_v4",
-            "tool_call_parser": "deepseek_v4",
-            "reasoning_parser": "deepseek_v4"
+            "tool_call_parser": "deepseek_v4"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -351,19 +407,33 @@
           }
         }
       },
+      "KimiK25ForConditionalGeneration": {
+        "default": {
+          "vllm": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "kimi_k2",
+            "mm_encoder_tp_mode": "data"
+          },
+          "vllm_distributed": {
+            "trust_remote_code": true,
+            "max_model_len": 4096,
+            "tool_call_parser": "kimi_k2",
+            "mm_encoder_tp_mode": "data"
+          }
+        }
+      },
       "Glm4MoeForCausalLM": {
         "default": {
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "glm47",
-            "reasoning_parser": "glm45"
+            "tool_call_parser": "glm47"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "glm47",
-            "reasoning_parser": "glm45"
+            "tool_call_parser": "glm47"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -382,14 +452,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "glm47",
-            "reasoning_parser": "glm45"
+            "tool_call_parser": "glm47"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "glm47",
-            "reasoning_parser": "glm45"
+            "tool_call_parser": "glm47"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -409,15 +477,13 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "qwen3_coder",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "qwen3_coder"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "qwen3_coder",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "qwen3_coder"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -437,15 +503,13 @@
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "qwen3_coder",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "qwen3_coder"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
             "task": "generate",
-            "tool_call_parser": "qwen3_coder",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "qwen3_coder"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -464,14 +528,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "minimax_m2",
-            "reasoning_parser": "minimax_m2_append_think"
+            "tool_call_parser": "minimax_m2"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "minimax_m2",
-            "reasoning_parser": "minimax_m2_append_think"
+            "tool_call_parser": "minimax_m2"
           },
           "sglang": {
             "trust_remote_code": true,
@@ -536,14 +598,12 @@
           "vllm": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "hermes",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "hermes"
           },
           "vllm_distributed": {
             "trust_remote_code": true,
             "max_model_len": 4096,
-            "tool_call_parser": "hermes",
-            "reasoning_parser": "qwen3"
+            "tool_call_parser": "hermes"
           },
           "sglang": {
             "trust_remote_code": true,
