@@ -30,6 +30,7 @@ from core.version_util import normalize_engine_version
 from engines.vllm_adapter import (
     resolve_speculative_strategy,
     _is_deepseek_v4_cpu_offload_params,
+    _is_deepseek_v4_flash_params,
     _inject_env_echo,
     _need_triton_patch,
 )
@@ -382,6 +383,16 @@ def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> s
         logger.info(
             "[KVCache Offload] DeepSeek-V4 Flash/Pro uses vllm-ascend "
             "CPUOffloadingConnector; skipping LMCache patch install despite "
+            "LMCACHE_OFFLOAD=true."
+        )
+        return ""
+
+    # [V4-Flash-NV-Day0] NV V4-Flash 走 native --kv_offloading_backend（构建期 CLI flag），
+    # 与 LMCache 互斥：跳过 LMCache 补丁安装，避免两套卸载机制并存。
+    if merged and engine == "vllm" and _is_deepseek_v4_flash_params(merged):
+        logger.info(
+            "[KVCache Offload] DeepSeek-V4-Flash (NV) uses native "
+            "--kv_offloading_backend; skipping LMCache patch install despite "
             "LMCACHE_OFFLOAD=true."
         )
         return ""

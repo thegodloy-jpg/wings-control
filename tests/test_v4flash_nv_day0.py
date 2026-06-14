@@ -176,6 +176,33 @@ class TestOffloadLmcacheMutualExclusion(unittest.TestCase):
         self.assertNotIn("LMCACHE_CONFIG_FILE", joined)
 
 
+class TestLmcachePatchInstallSkip(unittest.TestCase):
+    """互斥：NV V4-Flash native 卸载命中 → 跳过 LMCache 补丁安装（--lmcache-target）。"""
+
+    def test_nv_v4_flash_skips_lmcache_patch_install(self):
+        from core.wings_entry import _build_lmcache_install_snippet  # noqa: E402
+        merged = _v4_flash_params(device_count=8)
+        with patch.object(vllm_adapter, "ModelIdentifier",
+                          return_value=_FakeModelInfo("DeepseekV4ForCausalLM")), \
+             patch.dict("os.environ", {"LMCACHE_OFFLOAD": "true"}, clear=True):
+            snippet = _build_lmcache_install_snippet("vllm", merged)
+        self.assertEqual(snippet, "")
+
+    def test_non_v4_nv_vllm_still_installs_lmcache_patch(self):
+        """守卫不过宽：普通 NV/vllm 模型仍走原有 LMCache 补丁安装。"""
+        from core.wings_entry import _build_lmcache_install_snippet  # noqa: E402
+        merged = _v4_flash_params(
+            model_name="Qwen3-32B",
+            model_path="/models/Qwen3-32B",
+            device_count=8,
+        )
+        with patch.object(vllm_adapter, "ModelIdentifier",
+                          return_value=_FakeModelInfo("Qwen3MoeForCausalLM")), \
+             patch.dict("os.environ", {"LMCACHE_OFFLOAD": "true"}, clear=True):
+            snippet = _build_lmcache_install_snippet("vllm", merged)
+        self.assertIn("--lmcache-target nvidia-x86", snippet)
+
+
 class TestSharedOffloadGbHelper(unittest.TestCase):
     """ascend cpu_swap_space_gb 与 NV native size 同源同值。"""
 
