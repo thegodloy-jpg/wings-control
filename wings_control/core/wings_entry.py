@@ -364,20 +364,18 @@ def _is_glm51_nvidia_vllm_merged(engine: str, merged: dict | None) -> bool:
     )
 
 
-def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> str:
-    """为 LMCache KV 卸载生成 --lmcache-target 的容错 shell 片段。
+def _resolve_lmcache_install_target(engine: str, merged: dict | None) -> str | None:
+    """决定是否安装 LMCache 补丁，并返回目标平台（vllm→nvidia-x86 / vllm_ascend→ascend-arm）。
 
-    当 LMCACHE_OFFLOAD=true 时，通过 install.py --lmcache-target 安装
-    LMCache 补丁依赖，目标平台由引擎类型决定：
-      - vllm        → nvidia-x86
-      - vllm_ascend  → ascend-arm
-    DeepSeek-V4 Flash/Pro on vllm_ascend 不使用 LMCache，跳过该补丁安装。
-
-    Returns:
-        str: shell 脚本片段；LMCache 未启用时返回空字符串。
+    命中下列任一情况返回 None（跳过安装）：
+      * ``LMCACHE_OFFLOAD`` 未开启；
+      * V4 Flash/Pro on vllm_ascend → 用 CPUOffloadingConnector；
+      * V4-Flash on NV/vllm → 用 native ``--kv_offloading_backend``（构建期 CLI flag）；
+      * GLM-5.1 on NV/vllm → 强制关闭 LMCache；
+      * 引擎无已知 lmcache-target 映射。
     """
     if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() != "true":
-        return ""
+        return None
 
     if merged and _is_deepseek_v4_cpu_offload_params(merged, engine=engine):
         logger.info(
@@ -385,7 +383,7 @@ def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> s
             "CPUOffloadingConnector; skipping LMCache patch install despite "
             "LMCACHE_OFFLOAD=true."
         )
-        return ""
+        return None
 
     # [V4-Flash-NV-Day0] NV V4-Flash 走 native --kv_offloading_backend（构建期 CLI flag），
     # 与 LMCache 互斥：跳过 LMCache 补丁安装，避免两套卸载机制并存。
@@ -395,14 +393,14 @@ def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> s
             "--kv_offloading_backend; skipping LMCache patch install despite "
             "LMCACHE_OFFLOAD=true."
         )
-        return ""
+        return None
 
     if _is_glm51_nvidia_vllm_merged(engine, merged):
         logger.warning(
             "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
             "skipping LMCache patch install despite LMCACHE_OFFLOAD=true."
         )
-        return ""
+        return None
 
     target = _ENGINE_LMCACHE_TARGET_MAP.get(engine)
     if not target:
@@ -410,8 +408,12 @@ def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> s
             "[LMCache] Engine '%s' has no known lmcache-target mapping; "
             "skipping LMCache patch install.", engine,
         )
-        return ""
+        return None
+    return target
 
+
+def _render_lmcache_install_snippet(target: str) -> str:
+    """渲染 LMCache 补丁安装的容错 shell 片段（目标平台已由调用方确定）。"""
     accel_dir = settings.WINGS_ACCEL_DIR.rstrip("/")
     update_json = _shell_update_feature_json("kv_offload", False)
     return (
@@ -434,6 +436,21 @@ def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> s
         "skipping LMCache patch install.'\n"
         "fi\n"
     )
+
+
+def _build_lmcache_install_snippet(engine: str, merged: dict | None = None) -> str:
+    """为 LMCache KV 卸载生成 --lmcache-target 的容错 shell 片段。
+
+    安装决策（含 native 卸载等互斥/豁免路径）由 ``_resolve_lmcache_install_target``
+    收口；命中跳过条件时返回空字符串，否则渲染安装片段。
+
+    Returns:
+        str: shell 脚本片段；跳过安装时返回空字符串。
+    """
+    target = _resolve_lmcache_install_target(engine, merged)
+    if not target:
+        return ""
+    return _render_lmcache_install_snippet(target)
 
 
 def _collect_indexcache_patch_features(engine: str, merged: dict) -> list[str]:
