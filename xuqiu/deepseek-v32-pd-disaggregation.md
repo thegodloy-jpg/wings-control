@@ -1,11 +1,15 @@
-# DeepSeek-V3.2（vLLM-Ascend）PD 分离 —— wings-control 适配需求设计文档
+# GLM-5.1 / DeepSeek-V4-Flash（vLLM-Ascend）PD 分离 —— wings-control 适配设计文档
+
+> **适配模型（实际）**：本次落地 + A3 真机字段对齐的是 **GLM-5.1（`GlmMoeDsaForCausalLM`）** 与 **DeepSeek-V4-Flash（`DeepseekV4ForCausalLM`）**——拓扑/命令/逐 pod 契约见 §13.6 与 [`docs/reference/deploy-glm5.1-pd-a3.md`](../docs/reference/deploy-glm5.1-pd-a3.md) / [`deploy-v4flash-pd-a3.md`](../docs/reference/deploy-v4flash-pd-a3.md)。
+> 下文 **§3 官方方案参考仍以 DeepSeek-V3.2 举例**——它是这套 external-lb + 模型配置注册表机制的**设计原型**（也已注册 `DeepseekV32ForCausalLM`，但**非本次部署/验证目标**）。机制对所有注册模型通用，故 §3 的拓扑数字按 V3.2 读、实际值以各模型注册表为准。
 
 | 项 | 内容 |
 |----|------|
-| 文档类型 | 需求设计文档 |
+| 文档类型 | 适配设计文档（设计 + as-built） |
+| 适配模型 | **GLM-5.1**、**DeepSeek-V4-Flash**（A3 已对齐验证）；V3.2/Qwen3.5/Qwen3-30B 等亦已注册 |
 | 适配对象 | wings-control（`core/config_loader.py`、`engines/vllm_distributed.py`、`engines/vllm_adapter.py`、`core/port_plan.py`）|
-| 参考来源 | vLLM-Ascend 官方教程 [DeepSeek-V3.2](https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/DeepSeek-V3.2.html) |
-| 状态 | 方案锁定（4-pod + pod 内 fork，external-lb，上层下发已解析拓扑）|
+| 参考来源 | vLLM-Ascend 官方教程：[GLM5](https://docs.vllm.ai/projects/ascend/zh-cn/latest/tutorials/models/GLM5.html) · [DeepSeek-V4-Flash](https://docs.vllm.ai/projects/ascend/zh-cn/latest/tutorials/models/DeepSeek-V4-Flash.html)（实际模型）；[DeepSeek-V3.2](https://docs.vllm.ai/projects/ascend/en/latest/tutorials/models/DeepSeek-V3.2.html)（机制设计原型，§3）|
+| 状态 | **已实现落地**（external-lb + pod 内 fork + 模型配置注册表）。本文为**设计期**文档，下文 §3~§12 保留原始设计叙述；**实现的差异、扩展与最终命名以末尾 [§13 实现现状（as-built）](#13-实现现状as-built与本设计的差异与扩展) + 代码为准**（注册表权威机制 / 平台 overlay / common_env / DP·TP 派生 / RANK_IP / ENGINE_VERSION 等均为设计后扩展）。|
 
 ---
 
@@ -337,26 +341,28 @@ for i in range(dp_size_local):                 # P=1 次，D=4 次
 
 **`default` 兜底条目**：注册表含一个 `"default"` 条目，未单独注册的模型回退到它，使**任意模型只要 `PD_ROLE`+`dp>1` 即可跑 PD external-lb**。`default` 只放通用安全项（连接器/kv_port/`disable_hybrid_kv_cache_manager`/P 的 `enforce_eager`/D 的 `FULL_DECODE_ONLY`+`TASK_QUEUE`），**刻意不含** `gpu_memory_utilization`、`enable_expert_parallel`（非 MoE 会报错）、`max_num_*`、模型专属算子项——这些留模型默认/用户/专属条目。
 
-**通用 loader**（取代每模型函数）：
+**通用 loader**（取代每模型函数）。⚠️ **下为设计期示意；实际实现见 §13.2，两点关键差异：① 用直接覆盖 `ec[k]=v` 而非 `setdefault`（否则被 base 默认挡住）；② 需在模型默认注入器之后「重申」一次**：
 ```python
-def _apply_pd_model_config(params, engine_config, explicit_keys):
-    if not params.get("_pd_external_lb"):
-        return
-    pd = _load_pd_config()
-    entry = pd.get(resolve_model_architecture(params)) or pd.get("default")  # 专属优先，回退 default
-    role = "prefill" if get_pd_role_env() == "P" else "decode"
-    for k, v in {**entry.get("common", {}), **entry[role].get("engine", {})}.items():
-        if k not in explicit_keys:                 # 不覆盖用户显式值
-            engine_config.setdefault(k, v)
-    params["_pd_kv"]  = {"connector": entry["connector"],
-                         "kv_port": entry["kv_port"][get_pd_role_env()],
-                         "extra": entry.get("extra_config", {})}
-    params["_pd_env"] = entry[role].get("env", {})
+# 实际函数名 = config_loader._apply_pd_external_lb（config 加载最后一步）
+def _apply_pd_external_lb(cmd_known_params, model_info):
+    ext = _get_pd_external_lb_params()                 # 解析契约；DP_SIZE/TP_SIZE 缺省可由 PD_{ROLE}_* 派生
+    if not ext: return
+    entry = deepcopy(registry.get(arch) or registry["default"])     # deepcopy：注册表是模块级缓存，防污染
+    plat = _resolve_ascend_platform()                  # WINGS_ASCEND_PLATFORM / ENGINE_VERSION 的 -a3 / ASCEND_A3_ENABLE
+    overrides = entry.pop("platform_overrides", {})
+    if plat in overrides: entry = _merge_configs(entry, overrides[plat])     # A2/A3 overlay 深合并
+    merged = {**entry.get("common", {}), **entry[role].get("engine", {})}
+    for k, v in merged.items():
+        if k not in explicit: ec[k] = deepcopy(v)      # ★直接覆盖（非 setdefault：否则被 vllm_default.json 等 base 挡住）
+    cmd_known_params["_pd_engine_overrides"] = {k: deepcopy(v) for ... if k not in explicit}  # 透传给 §13.2「重申」
+    ec["kv_transfer_config"] = json.dumps(_build_pd_external_lb_kv(entry, ext))               # 连接器/kv_port/extra 从注册表
+    cmd_known_params["_pd_env"] = {**entry.get("common_env", {}), **entry[role].get("env", {})}  # common_env + 角色 env
 ```
 
-`_get_pd_config` 从 `params["_pd_kv"]` 取连接器/kv_port（不写死）；fork 脚本从 `params["_pd_env"]` 出角色 env。
+`_build_pd_external_lb_kv` 从注册表取连接器/kv_port/extra（不写死）；fork 脚本从 `_pd_env` 出角色 env。
 
-> **`engine_id` 按 rank 注入**：当 `connector == "MooncakeConnectorV1"` 时，每个 service 需唯一 `engine_id`，由 fork 循环按 `dp_rank` 生成（`kv_cfg["engine_id"] = str(dp_rank)`），**不可写死模板值**（否则同 pod 多 service 共享 engine_id 冲突）。`MooncakeLayerwiseConnector` 用 kv_port，不需要 engine_id。
+> **`engine_id` 按 rank 注入**：当 `connector ∈ {MooncakeConnectorV1, **MooncakeHybridConnector**}` 时（V4-Flash 用 Hybrid 也注入），每个 service 需唯一 `engine_id`，由 fork 脚本按 `dp_rank` 把占位符 `__PD_RANK__` 替换（**不可写死**，否则同 pod 多 service 冲突）。`MooncakeLayerwiseConnector`（V3.2 / Qwen3.5）用 kv_port，不需 engine_id。
+> ⚠️ 真机待确认：官方 V4-Flash(Hybrid) 示例 engine_id 为**固定 `0/1`**，wings 按 dp_rank 注入——见 §13.5。
 
 ---
 
@@ -575,7 +581,7 @@ exec vllm serve /models/DeepSeek-V3.2-w8a8 \
 |---|------|------|---------|
 | B1 | **`--additional_config`（下划线）** | vLLM 不识别该 CLI，配置静默失效 | 必须连字符 `--additional-config` |
 | B2 | **P/D 网卡名不一致**（如 D=`bond0`、P=`eth0`）| HCCL/Mooncake KV 跨节点连不通 | P/D 统一 `nic_name`（或确认两网均可达对端）|
-| B3 | **`engine_id` 写死**（模板固定值）| 同 pod fork 多 service 共享 engine_id，MooncakeConnectorV1 冲突 | 按 `dp_rank` 生成：`engine_id = str(dp_rank)`（仅 V1 需要）|
+| B3 | **`engine_id` 写死**（模板固定值）| 同 pod fork 多 service 共享 engine_id，MooncakeConnectorV1 冲突 | 按 `dp_rank` 生成：`engine_id = str(dp_rank)`（**V1 与 Hybrid 均需要**；Layerwise 不需）|
 | B4 | **HCCL 超时漏位**（如 P 侧 `EXEC=204/CONNECT=120` vs D 侧 `2000/1200`）| P 侧超时过短，建连/执行误判失败 | P/D 超时量级一致 |
 | B5 | **EPLB 开关矛盾**（env `DYNAMIC_EPLB=true` vs config `dynamic_eplb:false`）| 行为不确定 | env 与 additional-config 取值统一 |
 | B6 | **`VLLM_USE_V1` 仅单侧设** | P/D 引擎版本路径不一致 | P/D 都设（或都依赖默认）|
@@ -583,3 +589,57 @@ exec vllm serve /models/DeepSeek-V3.2-w8a8 \
 | B8 | **PD 下保留 hybrid KV manager** | 与 Mooncake 连接器不兼容 | 显式 `--disable-hybrid-kv-cache-manager`（wings 由 `_guard_pd_hybrid_kv_cache` 处理）|
 
 > wings 实现注意：B1（用连字符渲染）、B3（fork 循环按 rank 注 engine_id）由代码保证；B2/B4/B5/B6 属上层下发/模板约定，应在契约或 schema 校验中拦截。
+
+---
+
+## 13. 实现现状（as-built）：与本设计的差异与扩展
+
+> 本节为**与代码对齐的权威现状**（含设计后扩展）。上文 §3~§12 凡与此冲突，**以本节 + 代码为准**。
+
+### 13.1 函数/命名对照（设计 → 实际）
+
+| 设计文档称呼 | 实际代码 | 位置 |
+|------|------|------|
+| `_apply_pd_model_config` | **`_apply_pd_external_lb`** | `core/config_loader.py` |
+| 5 参数解析 | **`_get_pd_external_lb_params`** | `core/config_loader.py` |
+| KV 配置构建（`_get_pd_config`/`_pd_kv`）| **`_build_pd_external_lb_kv`** | `core/config_loader.py` |
+| 平台解析 | **`_resolve_ascend_platform`** | `core/config_loader.py` |
+| fork 脚本 | **`_build_vllm_pd_external_lb_script`** | `engines/vllm_adapter.py` |
+| 注册表加载（含缓存）| `_load_pd_config`（模块级 `_PD_CONFIG_CACHE`）| `core/config_loader.py` |
+
+### 13.2 注册表权威机制（**最关键差异**：非 `setdefault`，且需「注入器后重申」）
+
+设计 §7.6 写的是 `engine_config.setdefault(k,v)` —— **错的**：base 默认（`vllm_default.json` 等）会把键填满，`setdefault` 全被挡住。实际：
+1. `_apply_pd_external_lb`（config 加载**最后一步**）对非用户显式键**直接覆盖** `ec[k]=v`；
+2. **但**模型默认注入器 `_apply_*_engine_defaults`（`vllm_adapter._prepare_engine_config` 内、命令构建期、**晚于** ①）会用 `_force_set_*`/`_merge_dict_default_*` **回填**部分键（`enable_prefix_caching`/`compilation_config`/`max_model_len` 等），把 ① 覆盖掉；
+3. 故 ① 把覆盖项 **deepcopy** 暂存为 `cmd_known_params["_pd_engine_overrides"]`，`_prepare_engine_config` 在所有注入器**之后再「重申」一次**（`None` ⇒ 删键，如 Prefill 删 base 的 `compilation_config`）——注册表至此才**真正权威**。
+4. **deepcopy 是必须的**：注册表来自模块级缓存，`additional_config` 等会被注入器**就地深合并**，不拷贝会污染缓存并跨次泄漏。
+
+> 回归守卫：`tests/pd_external_lb_verify.py` **层 F** 断言「注册表键全部存活」（GLM5/V4-Flash 的 clobber-prone 键），防未来注入器回填回退。
+
+### 13.3 注册表 schema 扩展（设计 §7.6 之外新增）
+
+| 字段 | 作用 | 消费处 |
+|------|------|------|
+| `platform_overrides.{a2,a3}` | 同架构跨平台 overlay（V4-Flash A2/A3 batched/seqs 不同），按 `_resolve_ascend_platform` 选中后**深合并**覆盖基条目 | `_apply_pd_external_lb` |
+| `common_env` | **P/D 共用** env 槽（原只有 `prefill.env`/`decode.env`）；`_pd_env = {**common_env, **role.env}`，PD 脚本对合并后整段 `dedupe_env_exports` | `_apply_pd_external_lb` + `_build_vllm_pd_external_lb_script` |
+| `prefill.extra_config` / `decode.extra_config` | **角色级** KV extra（如 Qwen3.5 consumer 专属 `kv_buffer_device:npu`），覆盖/追加于全局 `extra_config` | `_build_pd_external_lb_kv` |
+| `engine`/env 内的 `null`/`false` | **删除/抑制** base 泄漏键（如 Prefill `compilation_config:null` → 删图捕获）；渲染器 `None`/`False` → 不出 flag | 渲染期 |
+
+### 13.4 契约简化（设计 §6.1 之外）
+
+1. **`DP_SIZE`/`TP_SIZE` 可省**：缺省时由本角色全局拓扑 `PD_{ROLE}_*` 派生（`_first_env("DP_SIZE","PD_DP_SIZE","PD_{ROLE}_DP_SIZE")`）。即 4 个全局拓扑 `PD_PREFILL_*`+`PD_DECODE_*` 是**单一真相源**，本角色 dp/tp 不必重复下发。`DP_SIZE_LOCAL` 不可派生（=卡/节点÷tp），仍必填。
+2. **本机 IP 单一 `RANK_IP`**：`get_local_ip()` 读 `RANK_IP`；`HCCL_IF_IP`(=`POD_IP` 或 `get_local_ip()`) 与 PD 的 `host_ip`(=`HOST_IP` 或 `RANK_IP`) **都回退到它**。故只设 `RANK_IP` 即可，不必再设 `POD_IP`/`HOST_IP`。
+3. **`dp_rank_start` 实为派生**（非设计 §6.1 所说「上层下发 `--dp-rank-start`」）：= `RANK_IP`/`HOST_IP` 在 `NODE_IPS` 的位置 × `DP_SIZE_LOCAL`；`PD_DP_RANK_START` 可显式覆盖。
+4. **平台 a3 信号多源**：`WINGS_ASCEND_PLATFORM` / `ASCEND_PLATFORM` / `ENGINE_IMAGE_FLAVOR` / **`ENGINE_VERSION` 带 `-a3` 后缀** / `ASCEND_A3_ENABLE`；**全无 → 兜底 `a2`**（非 a3！a3 部署须给信号）。
+
+### 13.5 engine_id 与 hybrid-kv 的真机待确认
+
+- **engine_id**：`_build_pd_external_lb_kv` 对 **V1 与 Hybrid** 都注 `engine_id=__PD_RANK__`（fork 按 dp_rank 替换）。官方 V4-Flash(Hybrid) 示例为**固定 `0/1`** —— 多 service 下按 rank 更合理，但需真机确认 Mooncake Hybrid 期望。
+- **hybrid-kv**：附录 B8/`_guard_pd_hybrid_kv_cache` 为 V1/Nixl 设计（PD 下移除 `no_disable_hybrid_kv_cache_manager`）；**V4-Flash(Hybrid) 相反**——官方要 `--no-disable-hybrid-kv-cache-manager`（保留 HMA），注册表 `common.no_disable_hybrid_kv_cache_manager:true` 在 guard（早，line 390）之后由 `_apply_pd_external_lb`（晚，最后一步）注入而生效。真机确认未被吃掉。
+
+### 13.6 当前注册表条目（**6 个**，非设计 §3.7「三模型」）
+
+`default`（兜底，V1/30100·30400）、`Qwen3MoeForCausalLM`（V1，用户模板）、`DeepseekV32ForCausalLM`（Layerwise）、`GlmMoeDsaForCausalLM`（V1+`use_ascend_direct`+`common_env`）、`Qwen3_5MoeForConditionalGeneration`（Layerwise）、`DeepseekV4ForCausalLM`（**Hybrid**+`platform_overrides.a2`）。
+
+> **验证闭环**：`python dry_run.py --pd {glm5,v4flash}` 生成 → 对照官方 A3（[docs/reference/pd-a3-official-alignment-report.md](../docs/reference/pd-a3-official-alignment-report.md)）；`python tests/pd_external_lb_verify.py` → **61/0**。部署手册见 [docs/reference/deploy-{glm5.1,v4flash,qwen3-30b-pd-1p4c-2d2c}.md](../docs/reference/)。
