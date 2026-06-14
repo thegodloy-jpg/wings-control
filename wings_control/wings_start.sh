@@ -99,6 +99,7 @@ Options:
   --local-kvstore-capacity <value>  Set local KVStore capacity
   --enable-rag-acc            Enable RAG acceleration feature
   --enable-auto-tool-choice   Enable function call feature
+  --enable-auto-think-choice  Enable thinking (reasoning) feature
 
 Example:
   $0 --model-name my_model --model-path my_model_path --input-length 4096 --output-length 1024
@@ -215,6 +216,8 @@ while [[ $# -gt 0 ]]; do
             ENABLE_RAG_ACC=true; shift ;;
         --enable-auto-tool-choice)
             ENABLE_AUTO_TOOL_CHOICE=true; shift ;;
+        --enable-auto-think-choice)
+            ENABLE_AUTO_THINK_CHOICE=true; shift ;;
         -h|--help)
             usage ;;
         *)
@@ -297,6 +300,7 @@ fi
 [ "${ENABLE_SPARSE:-}" = true ]              && export ENABLE_SPARSE="true"
 [ "${ENABLE_RAG_ACC:-}" = true ]             && export ENABLE_RAG_ACC="true"
 [ "${ENABLE_AUTO_TOOL_CHOICE:-}" = true ]    && export ENABLE_AUTO_TOOL_CHOICE="true"
+[ "${ENABLE_AUTO_THINK_CHOICE:-}" = true ]   && export ENABLE_AUTO_THINK_CHOICE="true"
 
 # 代理 / 端口相关
 export ENABLE_REASON_PROXY
@@ -343,6 +347,7 @@ APP_ARGS=("--model-name" "$MODEL_NAME" "--model-path" "$MODEL_PATH")
 [ "${ENABLE_SPARSE:-}" = true ]       && APP_ARGS+=("--enable-sparse")
 [ "${ENABLE_RAG_ACC:-}" = true ]      && APP_ARGS+=("--enable-rag-acc")
 [ "${ENABLE_AUTO_TOOL_CHOICE:-}" = true ] && APP_ARGS+=("--enable-auto-tool-choice")
+[ "${ENABLE_AUTO_THINK_CHOICE:-}" = true ] && APP_ARGS+=("--enable-auto-think-choice")
 
 
 # ===== 进入工作目录 =====

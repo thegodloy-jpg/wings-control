@@ -96,8 +96,8 @@ export PYTHONUNBUFFERED=1
 echo "[wings-env] export PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-}"
 exec > >(tee -a /var/log/wings/engine-full.log | grep --line-buffered -vE '"GET\s+/(health|metrics)\s|\b(Prefill|Decode) batch\b' | tee -a /var/log/wings/engine.log) 2>&1
 ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /models/Qwen3-32B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /models/Qwen3-32B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /models/Qwen3-32B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --default-chat-template-kwargs '"'"'{"enable_thinking":true}'"'"' --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /models/Qwen3-32B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --default-chat-template-kwargs '{"enable_thinking":true}' --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -134,8 +134,8 @@ else
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /models/Qwen3-32B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /models/Qwen3-32B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --tensor-parallel-size 8 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /models/Qwen3-32B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --default-chat-template-kwargs '"'"'{"enable_thinking":true}'"'"' --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /models/Qwen3-32B --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --block-size 16 --max-num-seqs 32 --seed 0 --enable-auto-tool-choice --default-chat-template-kwargs '{"enable_thinking":true}' --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

@@ -324,6 +324,8 @@ def _merge_cmd_params(hardware_env, engine_specific_defaults, cmd_known_params, 
 
     # 根据引擎类型分发到不同的参数合并函数
     engine = common_context["engine"]
+    # sglang / mindie 触发思考开关时仅提醒（启动期无法切换思考，详见函数说明）
+    _warn_thinking_switch_unsupported_engine(engine, engine_cmd_parameter)
     # 将嵌套 dict 型配置值序列化为 JSON 字符串，便于作为 CLI 参数传递
     engine_specific_defaults = {
         k: json.dumps(v) if isinstance(v, dict) else v
@@ -374,7 +376,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _set_common_params(params, engine_cmd_parameter, engine_param_map_config_path)
     _set_function_call(params, engine_cmd_parameter)
     _set_reasoning_parser(params, engine_cmd_parameter)
-    _set_thinking_off_default(params, engine_cmd_parameter, model_info)
+    _set_thinking_default(params, engine_cmd_parameter, model_info)
     _set_sequence_length(params, engine_cmd_parameter, model_type=ctx.get("model_type", "llm"))
     _set_parallelism_params(params, ctx)
     _set_kv_cache_config(params, ctx, model_info)
@@ -478,38 +480,63 @@ def _set_reasoning_parser(params, engine_cmd_parameter):
         params.pop("reasoning_parser", None)
 
 
-def _set_thinking_off_default(params, engine_cmd_parameter, model_info):
-    """生成端：enable_auto_think_choice 关闭时，按模型族注入服务级默认非思考。
+def _set_thinking_default(params, engine_cmd_parameter, model_info):
+    """生成端：按 enable_auto_think_choice 注入服务级默认思考状态（对称开关）。
 
-    仅 vllm / vllm_ascend 适配（二者复用 vLLM OpenAI server 的
-    --default-chat-template-kwargs；sglang 无对应启动参数，不在此路径调用）。
-    注入的是引擎【服务级默认值】：
-      - 请求不带 chat_template_kwargs → 按此默认非思考；
+    仅 vllm / vllm_ascend 适配（复用 vLLM OpenAI server 的 --default-chat-template-kwargs；
+    sglang 无对应启动参数，不在此路径调用）。注入的是引擎【服务级默认值】：
+      - 请求不带 chat_template_kwargs → 按此默认；
       - 请求带 chat_template_kwargs → 由请求级覆盖（客户端自负，不兜底改写）。
 
-    策略来源 resolve_thinking_off_policy（按模型族对齐各家官方键名）：
-      - dict（如 {"enable_thinking": False} / {"thinking": False}）→ 注入；
-      - THINKING_ALWAYS_ON（R1 / QwQ / MiniMax-M2 等天生必思考）→ 仅告警；
-      - None（本就不思考的模型）→ 不介入。
+    对【混合推理模型】(resolve_thinking_off_policy 返回 dict) 按开关注入对应键的布尔值：
+      - 开关开 → {key: True}  服务级默认【强制打开】思考；
+      - 开关关 → {key: False} 服务级默认【强制关闭】思考。
+    键名按模型族对齐官方：Qwen3 / GLM = enable_thinking、DeepSeek-V3.x = thinking。
+
+    其余模型不注入：
+      - THINKING_ALWAYS_ON（R1 / QwQ / MiniMax-M2 等天生必思考，开/关都改不了）→ 不注入，
+        仅在开关关时告警一次（提示无法关闭）；
+      - None（本就不思考的模型）→ 不介入，并清除残留默认值。
+
+    与解析端解耦：本函数仅依据 resolve_thinking_off_policy（模型族是否支持启动期思考切换），
+    与是否存在 reasoning_parser 无关——模型没有 reasoning_parser 但支持思考切换时，生成端仍强制开/关。
     """
-    if engine_cmd_parameter.get("enable_auto_think_choice"):
-        # 开启推理 → 不强制非思考，且确保不残留默认值
-        params.pop("default_chat_template_kwargs", None)
-        return
+    enabled = bool(engine_cmd_parameter.get("enable_auto_think_choice"))
     model_name = getattr(model_info, "model_name", "") or ""
     policy = resolve_thinking_off_policy(model_name)
     if policy is None:
+        params.pop("default_chat_template_kwargs", None)
         return
     if policy == THINKING_ALWAYS_ON:
-        logger.warning(
-            "enable_auto_think_choice=false but model '%s' is an always-on reasoner "
-            "(e.g. DeepSeek-R1 / QwQ / MiniMax-M2); thinking cannot be disabled at "
-            "startup, only reasoning parsing is affected.", model_name)
+        params.pop("default_chat_template_kwargs", None)
+        if not enabled:
+            logger.warning(
+                "enable_auto_think_choice=false but model '%s' is an always-on reasoner "
+                "(e.g. DeepSeek-R1 / QwQ / MiniMax-M2); thinking cannot be disabled at "
+                "startup, only reasoning parsing is affected.", model_name)
         return
-    params["default_chat_template_kwargs"] = policy
+    key = next(iter(policy))  # 'enable_thinking' or 'thinking'
+    kwargs = {key: enabled}
+    params["default_chat_template_kwargs"] = kwargs
     logger.info(
-        "[thinking] enable_auto_think_choice=false; inject "
-        "--default-chat-template-kwargs=%s for model '%s'", policy, model_name)
+        "[thinking] enable_auto_think_choice=%s; inject "
+        "--default-chat-template-kwargs=%s for model '%s'", enabled, kwargs, model_name)
+
+
+def _warn_thinking_switch_unsupported_engine(engine, engine_cmd_parameter):
+    """sglang / mindie 无法在启动期按开关切换思考；用户触发开关时仅日志提醒。
+
+    思考的"开启/关闭"靠引擎服务级默认 chat_template_kwargs 落地，仅 vllm / vllm_ascend
+    支持（--default-chat-template-kwargs）。其余引擎无法在启动期切换：
+      - sglang：官方仅在请求级暴露是否思考，无对应启动参数；
+      - mindie：思维解析/思考为服务端内置，不受本开关控制。
+    故 enable_auto_think_choice 对它们【无效】，触发时提醒改在请求级控制（不改变行为）。
+    """
+    if engine in ("sglang", "mindie") and engine_cmd_parameter.get("enable_auto_think_choice"):
+        logger.warning(
+            "[thinking] enable_auto_think_choice=true 但引擎 '%s' 不支持启动期思考开关"
+            "（sglang 无 --default-chat-template-kwargs；mindie 思考为服务端内置），"
+            "该开关对此引擎无效；请在请求级 chat_template_kwargs 控制思考。", engine)
 
 
 def _resolve_gpu_total_memory(ctx: Dict[str, Any]) -> float:
@@ -1424,7 +1451,7 @@ def _merge_sglang_params(params, ctx, engine_cmd_parameter):
 
     # 处理 tool parser 参数（function call 支持）
     # 用户通过 enable_auto_tool_choice 统一触发，映射到 SGLang 的 tool_call_parser。
-    # reasoning_parser 已与 function call 解耦，改由 _set_reasoning_parser 单独控制。
+    # reasoning_parser 不适用于 SGLang（已整体移出 reasoning，仅 vllm/vllm_ascend 注入），此处只处理 tool_call_parser。
     params.pop("enable_tool_choice", None)  # 清理旧参数名
     user_wants_fc = engine_cmd_parameter.get("enable_auto_tool_choice")
     if user_wants_fc:
@@ -1439,9 +1466,8 @@ def _merge_sglang_params(params, ctx, engine_cmd_parameter):
         params.pop("tool_call_parser", None)
         logger.info("Function Call not enabled for SGLang")
 
-    # reasoning_parser 独立开关（与 vllm 路径复用同一处理）
-    _set_reasoning_parser(params, engine_cmd_parameter)
-
+    # SGLang 不处理 reasoning_parser（整体移出 reasoning）；思考开关若误用于 sglang，
+    # 由 _warn_thinking_switch_unsupported_engine 在分发处统一提醒，此处不再触碰。
     return params
 
 

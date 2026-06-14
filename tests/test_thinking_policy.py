@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""enable_auto_think_choice 关闭时「思考默认关闭」策略测试。
+"""enable_auto_think_choice 思考默认状态策略测试（对称开关）。
 
 覆盖：
-  - utils.model_utils.resolve_thinking_off_policy（模型名 → 关闭思考 kwargs / always_on / None）
-  - core.config_loader._set_thinking_off_default（生成端：启动命令注入服务级默认非思考，
-    仅 vllm/vllm_ascend；客户端请求体反开自负、不兜底，故不再有 proxy 改写）
+  - utils.model_utils.resolve_thinking_off_policy（模型名 → 思考 kwargs 键名 / always_on / None）
+  - core.config_loader._set_thinking_default（生成端：启动命令注入服务级默认思考状态，
+    开关开→强制思考、关→强制非思考；仅 vllm/vllm_ascend；请求体可覆盖、不兜底）
 """
 
 from __future__ import annotations
@@ -59,12 +59,12 @@ class _ModelInfoStub:
         self.model_name = model_name
 
 
-class TestSetThinkingOffDefault(unittest.TestCase):
+class TestSetThinkingDefault(unittest.TestCase):
     """生成端：启动命令注入 default_chat_template_kwargs（仅 vllm/vllm_ascend）。"""
 
     def _run(self, model_name, enable_auto_think_choice, params=None):
         params = params if params is not None else {}
-        cl._set_thinking_off_default(
+        cl._set_thinking_default(
             params,
             {"enable_auto_think_choice": enable_auto_think_choice},
             _ModelInfoStub(model_name),
@@ -91,16 +91,65 @@ class TestSetThinkingOffDefault(unittest.TestCase):
         params = self._run("Qwen2.5-32B-Instruct", False)
         self.assertNotIn("default_chat_template_kwargs", params)
 
-    def test_enabled_does_not_inject(self):
-        # 开启推理 → 不强制非思考。
+    def test_enabled_qwen3_injects_enable_thinking_true(self):
+        # 开启推理 → 服务级默认【强制打开】思考。
         params = self._run("Qwen3-32B", True)
-        self.assertNotIn("default_chat_template_kwargs", params)
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"enable_thinking": True})
 
-    def test_enabled_clears_residual_default(self):
-        # 开启推理时应清除残留的服务级非思考默认。
+    def test_enabled_deepseek_v3_injects_thinking_true(self):
+        params = self._run("DeepSeek-V3.1", True)
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"thinking": True})
+
+    def test_enabled_overrides_residual_default_to_true(self):
+        # 开启推理时把残留的非思考默认覆盖为思考。
         params = self._run("Qwen3-32B", True,
                            params={"default_chat_template_kwargs": {"enable_thinking": False}})
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"enable_thinking": True})
+
+    def test_enabled_always_on_does_not_inject(self):
+        # 始终推理模型开启时无需注入（天生思考）。
+        params = self._run("DeepSeek-R1", True)
         self.assertNotIn("default_chat_template_kwargs", params)
+
+    def test_enabled_non_thinking_does_not_inject(self):
+        # 非思考模型即便开启也无法强制思考。
+        params = self._run("Qwen2.5-32B-Instruct", True)
+        self.assertNotIn("default_chat_template_kwargs", params)
+
+
+class TestThinkingSwitchUnsupportedEngineWarning(unittest.TestCase):
+    """sglang / mindie 触发思考开关 → 日志提醒（启动期无法切换，行为不变）。"""
+
+    def _capture(self, engine, enabled):
+        import io
+        import logging
+        buf = io.StringIO()
+        handler = logging.StreamHandler(buf)
+        handler.setLevel(logging.WARNING)
+        cl.logger.addHandler(handler)
+        old = cl.logger.level
+        cl.logger.setLevel(logging.WARNING)
+        try:
+            cl._warn_thinking_switch_unsupported_engine(
+                engine, {"enable_auto_think_choice": enabled})
+        finally:
+            cl.logger.removeHandler(handler)
+            cl.logger.setLevel(old)
+        return buf.getvalue()
+
+    def test_sglang_on_warns(self):
+        self.assertIn("不支持启动期思考开关", self._capture("sglang", True))
+
+    def test_mindie_on_warns(self):
+        self.assertIn("不支持启动期思考开关", self._capture("mindie", True))
+
+    def test_off_does_not_warn(self):
+        self.assertEqual(self._capture("sglang", False), "")
+        self.assertEqual(self._capture("mindie", False), "")
+
+    def test_vllm_engines_do_not_warn(self):
+        self.assertEqual(self._capture("vllm", True), "")
+        self.assertEqual(self._capture("vllm_ascend", True), "")
 
 
 if __name__ == "__main__":
