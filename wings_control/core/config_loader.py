@@ -951,14 +951,26 @@ def _get_pd_external_lb_params():
     dp_address = _first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS") or (get_master_ip() or "")
     rpc_port = _first_env("VLLM_LLMDD_RPC_PORT", "PD_DP_RPC_PORT") or ""
 
-    # dp_rank_start：优先显式 PD_DP_RANK_START，否则由 HOST_IP 在角色域 NODE_IPS 的位置派生。
+    # dp_rank_start：优先显式 PD_DP_RANK_START，否则由本 pod 唯一 IP 在角色域 NODE_IPS 的位置派生。
     explicit_start = _first_env("PD_DP_RANK_START")
     if explicit_start is not None:
         dp_rank_start = _int("0", "PD_DP_RANK_START")
     else:
         node_ips = [ip.strip() for ip in (get_node_ips() or "").split(",") if ip.strip()]
-        host_ip = (_first_env("HOST_IP", "RANK_IP") or get_local_ip() or "").strip()
-        node_rank = node_ips.index(host_ip) if host_ip in node_ips else 0
+        # 必须用 RANK_IP（本 pod 唯一 IP，get_local_ip 亦读它），不能用 HOST_IP：
+        # 同宿主机多 pod 共享同一 HOST_IP（K8s status.hostIP=节点物理 IP），用它派生会让
+        # 多个 pod 算出同一 dp_rank_start → 多节点 rank 撞车（rank0 去 bind 别人 IP 的 rpc 端口报
+        # "Cannot assign requested address"）。NODE_IPS 本就是按 RANK_IP 那套 IP 排的。
+        host_ip = (_first_env("RANK_IP", "HOST_IP") or get_local_ip() or "").strip()
+        if host_ip in node_ips:
+            node_rank = node_ips.index(host_ip)
+        else:
+            node_rank = 0
+            if len(node_ips) > 1:
+                logger.error(
+                    "[PD external-lb] 本机 IP %r 不在 NODE_IPS %r 内 → dp_rank_start 回退 0；"
+                    "多节点将 rank 撞车，DP 域无法组建。请确保 RANK_IP 与 NODE_IPS 中某项逐字一致。",
+                    host_ip, node_ips)
         dp_rank_start = node_rank * dp_size_local
 
     return {

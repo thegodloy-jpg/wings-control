@@ -80,6 +80,21 @@ def layer_a():
          {"PD_ROLE": "D", "PD_DP_SIZE": "8", "PD_TP_SIZE": "4",
           "PD_DP_SIZE_LOCAL": "4", "PD_DP_RANK_START": "4", "PD_DP_ADDRESS": "1.1.1.1"},
          {"dp_rank_start": 4, "dp_size": 8, "tp_size": 4}),
+        # 真机回归（serving-...-8bz4m/7bnhc）：同宿主机两 pod 共享同一 HOST_IP（节点物理 IP），
+        # 但各自 RANK_IP 不同。必须用 RANK_IP 派生 rank —— 用 HOST_IP 会让两 pod 都算出
+        # rank_start=0 → rank 撞车 → rank0 去 bind 别人 IP 的 rpc 端口 → ZMQ "Cannot assign requested address"。
+        ("D same-HOST node0 (RANK=.46 idx0)",
+         {"PD_ROLE": "D", "DP_SIZE": "4", "TP_SIZE": "1", "DP_SIZE_LOCAL": "2",
+          "Master_IP": "94.254.215.46", "VLLM_LLMDD_RPC_PORT": "12321",
+          "NODE_IPS": "94.254.215.46,94.254.215.43",
+          "HOST_IP": "94.254.215.46", "RANK_IP": "94.254.215.46"},
+         {"dp_rank_start": 0}),
+        ("D same-HOST node1 (RANK=.43 idx1 -> start=2; HOST=.46 与 node0 相同)",
+         {"PD_ROLE": "D", "DP_SIZE": "4", "TP_SIZE": "1", "DP_SIZE_LOCAL": "2",
+          "Master_IP": "94.254.215.46", "VLLM_LLMDD_RPC_PORT": "12321",
+          "NODE_IPS": "94.254.215.46,94.254.215.43",
+          "HOST_IP": "94.254.215.46", "RANK_IP": "94.254.215.43"},
+         {"dp_rank_start": 2}),
     ]
     for label, env, expect in cases:
         _clear_pd_env()
