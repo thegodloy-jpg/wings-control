@@ -29,7 +29,8 @@ PD 分离的根本动因：**Prefill 计算密集、优化吞吐与 TTFT；Decod
 ### 1.3 非目标
 
 - **负载均衡 proxy 不做**：layerwise proxy 的逐 rank 路由由上层负责，wings 不实现 prefiller/decoder 分发。
-- **拓扑计算不做**：`--dp-rank-start` 等由上层算好下发，wings 不自行推导集群拓扑。
+- **集群拓扑规划不做**：上层规划拓扑（节点数/卡数/tp）并下发 `dp-size`/`tp-size`/`dp-size-local` + `NODE_IPS`（顺序=rank）+ `RANK_IP`；wings 仅做 pod 内的 **rank-start 续号派生**（`RANK_IP` 在 `NODE_IPS` 的位置×`dp-size-local`）与 `dp-address`(=`NODE_IPS[0]`)，**不规划集群**（见 §6.1/§7.1/§13.4）。
+  > 修正：原"`--dp-rank-start` 由上层算好下发"与实现不符——实现是 wings 派生，上层不下发 rank-start/address。
 
 ---
 
@@ -222,32 +223,36 @@ launch_online_dp.py --dp-size 8 --tp-size 4 --dp-size-local 4 --dp-rank-start 4 
 
 ### 6.1 字段来源
 
-| 来源 | 字段 | P 值 | D 值 |
-|------|------|------|------|
-| **上层下发（5 个）** | `--dp-size` | 2 | 8 |
-| | `--tp-size` | 16 | 4 |
-| | `--dp-size-local` | 1 | 4 |
-| | `--dp-rank-start` | node0=0 / node1=1 | node0=0 / node1=4 |
-| | `--dp-address` | P-node0 IP | D-node0 IP |
-| **wings 自带** | `--port` 基址 | 18000（现有 `ENGINE_PORT`）| 同 |
-| | `--data-parallel-rpc-port` | 死值（按 `PD_ROLE` 两个常量）| P 一个 / D 一个 |
-| | `--host` / `--data-parallel-external-lb` | `0.0.0.0` / 恒开 | 同 |
-| **平台/现有** | `ASCEND_RT_VISIBLE_DEVICES`（整 pod 卡）、`PD_ROLE`、`kv_port`、模型 | — | — |
-| **上层透传** | 全局 prefill/decode 拓扑（`PD_PREFILL_*`/`PD_DECODE_*`，KV 映射用，两边一致）| — | — |
+> ⚠️ **与实现对齐**（详见 [pd-a3-official-alignment-report.md](../docs/reference/pd-a3-official-alignment-report.md) §0 与本文 §13.4）：原"上层下发 5 个"里的 **`dp-rank-start`/`dp-address` 实为 wings 派生，页面/上层不下发**；`dp-size`/`tp-size` 还可由全局拓扑派生。
+
+| 来源 | 字段 | 说明（P 值 / D 值，以 V3.2 举例）|
+|------|------|------|
+| **上层下发** | `PD_ROLE` | `P` / `D`（触发 PD）|
+| | `dp-size` / `tp-size` | `2·16` / `8·4`；**还可由全局拓扑 `PD_{ROLE}_*` 派生**（§13.4），则页面只需 `tp-size` + `dp-size-local` |
+| | `dp-size-local` | `1` / `4`（=卡/节点÷tp，**不可派生**，必下发）|
+| | `NODE_IPS` / `RANK_IP` | 本角色全部节点 IP（顺序即 rank）/ 本 pod 唯一 IP（须 ∈ NODE_IPS）|
+| | 全局拓扑 `PD_PREFILL_*` / `PD_DECODE_*` | KV 映射，两端一致 |
+| | `model_name` / `model_path` | 模型 |
+| **wings 派生（不下发）** | `dp-rank-start` | = `RANK_IP` 在 `NODE_IPS` 的位置 × `dp-size-local`（`PD_DP_RANK_START` 可显式覆盖）|
+| | `dp-address`（`--data-parallel-address`）| = 本角色 node0 IP = `NODE_IPS[0]`；实现读 `Master_IP` env（约定 = `NODE_IPS[0]`）|
+| **wings 自带** | `--port` 基址 `ENGINE_PORT`、`--data-parallel-rpc-port`（按 `PD_ROLE` 两个死值）、`--host 0.0.0.0`、`--data-parallel-external-lb`（恒开）| 固定 |
+| **平台/注册表** | `ASCEND_RT_VISIBLE_DEVICES`（整 pod 卡）、`WINGS_ASCEND_PLATFORM`（a3 信号，§13.4）、`kv_port`/`engine_id`（注册表 / 按 rank）| — |
 
 > rpc 死值按 `PD_ROLE` 给两个常量（P/D 各一），覆盖分机部署，并防 P/D 同机共置时 rpc 冲突。
 
 ### 6.2 责任分线
 
 ```
-上层（全算好，下发）:
-  dp-size / tp-size / dp-size-local / dp-rank-start / dp-address
-  + PD_ROLE / kv_port / 全局 prefill-decode 拓扑 / 卡组基址 / model
+上层（下发已解析拓扑，不含 rank-start/address）:
+  PD_ROLE / dp-size / tp-size / dp-size-local / NODE_IPS / RANK_IP
+  + 全局 prefill-decode 拓扑 / 卡组基址 / model
+  （dp-size、tp-size 可省 → 由 PD_{ROLE}_* 派生，§13.4）
 
-wings（识别 + fork，不算拓扑）:
+wings（识别 + 派生 + fork）:
+  派生 dp-rank-start(=RANK_IP 在 NODE_IPS 的位置×dp-size-local) / dp-address(=NODE_IPS[0]，读 Master_IP)
   按 dp-size-local 次 fork，逐 service rank=start+i / port=base+i / 卡组=i*tp..
-  + 注入 kv_transfer_config（复用 _get_pd_config + LayerwiseConnector + kv_port）
-  + 按 PD_ROLE 注入 §3.4 差异化参数
+  + 注入 kv_transfer_config（_build_pd_external_lb_kv：注册表连接器/kv_port/extra + 全局拓扑）
+  + 按 PD_ROLE 注入注册表差异化参数（注入器后重申，§13.2）
   + 管 pod 内 N 个子进程生命周期
 ```
 
@@ -260,28 +265,31 @@ wings（识别 + fork，不算拓扑）:
 | `nnodes` | 角色节点数 | 2 | 2 | ✅ |
 | `cards_per_node` | 每节点 NPU 数（可硬件探测则免填）| 16 | 16 | △ |
 
-> `dp_size = nnodes × cards_per_node ÷ tp_size`、`dp_size_local`、`dp_rank_start`、`dp_address` 均由上层据此推导后下发，页面不直接填。
+> `dp_size = nnodes × cards_per_node ÷ tp_size`、`dp_size_local = cards_per_node ÷ tp_size` 由页面/上层算并下发；**`dp_rank_start`、`dp_address` 改由 wings 在 pod 内据 `RANK_IP`/`NODE_IPS` 派生（非下发，见 §6.1 / §13.4）**。
 
 ---
 
 ## 7. 详细设计
 
-### 7.1 输入 → 派生（上层侧拓扑计算）
+### 7.1 输入 → 派生（拓扑计算）
 
 ```
+# 上层侧（页面/编排算）：
 total_cards    = nnodes × cards_per_node
 dp_size        = total_cards ÷ tp_size            （= 页面 dp 或反算）
 dp_size_local  = cards_per_node ÷ tp_size
-dp_rank_start  = role_node_rank × dp_size_local    （role_node_rank: 角色域内节点序）
-dp_address     = 角色域 node0 IP
+
+# wings 侧（pod 内据 RANK_IP/NODE_IPS 派生，非上层下发，见 §13.4）：
+dp_rank_start  = RANK_IP 在 NODE_IPS 的位置（role_node_rank） × dp_size_local
+dp_address     = NODE_IPS[0]（角色域 node0 IP；实现读 Master_IP，约定 = NODE_IPS[0]）
 ```
 
-校验：`cards_per_node % tp_size == 0`、`tp_size` 整除模型注意力头数。
+校验：`cards_per_node % tp_size == 0`、`tp_size` 整除模型注意力头数；`RANK_IP` 逐字 ∈ `NODE_IPS`（否则 rank_start 回退 0、多节点撞 rank）。
 
 ### 7.2 wings fork 逻辑（每 pod）
 
 ```python
-# 识别上层 5 参数；port 基址 18000、rpc 死值、host、external-lb 由 wings 自带
+# 识别契约参数；dp_rank_start / dp_address 已由 §7.1 在 pod 内派生；port 基址 ENGINE_PORT、rpc 死值、host、external-lb 由 wings 自带
 for i in range(dp_size_local):                 # P=1 次，D=4 次
     rank  = dp_rank_start + i                    # 直接续号，不推导
     port  = 18000 + i                            # P→18000；D→18000..18003
@@ -479,14 +487,16 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
 - 拓扑：P = DP2×TP16（2 节点），D = DP8×TP4（2 节点）。
 - 节点 IP：P-node0=`7.6.52.105`、P-node1=`7.6.52.113`、D-node0=`7.6.52.117`、D-node1=`7.6.52.125`。
 
-### A.2 上层下发（4 pod）
+### A.2 逐 pod 解析结果（4 pod）
 
-| Pod | PD_ROLE | dp-size | tp-size | dp-size-local | dp-rank-start | dp-address |
-|-----|:-------:|:-------:|:-------:|:-------------:|:-------------:|:----------:|
-| P-node0 | P | 2 | 16 | 1 | 0 | 7.6.52.105 |
-| P-node1 | P | 2 | 16 | 1 | 1 | 7.6.52.105 |
-| D-node0 | D | 8 | 4 | 4 | 0 | 7.6.52.117 |
-| D-node1 | D | 8 | 4 | 4 | 4 | 7.6.52.117 |
+> 上层下发 `PD_ROLE`/`dp-size`/`tp-size`/`dp-size-local` + `NODE_IPS`/`RANK_IP`；下表 **`dp-rank-start`/`dp-address` 两列为 wings 据 `RANK_IP`/`NODE_IPS` 派生的结果**（非下发，见 §6.1/§13.4）。
+
+| Pod | PD_ROLE | dp-size | tp-size | dp-size-local | RANK_IP | →dp-rank-start(派生) | →dp-address(派生) |
+|-----|:-------:|:-------:|:-------:|:-------------:|:-------:|:-------------:|:----------:|
+| P-node0 | P | 2 | 16 | 1 | 7.6.52.105 | 0 | 7.6.52.105 |
+| P-node1 | P | 2 | 16 | 1 | 7.6.52.113 | 1 | 7.6.52.105 |
+| D-node0 | D | 8 | 4 | 4 | 7.6.52.117 | 0 | 7.6.52.117 |
+| D-node1 | D | 8 | 4 | 4 | 7.6.52.125 | 4 | 7.6.52.117 |
 
 ### A.3 整体流程图
 
@@ -494,7 +504,7 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
 flowchart TB
     subgraph UP["① 上层编排层"]
         PLAN["页面填: P(tp16,nnodes2) / D(tp4,nnodes2)<br/>推导: dp=nnodes×cards÷tp → P:dp2 / D:dp8"]
-        PLAN --> DISP["逐 pod 下发 5 参数:<br/>dp-size / tp-size / dp-size-local / dp-rank-start / dp-address"]
+        PLAN --> DISP["逐 pod 下发:<br/>PD_ROLE / dp-size / tp-size / dp-size-local / NODE_IPS / RANK_IP<br/>(dp-rank-start / dp-address 由 wings 派生)"]
     end
 
     DISP --> POD0["P-node0<br/>start0 local1"]
