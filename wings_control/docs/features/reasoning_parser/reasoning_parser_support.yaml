@@ -94,6 +94,8 @@ architectures:
       Kimi-K2.5-w4a8: {vllm: kimi_k2, vllm_ascend: kimi_k2}
       Kimi-K2.7:      {vllm: kimi_k2, vllm_ascend: kimi_k2}
       Kimi-K2.7-w4a8: {vllm: kimi_k2, vllm_ascend: kimi_k2}
+      Kimi-K2.7-Code:      {vllm: kimi_k2, vllm_ascend: kimi_k2}
+      Kimi-K2.7-Code-w4a8: {vllm: kimi_k2, vllm_ascend: kimi_k2}
 
   - name: GlmMoeDsaForCausalLM
     config:
@@ -175,6 +177,14 @@ architectures:
     config: {}
     models:
       GLM-4-9B-0414: {vllm: null, vllm_ascend: null}
+
+  # MiniMax-M3 (GQA+MSA, 多模态): 手工启动命令未配 reasoning_parser; M3 为新架构,
+  # parser 未核实, 暂置 null(不照搬 minimax_m2)。核实官方 vLLM 后可补。
+  - name: MiniMaxM3SparseForConditionalGeneration
+    config: {}
+    models:
+      MiniMax-M3:       {vllm: null, vllm_ascend: null}
+      MiniMax-M3-MXFP8: {vllm: null, vllm_ascend: null}
 
   - name: Qwen2ForCausalLM
     config: {}

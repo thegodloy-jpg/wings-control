@@ -151,6 +151,8 @@ _LLM_MODELS = {
         "Kimi-K2.5-w4a8",
         "Kimi-K2.7",
         "Kimi-K2.7-w4a8",
+        "Kimi-K2.7-Code",
+        "Kimi-K2.7-Code-w4a8",
         ],
     "DeepseekV32ForCausalLM": [
         "DeepSeek-V3.2",
@@ -207,6 +209,10 @@ _LLM_MODELS = {
         "MiniMax-M2.5-w8a8",
         "MiniMax-M2.7",
         "MiniMax-M2.7-w8a8"
+        ],
+    "MiniMaxM3SparseForConditionalGeneration": [
+        "MiniMax-M3",
+        "MiniMax-M3-MXFP8",
         ],
     "LlamaForCausalLM": [
         "LLaMA3-8B",
