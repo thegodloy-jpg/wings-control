@@ -329,6 +329,14 @@ def run_dry_run(scenario_name: str, scenario: dict) -> None:
 
 # ── PD external-lb 场景（上层契约下发 + pod 内 fork）──
 PD_SCENARIOS = {
+    "qwen3": {
+        "description": "Qwen3-30B-A3B PD 分离 (P:dp2×tp2 / D:dp4×tp1，2 D 节点)",
+        "architecture": "Qwen3MoeForCausalLM",
+        "model_name": "Qwen3-30B-A3B",
+        "prefill": {"dp": 2, "tp": 2, "local": 2, "nodes": ["9.0.0.1"], "rpc": "12321"},
+        "decode": {"dp": 4, "tp": 1, "local": 2,
+                   "nodes": ["9.0.1.1", "9.0.1.2"], "rpc": "12321"},
+    },
     "glm5": {
         "description": "GLM-5 PD 分离 (P:dp2×tp16 / D:dp16×tp4)",
         "architecture": "GlmMoeDsaForCausalLM",

@@ -342,10 +342,54 @@ def layer_f():
     check("L5 V4-P(a3): speculative method=mtp 存活", '"method":"mtp"' in v4_a3_p)
 
 
+# ─────────────── 层 G：分布式角色判定（external-lb 绕开 Ray master/worker）───────────────
+def layer_g():
+    print("\n== 层 G：_determine_role（PD external-lb → standalone；非 PD Ray 不变）==")
+    try:
+        import wings_control as W
+    except Exception as exc:  # 缺重依赖（如 requests）时跳过，不误判
+        print(f"  [skip] 层 G：import wings_control 失败：{exc}")
+        return
+
+    def _reset():
+        _clear_pd_env()                 # 清 PD_/DP_/TP_/NODE_IPS/Master_IP/RANK_IP 等
+        os.environ.pop("DISTRIBUTED", None)
+
+    cases = [
+        ("非分布式 → standalone",
+         {"DISTRIBUTED": "false"}, "standalone"),
+        ("Ray master（无 PD, IP==MASTER）→ master（不变）",
+         {"DISTRIBUTED": "true", "MASTER_IP": "70.0.0.1", "RANK_IP": "70.0.0.1"}, "master"),
+        ("Ray worker（无 PD, IP!=MASTER）→ worker（不变）",
+         {"DISTRIBUTED": "true", "MASTER_IP": "70.0.0.1", "RANK_IP": "70.0.0.2"}, "worker"),
+        ("PD external-lb（IP==MASTER）→ standalone（不当 master）",
+         {"DISTRIBUTED": "true", "MASTER_IP": "70.0.0.1", "RANK_IP": "70.0.0.1",
+          "PD_ROLE": "D", "DP_SIZE": "4", "TP_SIZE": "1", "DP_SIZE_LOCAL": "2",
+          "NODE_IPS": "70.0.0.1,70.0.0.2"}, "standalone"),
+        ("PD external-lb（IP!=MASTER）→ standalone（不当 worker）",
+         {"DISTRIBUTED": "true", "MASTER_IP": "70.0.0.1", "RANK_IP": "70.0.0.2",
+          "PD_ROLE": "D", "DP_SIZE": "4", "TP_SIZE": "1", "DP_SIZE_LOCAL": "2",
+          "NODE_IPS": "70.0.0.1,70.0.0.2"}, "standalone"),
+        ("PD 1P1D（DP_SIZE=1, 非 external-lb）→ 仍按原 master/worker",
+         {"DISTRIBUTED": "true", "MASTER_IP": "70.0.0.1", "RANK_IP": "70.0.0.2",
+          "PD_ROLE": "D", "DP_SIZE": "1"}, "worker"),
+    ]
+    for label, env, expect in cases:
+        _reset()
+        os.environ.update(env)
+        try:
+            got = W._determine_role()
+        except Exception as exc:
+            got = f"<exc:{exc}>"
+        check(label, got == expect, f"got={got!r} expect={expect!r}")
+    _reset()
+
+
 def main():
     layer_a()
     layer_bce()
     layer_f()
+    layer_g()
     if BASH:
         layer_d()
     else:

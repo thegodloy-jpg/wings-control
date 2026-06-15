@@ -640,7 +640,7 @@ exec vllm serve /models/DeepSeek-V3.2-w8a8 \
 
 1. **`DP_SIZE`/`TP_SIZE` 可省**：缺省时由本角色全局拓扑 `PD_{ROLE}_*` 派生（`_first_env("DP_SIZE","PD_DP_SIZE","PD_{ROLE}_DP_SIZE")`）。即 4 个全局拓扑 `PD_PREFILL_*`+`PD_DECODE_*` 是**单一真相源**，本角色 dp/tp 不必重复下发。`DP_SIZE_LOCAL` 不可派生（=卡/节点÷tp），仍必填。
 2. **本机 IP 单一 `RANK_IP`**：`get_local_ip()` 读 `RANK_IP`；`HCCL_IF_IP`(=`POD_IP` 或 `get_local_ip()`) 与 PD 的 `host_ip`(=`HOST_IP` 或 `RANK_IP`) **都回退到它**。故只设 `RANK_IP` 即可，不必再设 `POD_IP`/`HOST_IP`。
-3. **`dp_rank_start` 实为派生**（非设计 §6.1 所说「上层下发 `--dp-rank-start`」）：= `RANK_IP`/`HOST_IP` 在 `NODE_IPS` 的位置 × `DP_SIZE_LOCAL`；`PD_DP_RANK_START` 可显式覆盖。
+3. **`dp_rank_start` 实为派生**（非设计 §6.1 所说「上层下发 `--dp-rank-start`」）：= 本 pod IP 在 `NODE_IPS` 的位置 × `DP_SIZE_LOCAL`；`PD_DP_RANK_START` 可显式覆盖。**本 pod IP 取 `RANK_IP` 优先（非 `HOST_IP`）**——真机发现同宿主多 pod 共享同一 `HOST_IP`（K8s `status.hostIP`=节点物理 IP），用它派生会让多 pod 算出同一 `rank_start` → 多节点 rank 撞车 → rank0 去 bind 别人 IP 的 rpc 端口报 `ZMQError: Cannot assign requested address`。本机 IP 不在 `NODE_IPS` 内时显式 `logger.error`（fail-fast，不再静默回退 0）。回归见 `pd_external_lb_verify` 层 A「same-HOST node0/1」用例。
 4. **平台 a3 信号多源**：`WINGS_ASCEND_PLATFORM` / `ASCEND_PLATFORM` / `ENGINE_IMAGE_FLAVOR` / **`ENGINE_VERSION` 带 `-a3` 后缀** / `ASCEND_A3_ENABLE`；**全无 → 兜底 `a2`**（非 a3！a3 部署须给信号）。
 
 ### 13.5 engine_id 与 hybrid-kv 的真机待确认
@@ -652,4 +652,39 @@ exec vllm serve /models/DeepSeek-V3.2-w8a8 \
 
 `default`（兜底，V1/30100·30400）、`Qwen3MoeForCausalLM`（V1，用户模板）、`DeepseekV32ForCausalLM`（Layerwise）、`GlmMoeDsaForCausalLM`（V1+`use_ascend_direct`+`common_env`）、`Qwen3_5MoeForConditionalGeneration`（Layerwise）、`DeepseekV4ForCausalLM`（**Hybrid**+`platform_overrides.a2`）。
 
-> **验证闭环**：`python dry_run.py --pd {glm5,v4flash}` 生成 → 对照官方 A3（[docs/reference/pd-a3-official-alignment-report.md](../docs/reference/pd-a3-official-alignment-report.md)）；`python tests/pd_external_lb_verify.py` → **61/0**。部署手册见 [docs/reference/deploy-{glm5.1,v4flash,qwen3-30b-pd-1p4c-2d2c}.md](../docs/reference/)。
+> **验证闭环**：`python dry_run.py --pd {glm5,v4flash}` 生成 → 对照官方 A3（[docs/reference/pd-a3-official-alignment-report.md](../docs/reference/pd-a3-official-alignment-report.md)）；`python tests/pd_external_lb_verify.py` → **69/0**（含层 G 角色判定）。部署手册见 [docs/reference/deploy-{glm5.1,v4flash,qwen3-30b-pd-1p4c-2d2c}.md](../docs/reference/)。
+
+### 13.7 多 pod 编排：`--distributed` 启动器与 external-lb 的范式错位（真机发现 2026-06）
+
+external-lb 只接管**引擎脚本**分发（`build_start_script` 内 `if pd_ext:` 优先于 `is_distributed`，见 §10.3）；但 wings 还有一层**正交的启动器角色**——`wings_control._determine_role()` **仅按 `DISTRIBUTED` + `RANK_IP vs MASTER_IP`** 判 `standalone/master/worker`，**完全不看 `PD_ROLE`**。两层独立：
+
+| 层 | 决策依据 | external-lb 接管？ |
+|---|---|:---:|
+| 引擎脚本（fork / 单进程 / Ray script）| `_pd_external_lb` 优先 | ✅ 是 |
+| **启动器角色**（standalone/master/worker）| **仅 `DISTRIBUTED` + IP** | ❌ 否 |
+
+→ 真机传 `--distributed` 时：引擎脚本走了 external-lb fork（对），**但启动器仍按 Ray master/worker 编排**（那套为「单引擎跨节点、head 起 API、worker 仅 headless Ray worker」设计）。两者范式冲突。
+
+**真机症状**（Qwen3-30B-A3B，role=D，2 pod）：
+- master（`RANK_IP==MASTER_IP`）起全套：master_api 16000 + proxy 18000 + health 19000 + 监控本地 17000；
+- worker 被裁成**仅 health**（`只启动 health 服务，不启动 proxy 和 monitor`），且：
+  - health 端口 **+1 偏移**（19001，为 hostNetwork 同宿主防撞，见 [wings_control.py:1094](../wings_control/wings_control.py)）；
+  - `BACKEND_URL` 指向 **master 的 17000**（源自 Ray 假设「worker 本地无 vLLM API server」）——**但 external-lb 下 worker 本地确有 fork 引擎**（rank ≥ local），于是 **worker 的 wings 不监控自己本地引擎**，本地引擎崩了无 crash-retry；
+  - 引擎 `--host` 绑 `RANK_IP`、master health 探 `127.0.0.1:17000` 还可能错位。
+
+**正确模型（external-lb 应是对等 pod）**：每个 PD pod 自包含、对称：
+```
+每 pod：engine 17000(+i 自增) / proxy 18000 / health 19000   —— 各自一套，无 master/worker 之分
+pod 内 DP_SIZE_LOCAL>1：service i → port 17000+i、kv 30100+i、bootstrap 23100+i、卡 [i*tp,(i+1)*tp)
+跨 pod：靠 vLLM DP rendezvous（--data-parallel-address=Master_IP + rpc-port）组域，不需 wings master/worker
+```
+
+**修复方向（择一）**：
+- **A（部署侧，零改码）**：PD 各 pod 由平台独立拉起、**不传 `--distributed`** → 每 pod 走 standalone 启动器（自带 proxy/health/监控本地引擎），跨 pod 仅靠 DP rendezvous。对等，上述症状全消。
+- **B（代码侧）**：external-lb 命中（`_get_pd_external_lb_params()` 非空）时让启动器**按 standalone 处理**（`_determine_role` 提前 return，或 `_run_worker_mode` 内分叉：worker 自起 health/监控本地引擎、不指 master）。**回归隔离**：gate 用该信号——非 PD Ray 无 `PD_ROLE` → 必走原路、字节级不变；**前提是「加分支、不动 `_determine_role`/`_build_processes`/`derive_port_plan` 等共享 helper」**。待决：health 端口同宿主 hostNetwork 防撞如何处理。
+
+> **【已实现 · B2】**（2026-06）`_determine_role()`（[wings_control.py:545](../wings_control/wings_control.py)）在 `DISTRIBUTED=true` 且 `_get_pd_external_lb_params()` 非空时**提前 `return "standalone"`**（仅加分支 + 局部 import 探测信号，未动任何共享 helper）。效果：每个 PD pod 走 standalone → 自带 proxy/health/monitor、**监控本地引擎**；`_build_child_env`（[:345](../wings_control/wings_control.py)）在 `RANK_IP` 存在时把 `BACKEND_URL` 设为 `RANK_IP:backend_port`，与引擎 `--host`(=`RANK_IP`，`_resolve_engine_service_host`)一致 → 预期消除 master 模式下「探 `127.0.0.1` 而引擎绑 `RANK_IP`」的错位（待真机确认）。**回归**：`pd_external_lb_verify` **层 G**（总 69/0）断言 external-lb→standalone、**非 PD Ray 仍 master/worker（字节级不变）**、PD 1P1D（DP=1）不误伤。**未覆盖**：① 引擎自身 `FULL_DECODE_ONLY` 崩（独立问题）；② 同宿主 hostNetwork 下两 PD pod 抢 `19000/18000`（靠平台反亲和到不同宿主，或后续按需加偏移）。
+
+> **订正 §10.3**：其中「Ray 分布式不受影响：新分支在 `is_distributed` 判定前 return」**只对引擎脚本层成立**；启动器角色层（master/worker）由 `DISTRIBUTED` 独立驱动、external-lb 不接管。故 `--distributed` + PD 会误入 master/worker —— **PD 场景不应传 `--distributed`**（除非按 B 改造）。
+
+> **关联**：`--distributed` 误用还会在解析期因缺 `MASTER_IP` 直接 `ValueError`（`_validate_distributed_args`）；standalone 误触发（external-lb 未命中时）会令引擎 TP=卡数 与 kv-config `decode.tp_size` 自相矛盾，vLLM 报 `conflicting tensor parallel size`。两者均指向同一根因：**PD external-lb 不应复用 `--distributed` 路径**。
