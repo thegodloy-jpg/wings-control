@@ -31,7 +31,7 @@ flowchart TD
     C --> E
     D --> E[resolve_thinking_off_policy<br/>按模型名解析键名]
     E -->|Qwen3 / GLM-4.5+| F["注入 --default-chat-template-kwargs<br/>{enable_thinking: 开关值}"]
-    E -->|DeepSeek-V3.1/V3.2| G["注入 --default-chat-template-kwargs<br/>{thinking: 开关值}"]
+    E -->|DeepSeek-V3.1/V3.2/V4| G["注入 --default-chat-template-kwargs<br/>{thinking: 开关值}"]
     E -->|R1 / QwQ / MiniMax-M2| H[天生必思考<br/>不注入（关时仅告警）]
     E -->|非思考模型| I[不注入]
 
@@ -60,11 +60,12 @@ flowchart TD
 
 | 模型族 | 关闭思考的 kwarg | 说明 |
 | --- | --- | --- |
-| Qwen3 / Qwen3-MoE / Qwen3-Next / Qwen3.5 | `{"enable_thinking": false}` | 混合推理 |
+| Qwen3 / Qwen3-MoE / Qwen3-Next / Qwen3.5 / 3.6（**不含 Coder**） | `{"enable_thinking": false}` | 混合推理；Qwen3-Coder-* 官方非思考、YAML 置 null，故排除 |
 | GLM-4.5 / 4.6 / 4.7 / GLM-5 / 5.1（MoE） | `{"enable_thinking": false}` | 混合推理 |
-| DeepSeek-V3.1 / V3.2 | `{"thinking": false}` | 键名是 `thinking`，非 enable_thinking |
-| DeepSeek-R1 / R1-Distill / QwQ / MiniMax-M2 | `always_on`（仅告警） | 始终推理，无法关闭 |
-| Qwen2.5 / Llama / GLM-4-9B 等 | `None`（不介入） | 本就不思考 |
+| DeepSeek-V3.1 / V3.2 / V4-Flash / V4-Pro | `{"thinking": false}` | 键名是 `thinking`，非 enable_thinking；V4 经官方 vLLM Recipes 确认同为混合推理、键名一致（另有正交的 `reasoning_effort` 控深度，不在本开关范畴） |
+| Kimi-K2.5 / K2.7 / K2.7-Code | `{"thinking": false}` | 键名 `thinking`；moonshotai/Kimi-K2.5 `chat_template.jinja` 字面以 `{% if thinking is defined and thinking is false %}` 关闭思考（与 `reasoning_parser=kimi_k2` 对应） |
+| DeepSeek-R1 / R1-Distill / QwQ / MiniMax-M2 | `always_on`（仅告警） | 始终推理，无官方关闭手段 |
+| Qwen2.5 / Qwen3-Coder / Llama / GLM-4-9B / MiniMax-M3 等 | `None`（不介入） | 本就不思考（M3 经 `thinking_mode` 字符串切换，键/值不同，暂不纳入本开关） |
 
 **启动命令注入（launcher，仅 vllm / vllm_ascend）：** 策略为 dict 时，向启动命令追加 `--default-chat-template-kwargs '{<key>: <开关值>}'`（开关开→`true` 强制思考、关→`false` 强制非思考，键名按模型族）；策略为 `always_on` → 不注入（模型天生必思考，关时仅告警一次）；策略为 `None`（非思考模型）→ 不注入。引擎为 `sglang` 时整段不执行。
 
@@ -79,7 +80,7 @@ flowchart TD
 - `vllm` / `vllm_ascend`：原生支持启动参数 `--default-chat-template-kwargs '{"enable_thinking": false}'`（vllm_ascend 复用同一 vLLM OpenAI server）。该值是服务级默认，请求级 `chat_template_kwargs` 优先级更高、可覆盖——符合「客户端自负、不兜底」的约定。
 - `sglang`：**无任何启动级关闭思考的参数**（`--reasoning-parser` 只控制解析，`--chat-template` 需逐模型 fork Jinja 且语义脆弱；官方仅在请求级暴露「是否思考」，见 sgl-project/sglang#5948，feature request 长期 open）。既无法在拉起服务时关闭思考、其请求级行为又不在本特性兜底范围，故 sglang **整体不纳入 reasoning**——配置层已移除其全部 `reasoning_parser`。
 
-> 注：kwarg 键名按**模型族**区分（Qwen3/GLM 用 `enable_thinking`、DeepSeek-V3.1/V3.2 用 `thinking`），不按引擎区分——同一组 kwargs 对 vllm 与 vllm_ascend 通用。
+> 注：kwarg 键名按**模型族**区分（Qwen3/GLM 用 `enable_thinking`、DeepSeek-V3.1/V3.2/V4 用 `thinking`），不按引擎区分——同一组 kwargs 对 vllm 与 vllm_ascend 通用。
 
 ## reasoning_parser 支持范围（引擎 × 模型）
 
@@ -206,7 +207,7 @@ curl -X POST 'http://127.0.0.1:18000/v1/chat/completions' \
 | 模型 | 解析端（vllm / vllm_ascend） | 生成端（vllm / vllm_ascend） |
 | --- | --- | --- |
 | Qwen3-32B / GLM-4.5+ | 剥离 `reasoning_parser` | 启动命令注入 `--default-chat-template-kwargs '{"enable_thinking": false}'`，服务级默认非思考；客户端请求体反开自负、不兜底 |
-| DeepSeek-V3.1 / V3.2 | 剥离 `reasoning_parser` | 启动命令注入 `--default-chat-template-kwargs '{"thinking": false}'` |
+| DeepSeek-V3.1 / V3.2 / V4-Flash / V4-Pro | 剥离 `reasoning_parser` | 启动命令注入 `--default-chat-template-kwargs '{"thinking": false}'` |
 | DeepSeek-R1 / MiniMax-M2 | 剥离 `reasoning_parser` | 无法关闭，告警一次（模型天生必思考） |
 
 > `sglang`：完全不参与 reasoning（配置层已无 `reasoning_parser`），解析端/生成端均不涉及；其 function call 不受影响。
@@ -216,5 +217,5 @@ curl -X POST 'http://127.0.0.1:18000/v1/chat/completions' \
 | 模型 | 解析端（vllm / vllm_ascend） | 生成端（vllm / vllm_ascend） |
 | --- | --- | --- |
 | Qwen3-32B / GLM-4.5+ | 注入 `reasoning_parser` | 启动命令注入 `--default-chat-template-kwargs '{"enable_thinking": true}'`，**服务级默认强制思考**；客户端请求体可覆盖、不兜底 |
-| DeepSeek-V3.1 / V3.2 | 注入 `reasoning_parser` | 启动命令注入 `--default-chat-template-kwargs '{"thinking": true}'` |
+| DeepSeek-V3.1 / V3.2 / V4-Flash / V4-Pro | 注入 `reasoning_parser` | 启动命令注入 `--default-chat-template-kwargs '{"thinking": true}'` |
 | DeepSeek-R1 / MiniMax-M2 | 注入 `reasoning_parser` | 天生必思考，不注入（无需强制） |

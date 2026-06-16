@@ -288,7 +288,9 @@ def resolve_thinking_off_policy(model_name: str):
         return THINKING_ALWAYS_ON, {}
 
     # 2) Qwen3 系列（混合推理）：enable_thinking
-    if "qwen3" in name:
+    #    排除 Qwen3-Coder-*：官方为非思考模型，reasoning_parser_support.yaml 显式置 null，
+    #    不应注入思考默认（否则开关开时会把非思考的 Coder 误强制思考）。
+    if "qwen3" in name and "coder" not in name:
         return THINKING_HYBRID, {"enable_thinking": False}
 
     # 3) GLM MoE 混合推理（GLM-4.5/4.6/4.7/5/5.1）：enable_thinking
@@ -296,8 +298,13 @@ def resolve_thinking_off_policy(model_name: str):
     if any(tag in name for tag in ("glm-4.5", "glm-4.6", "glm-4.7", "glm-5")):
         return THINKING_HYBRID, {"enable_thinking": False}
 
-    # 4) DeepSeek V3.1 / V3.2（混合推理）：thinking（注意键名不是 enable_thinking）
-    if "deepseek-v3" in name:
+    # 4) DeepSeek V3.1/V3.2/V4 + Kimi-K2.x（混合推理）：thinking 键（注意不是 enable_thinking）
+    #    - DeepSeek V4-Flash/-Pro：官方 vLLM Recipes 确认混合推理、键名 thinking；另有
+    #      reasoning_effort=high/max 控制思考【深度】，属请求级、与本开/关正交，不在此注入。
+    #    - Kimi-K2.x：moonshotai/Kimi-K2.5 chat_template.jinja 字面以
+    #      `{% if thinking is defined and thinking is false %}` 关闭思考（键名 thinking，
+    #      非 enable_thinking），混合推理（思考/即时双模）；与 reasoning_parser=kimi_k2 对应。
+    if "deepseek-v3" in name or "deepseek-v4" in name or "kimi-k2" in name:
         return THINKING_HYBRID, {"thinking": False}
 
     # 其余（Qwen2.5 / Llama / GLM-4-9B / embedding / rerank 等非思考模型）→ 无需处理

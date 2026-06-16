@@ -46,6 +46,25 @@ class TestResolveThinkingOffPolicy(unittest.TestCase):
         self.assertEqual(resolve_thinking_off_policy("DeepSeek-V3"),
                          (THINKING_HYBRID, {"thinking": False}))
 
+    def test_deepseek_v4_uses_thinking_key(self):
+        # V4-Flash/-Pro 同 V3.x 为混合推理，键名 thinking（官方 vLLM Recipes 确认）。
+        for name in ("DeepSeek-V4", "DeepSeek-V4-Flash", "DeepSeek-V4-Pro",
+                     "DeepSeek-V4-Flash-w8a8-mtp", "DeepSeek-V4-Pro-w4a8-mtp"):
+            self.assertEqual(resolve_thinking_off_policy(name),
+                             (THINKING_HYBRID, {"thinking": False}), name)
+
+    def test_kimi_k2_uses_thinking_key(self):
+        # Kimi-K2.x 混合推理；moonshotai/Kimi-K2.5 chat_template.jinja 字面用 thinking 键
+        # （`{% if thinking is defined and thinking is false %}`），非 enable_thinking。
+        for name in ("Kimi-K2.5", "Kimi-K2.7", "Kimi-K2.7-Code", "Kimi-K2.5-w4a8"):
+            self.assertEqual(resolve_thinking_off_policy(name),
+                             (THINKING_HYBRID, {"thinking": False}), name)
+
+    def test_qwen3_coder_is_non_thinking(self):
+        # Qwen3-Coder-* 官方非思考（reasoning_parser_support.yaml 显式置 null）→ 不介入。
+        for name in ("Qwen3-Coder-480B-A35B-Instruct", "Qwen3-Coder-30B-A3B-Instruct"):
+            self.assertEqual(resolve_thinking_off_policy(name), (THINKING_NONE, {}), name)
+
     def test_always_on_reasoners(self):
         for name in ("DeepSeek-R1", "DeepSeek-R1-0528", "DeepSeek-R1-Distill-Qwen-32B",
                      "QwQ-32B", "MiniMax-M2.5"):
@@ -90,6 +109,18 @@ class TestSetThinkingDefault(unittest.TestCase):
         params = self._run("DeepSeek-V3.1", False)
         self.assertEqual(params.get("default_chat_template_kwargs"), {"thinking": False})
 
+    def test_deepseek_v4_injects_thinking_false(self):
+        params = self._run("DeepSeek-V4-Flash", False)
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"thinking": False})
+
+    def test_kimi_k2_injects_thinking_false(self):
+        params = self._run("Kimi-K2.7", False)
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"thinking": False})
+
+    def test_qwen3_coder_does_not_inject(self):
+        params = self._run("Qwen3-Coder-480B-A35B-Instruct", False)
+        self.assertNotIn("default_chat_template_kwargs", params)
+
     def test_always_on_does_not_inject(self):
         params = self._run("DeepSeek-R1", False)
         self.assertNotIn("default_chat_template_kwargs", params)
@@ -105,6 +136,10 @@ class TestSetThinkingDefault(unittest.TestCase):
 
     def test_enabled_deepseek_v3_injects_thinking_true(self):
         params = self._run("DeepSeek-V3.1", True)
+        self.assertEqual(params.get("default_chat_template_kwargs"), {"thinking": True})
+
+    def test_enabled_deepseek_v4_injects_thinking_true(self):
+        params = self._run("DeepSeek-V4-Pro", True)
         self.assertEqual(params.get("default_chat_template_kwargs"), {"thinking": True})
 
     def test_enabled_overrides_residual_default_to_true(self):
