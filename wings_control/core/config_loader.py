@@ -41,7 +41,7 @@ from utils.file_utils import check_torch_dtype, get_directory_size, check_permis
 from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
                                is_deepseek_series_modelslim_quant, is_qwen3_series_fp8,
                                is_glm_moe_dsa_glm51, resolve_thinking_off_policy,
-                               THINKING_ALWAYS_ON)
+                               THINKING_ALWAYS_ON, THINKING_HYBRID, THINKING_NONE)
 from utils.device_utils import check_pcie_cards
 
 logger = logging.getLogger(__name__)
@@ -488,7 +488,7 @@ def _set_thinking_default(params, engine_cmd_parameter, model_info):
       - 请求不带 chat_template_kwargs → 按此默认；
       - 请求带 chat_template_kwargs → 由请求级覆盖（客户端自负，不兜底改写）。
 
-    对【混合推理模型】(resolve_thinking_off_policy 返回 dict) 按开关注入对应键的布尔值：
+    对【混合推理模型】(mode == THINKING_HYBRID) 按开关注入对应键的布尔值：
       - 开关开 → {key: True}  服务级默认【强制打开】思考；
       - 开关关 → {key: False} 服务级默认【强制关闭】思考。
     键名按模型族对齐官方：Qwen3 / GLM = enable_thinking、DeepSeek-V3.x = thinking。
@@ -496,18 +496,18 @@ def _set_thinking_default(params, engine_cmd_parameter, model_info):
     其余模型不注入：
       - THINKING_ALWAYS_ON（R1 / QwQ / MiniMax-M2 等天生必思考，开/关都改不了）→ 不注入，
         仅在开关关时告警一次（提示无法关闭）；
-      - None（本就不思考的模型）→ 不介入，并清除残留默认值。
+      - THINKING_NONE（本就不思考的模型）→ 不介入，并清除残留默认值。
 
     与解析端解耦：本函数仅依据 resolve_thinking_off_policy（模型族是否支持启动期思考切换），
     与是否存在 reasoning_parser 无关——模型没有 reasoning_parser 但支持思考切换时，生成端仍强制开/关。
     """
     enabled = bool(engine_cmd_parameter.get("enable_auto_think_choice"))
     model_name = getattr(model_info, "model_name", "") or ""
-    policy = resolve_thinking_off_policy(model_name)
-    if policy is None:
+    mode, off_kwargs = resolve_thinking_off_policy(model_name)
+    if mode == THINKING_NONE:
         params.pop("default_chat_template_kwargs", None)
         return
-    if policy == THINKING_ALWAYS_ON:
+    if mode == THINKING_ALWAYS_ON:
         params.pop("default_chat_template_kwargs", None)
         if not enabled:
             logger.warning(
@@ -515,7 +515,7 @@ def _set_thinking_default(params, engine_cmd_parameter, model_info):
                 "(e.g. DeepSeek-R1 / QwQ / MiniMax-M2); thinking cannot be disabled at "
                 "startup, only reasoning parsing is affected.", model_name)
         return
-    key = next(iter(policy))  # 'enable_thinking' or 'thinking'
+    key = next(iter(off_kwargs))  # 'enable_thinking' or 'thinking'
     kwargs = {key: enabled}
     params["default_chat_template_kwargs"] = kwargs
     logger.info(

@@ -2,7 +2,7 @@
 """enable_auto_think_choice 思考默认状态策略测试（对称开关）。
 
 覆盖：
-  - utils.model_utils.resolve_thinking_off_policy（模型名 → 思考 kwargs 键名 / always_on / None）
+  - utils.model_utils.resolve_thinking_off_policy（模型名 → (mode, off_kwargs)：hybrid / always_on / none）
   - core.config_loader._set_thinking_default（生成端：启动命令注入服务级默认思考状态，
     开关开→强制思考、关→强制非思考；仅 vllm/vllm_ascend；请求体可覆盖、不兜底）
 """
@@ -16,42 +16,49 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "wings_control"))
 
-from utils.model_utils import resolve_thinking_off_policy, THINKING_ALWAYS_ON  # noqa: E402
+from utils.model_utils import (resolve_thinking_off_policy,  # noqa: E402
+                               THINKING_ALWAYS_ON, THINKING_HYBRID, THINKING_NONE)
 from core import config_loader as cl  # noqa: E402
 
 
 class TestResolveThinkingOffPolicy(unittest.TestCase):
-    """模型名 → 关闭思考策略解析。"""
+    """模型名 → (mode, off_kwargs) 关闭思考策略解析。"""
 
     def test_qwen3_uses_enable_thinking(self):
-        self.assertEqual(resolve_thinking_off_policy("Qwen3-32B"), {"enable_thinking": False})
-        self.assertEqual(resolve_thinking_off_policy("Qwen3-235B-A22B"), {"enable_thinking": False})
+        self.assertEqual(resolve_thinking_off_policy("Qwen3-32B"),
+                         (THINKING_HYBRID, {"enable_thinking": False}))
+        self.assertEqual(resolve_thinking_off_policy("Qwen3-235B-A22B"),
+                         (THINKING_HYBRID, {"enable_thinking": False}))
         self.assertEqual(resolve_thinking_off_policy("Qwen3-Next-80B-A3B-Instruct"),
-                         {"enable_thinking": False})
+                         (THINKING_HYBRID, {"enable_thinking": False}))
 
     def test_glm_moe_uses_enable_thinking(self):
         for name in ("GLM-4.5", "GLM-4.6", "GLM-4.7", "GLM-5", "GLM-5.1"):
-            self.assertEqual(resolve_thinking_off_policy(name), {"enable_thinking": False}, name)
+            self.assertEqual(resolve_thinking_off_policy(name),
+                             (THINKING_HYBRID, {"enable_thinking": False}), name)
 
     def test_deepseek_v3_uses_thinking_key(self):
         # 注意：DeepSeek 用的键名是 thinking，不是 enable_thinking。
-        self.assertEqual(resolve_thinking_off_policy("DeepSeek-V3.1"), {"thinking": False})
-        self.assertEqual(resolve_thinking_off_policy("DeepSeek-V3.2-Exp"), {"thinking": False})
-        self.assertEqual(resolve_thinking_off_policy("DeepSeek-V3"), {"thinking": False})
+        self.assertEqual(resolve_thinking_off_policy("DeepSeek-V3.1"),
+                         (THINKING_HYBRID, {"thinking": False}))
+        self.assertEqual(resolve_thinking_off_policy("DeepSeek-V3.2-Exp"),
+                         (THINKING_HYBRID, {"thinking": False}))
+        self.assertEqual(resolve_thinking_off_policy("DeepSeek-V3"),
+                         (THINKING_HYBRID, {"thinking": False}))
 
     def test_always_on_reasoners(self):
         for name in ("DeepSeek-R1", "DeepSeek-R1-0528", "DeepSeek-R1-Distill-Qwen-32B",
                      "QwQ-32B", "MiniMax-M2.5"):
-            self.assertEqual(resolve_thinking_off_policy(name), THINKING_ALWAYS_ON, name)
+            self.assertEqual(resolve_thinking_off_policy(name), (THINKING_ALWAYS_ON, {}), name)
 
     def test_non_thinking_models_return_none(self):
         for name in ("Qwen2.5-32B-Instruct", "LLaMA3.1-70B", "GLM-4-9B-0414", "bge-m3", ""):
-            self.assertIsNone(resolve_thinking_off_policy(name), name)
+            self.assertEqual(resolve_thinking_off_policy(name), (THINKING_NONE, {}), name)
 
     def test_always_on_takes_priority_over_family(self):
         # R1-Distill-Qwen 同时含 r1 与 qwen → 必须判为 always_on（R1 无法关闭思考）。
         self.assertEqual(resolve_thinking_off_policy("DeepSeek-R1-Distill-Qwen-7B"),
-                         THINKING_ALWAYS_ON)
+                         (THINKING_ALWAYS_ON, {}))
 
 
 class _ModelInfoStub:

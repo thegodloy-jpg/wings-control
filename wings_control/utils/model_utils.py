@@ -255,47 +255,53 @@ _RERANK_MODELS = {
 # 不同模型族的键名不同（已对齐各家官方/vLLM）：
 #   - Qwen3 系列 / GLM-4.5+ MoE 系列 → enable_thinking
 #   - DeepSeek-V3.1 / V3.2（混合推理）→ thinking
-# 始终推理模型（R1 / QwQ / MiniMax-M2 等）无法切换思考，返回 "always_on" 仅用于告警。
+# 始终推理模型（R1 / QwQ / MiniMax-M2 等）无法切换思考，返回 THINKING_ALWAYS_ON 仅用于告警。
 
+# resolve_thinking_off_policy 的 mode 取值（恒为 str，配合恒为 dict 的 off_kwargs，
+# 使所有分支返回的类型与个数一致，符合 G.CTL.01）。
+THINKING_HYBRID = "hybrid"          # 混合推理：off_kwargs 为关闭思考所需 chat_template_kwargs
+THINKING_ALWAYS_ON = "always_on"    # 始终推理：无法关闭思考，off_kwargs 为空，仅告警
+THINKING_NONE = "none"              # 非思考模型 / 无法识别：不介入，off_kwargs 为空
 # 始终推理（无法关闭思考）模型名片段，优先于混合推理判断。
-THINKING_ALWAYS_ON = "always_on"
 _ALWAYS_ON_THINKING_TOKENS = ("r1", "qwq", "minimax-m2")
 
 
 def resolve_thinking_off_policy(model_name: str):
-    """根据模型名解析「关闭思考」所需的 chat_template_kwargs。
+    """根据模型名解析思考策略，返回 (mode, off_kwargs)。
 
     Returns:
-        dict          : 强制关闭思考需注入/覆盖的 chat_template_kwargs（如 {"enable_thinking": False}）
-        "always_on"   : 该模型始终推理、无法关闭思考（仅告警）
-        None          : 该模型本就不思考，或无法识别 → 无需处理（不改写请求）
+        tuple[str, dict]: 二元组，所有分支类型与个数一致——
+            mode       : THINKING_HYBRID / THINKING_ALWAYS_ON / THINKING_NONE 之一；
+            off_kwargs : 仅 THINKING_HYBRID 时非空，为强制关闭思考需注入/覆盖的
+                         chat_template_kwargs（如 {"enable_thinking": False}）；
+                         THINKING_ALWAYS_ON / THINKING_NONE 时恒为空 dict。
 
     注：取值按模型名子串匹配（忽略大小写、下划线归一为连字符），与各家官方
-    chat 模板键名对齐；R1/蒸馏 R1/QwQ/MiniMax-M2 等优先判定为 always_on。
+    chat 模板键名对齐；R1/蒸馏 R1/QwQ/MiniMax-M2 等优先判定为 THINKING_ALWAYS_ON。
     """
     if not model_name:
-        return None
+        return THINKING_NONE, {}
     name = model_name.lower().replace("_", "-")
 
     # 1) 始终推理模型优先（R1 / R1-Distill / QwQ / MiniMax-M2）
     if any(tok in name for tok in _ALWAYS_ON_THINKING_TOKENS):
-        return THINKING_ALWAYS_ON
+        return THINKING_ALWAYS_ON, {}
 
     # 2) Qwen3 系列（混合推理）：enable_thinking
     if "qwen3" in name:
-        return {"enable_thinking": False}
+        return THINKING_HYBRID, {"enable_thinking": False}
 
     # 3) GLM MoE 混合推理（GLM-4.5/4.6/4.7/5/5.1）：enable_thinking
     #    排除非思考的 glm-4-9b 等（不含 4.5+ 版本号则不匹配）。
     if any(tag in name for tag in ("glm-4.5", "glm-4.6", "glm-4.7", "glm-5")):
-        return {"enable_thinking": False}
+        return THINKING_HYBRID, {"enable_thinking": False}
 
     # 4) DeepSeek V3.1 / V3.2（混合推理）：thinking（注意键名不是 enable_thinking）
     if "deepseek-v3" in name:
-        return {"thinking": False}
+        return THINKING_HYBRID, {"thinking": False}
 
     # 其余（Qwen2.5 / Llama / GLM-4-9B / embedding / rerank 等非思考模型）→ 无需处理
-    return None
+    return THINKING_NONE, {}
 
 
 class ModelIdentifier:
