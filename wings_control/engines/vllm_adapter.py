@@ -412,6 +412,26 @@ def _filter_vllm_ascend_ray_incompatible_env(
     ]
 
 
+def _filter_pd_incompatible_env(commands: List[str]) -> List[str]:
+    """PD 分离（kv_producer/consumer）下剔除与之互斥的环境变量。
+
+    vLLM-Ascend(≥0.20.2) 的 ``enable_balance_scheduling``（由 ``VLLM_ASCEND_BALANCE_SCHEDULING``
+    驱动）仅 PD-mixed / 非 PD 可用；PD 分离下引擎会以 ValidationError 拒绝启动
+    （"enable_balance_scheduling ... not supported in PD-disaggregated mode"）。
+    各模型 env builder（GLM5/Kimi/MiniMax 等）会无条件注入该 flag，故在 env 汇总层
+    按 PD 角色统一剔除——覆盖全模型 / 全启动路径（单机 / 分布式 / PD external-lb）。
+    """
+    if not get_pd_role_env():
+        return commands
+    kept = [c for c in commands
+            if not c.strip().startswith("export VLLM_ASCEND_BALANCE_SCHEDULING=")]
+    if len(kept) != len(commands):
+        logger.info(
+            "[PD] kv_role=producer/consumer 与 enable_balance_scheduling 互斥 → "
+            "已剔除 VLLM_ASCEND_BALANCE_SCHEDULING（否则 vLLM-Ascend≥0.20.2 会 ValidationError）")
+    return kept
+
+
 def _build_vllm_ascend_forced_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     """构建 vllm_ascend 强制生效的通用环境变量。"""
     if engine != "vllm_ascend":
@@ -2850,6 +2870,8 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     cmds.extend(_build_ascend910_9362_env_commands(params, engine))
     cmds = _filter_vllm_ascend_ray_incompatible_env(cmds, params, engine)
     cmds.extend(_build_vllm_ascend_forced_env_commands(params, engine))
+    # PD 分离（kv_producer/consumer）下剔除互斥的 VLLM_ASCEND_BALANCE_SCHEDULING（全模型/全路径）。
+    cmds = _filter_pd_incompatible_env(cmds)
     # 多个 builder（内联 set_vllm_ascend_env.sh / 架构块 / forced 软默认）会重复导出同名变量，
     # 这里收口去重，保证每个变量最终只有一条 export 生效（等价最终值，不动累加型与块内导出）。
     # 借鉴 master af5420d 的 env-export dedup（utils/shell_env_utils.dedupe_env_exports）。
