@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""多 pod 分布式 DP 的 rpc-port / dp-address 一致性兜底回归。
+"""多 pod 分布式 DP 的 rpc-port / dp-address 处理契约回归。
 
-复现根因：平台对每个 D pod 动态分配 VLLM_LLMDD_RPC_PORT（ephemeral 段）时，
-wings 旧逻辑原样透传 → 4 个 pod 端口不一致 → vLLM DP 握手 5 分钟超时
-（"Did not receive response from front-end process within 5 minutes"）。
+背景：多 pod（D 跨 pod）external-lb DP 要求 --data-parallel-rpc-port / --data-parallel-address
+全 pod 一致。该一致性由【上层平台】负责（页面统一下发同一值，且常与 NetworkPolicy/端口放行绑定）。
 
-兜底后：跨 pod（dp_size_local<dp_size）时 ephemeral 端口被强制改为角色固定常量，
-dp-address 被对齐到 NODE_IPS[0]，保证同角色全 pod 派生一致。
+契约：wings 一律【信任并原样透传】平台下发的 VLLM_LLMDD_RPC_PORT / Master_IP，
+不在 wings 侧强改——强改（例如把 ephemeral 端口改成固定常量）会顶掉平台协调好的端口、
+反而打断已放行的连通性。仅当未下发时由下游回退角色固定端口；ephemeral 值只打告警不改写。
 """
 import os
 import sys
@@ -16,9 +16,8 @@ sys.path.insert(0, os.path.join(ROOT, "wings_control"))
 
 from core import config_loader as C  # noqa: E402
 
-# 复现用户真实拓扑：D = 单节点 4 pod，DP8×TP1，local=2（跨 pod）
-D_PODS = ["10.254.233.67", "10.254.224.229", "10.254.224.230", "10.254.224.231"]
-DYN = ["41677", "53929", "47811", "39205"]  # 平台按 pod 动态分配的 ephemeral 端口
+# 真实拓扑：D = 4 pod，DP8×TP1，local=2（跨 pod）
+D_PODS = ["10.254.13.83", "10.254.13.67", "10.254.13.72", "10.254.13.85"]
 
 
 def _clear():
@@ -39,53 +38,67 @@ def _derive(env):
 
 
 def _env_for(idx, rpc, master=None, local="2"):
-    return {
+    e = {
         "PD_ROLE": "D", "PD_DECODE_DP_SIZE": "8", "PD_DECODE_TP_SIZE": "1",
         "PD_PREFILL_DP_SIZE": "2", "PD_PREFILL_TP_SIZE": "1",
         "DP_SIZE_LOCAL": local,
         "Master_IP": master or D_PODS[0],
         "NODE_IPS": ",".join(D_PODS),
         "RANK_IP": D_PODS[idx],
-        "VLLM_LLMDD_RPC_PORT": rpc,
     }
+    if rpc is not None:
+        e["VLLM_LLMDD_RPC_PORT"] = rpc
+    return e
 
 
-def test_multipod_ephemeral_rpc_forced_consistent():
-    """4 个 pod 各拿不同 ephemeral 端口 → 兜底后全部归一到角色固定常量 12777。"""
-    ports = {_derive(_env_for(i, DYN[i]))["rpc_port"] for i in range(4)}
-    assert ports == {"12777"}, ports
+def test_multipod_consistent_ephemeral_preserved():
+    """平台对 4 pod 下发【相同】的 ephemeral 端口（真实修复后场景）→ 原样保留，不改写。"""
+    ports = {_derive(_env_for(i, "46982"))["rpc_port"] for i in range(4)}
+    assert ports == {"46982"}, ports  # 信任平台，不被改成 12777
 
 
-def test_multipod_rank_and_address_consistent():
-    """rank_start 仍按 NODE_IPS 位置派生；dp_address 全 pod 一致 = NODE_IPS[0]。"""
-    rows = [_derive(_env_for(i, DYN[i])) for i in range(4)]
-    assert [r["dp_rank_start"] for r in rows] == [0, 2, 4, 6], rows
-    assert {r["dp_address"] for r in rows} == {"10.254.233.67"}, rows
+def test_multipod_inconsistent_is_passthrough_not_masked():
+    """平台误下发不一致端口 → wings 原样透传（不静默替换）；一致性须由平台保证。"""
+    dyn = ["41677", "53929", "47811", "39205"]
+    ports = [_derive(_env_for(i, dyn[i]))["rpc_port"] for i in range(4)]
+    assert ports == dyn, ports  # 各自原样，wings 不强行归一（避免顶掉网络策略）
 
 
-def test_multipod_fixed_port_honored():
-    """非 ephemeral 的固定端口（平台对全角色一致下发）不被覆盖。"""
+def test_multipod_fixed_port_preserved():
+    """非 ephemeral 固定端口原样保留。"""
     ports = {_derive(_env_for(i, "12321"))["rpc_port"] for i in range(4)}
     assert ports == {"12321"}, ports
 
 
-def test_multipod_address_realigned_to_head():
-    """dp-address 被误设为非 NODE_IPS[0]（如泄漏的某 P pod IP）→ 强制对齐到 head。"""
-    got = _derive(_env_for(2, DYN[2], master="9.9.9.9"))
-    assert got["dp_address"] == "10.254.233.67", got
+def test_multipod_rank_consistent():
+    """rank_start 按 NODE_IPS 位置派生（用 RANK_IP，非 HOST_IP）。"""
+    rows = [_derive(_env_for(i, "46982")) for i in range(4)]
+    assert [r["dp_rank_start"] for r in rows] == [0, 2, 4, 6], rows
 
 
-def test_singlepod_ephemeral_not_touched():
-    """单 pod（local==dp，全 rank 本地）ephemeral 端口仅本地用，不干预。"""
+def test_multipod_address_trusted_not_realigned():
+    """dp_address 信任平台 Master_IP，wings 不强制对齐到 NODE_IPS[0]。"""
+    got = _derive(_env_for(2, "46982", master="9.9.9.9"))
+    assert got["dp_address"] == "9.9.9.9", got  # 原样透传，不改写
+
+
+def test_missing_rpc_port_left_empty_for_downstream_fallback():
+    """未下发 VLLM_LLMDD_RPC_PORT → config_loader 返回空，交由 vllm_adapter 回退角色固定端口。"""
+    got = _derive(_env_for(0, None))
+    assert got["rpc_port"] == "", got
+
+
+def test_singlepod_ephemeral_preserved():
+    """单 pod（local==dp）同样信任 env，原样保留。"""
     env = {
         "PD_ROLE": "D", "PD_DECODE_DP_SIZE": "8", "PD_DECODE_TP_SIZE": "1",
         "PD_PREFILL_DP_SIZE": "2", "PD_PREFILL_TP_SIZE": "1",
-        "DP_SIZE_LOCAL": "8", "Master_IP": "10.254.233.67",
-        "NODE_IPS": "10.254.233.67", "RANK_IP": "10.254.233.67",
-        "VLLM_LLMDD_RPC_PORT": "41677",
+        "DP_SIZE_LOCAL": "8", "Master_IP": "10.254.13.83",
+        "NODE_IPS": "10.254.13.83", "RANK_IP": "10.254.13.83",
+        "VLLM_LLMDD_RPC_PORT": "46982",
     }
     got = _derive(env)
-    assert got["rpc_port"] == "41677", got
+    assert got["rpc_port"] == "46982", got
     assert got["dp_rank_start"] == 0, got
 
 

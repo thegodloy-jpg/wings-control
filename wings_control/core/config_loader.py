@@ -901,10 +901,6 @@ def _get_pd_config(ctx, pd_role):
     return config
 
 
-# DP 协调 RPC 端口的角色固定常量（与 vllm_adapter._build_vllm_pd_external_lb_script 的兜底一致）。
-_PD_RPC_PORT_DEFAULT = {"P": "12890", "D": "12777"}
-
-
 def _is_ephemeral_port(value) -> bool:
     """端口是否落在 Linux 默认 ephemeral 段（32768-60999）。
 
@@ -991,26 +987,16 @@ def _get_pd_external_lb_params():
                     host_ip, node_ips)
         dp_rank_start = node_rank * dp_size_local
 
-    # ── 多 pod 分布式 DP（dp_size_local < dp_size，DP 域跨 pod）的一致性兜底 ──
-    # vLLM 硬要求：跨 pod 的 DP 域全部 rank 必须用相同的 --data-parallel-rpc-port，且 --data-parallel-address
-    # 都指向 rank0（= NODE_IPS[0]）。wings 原本纯透传 env：若平台对每个 pod 动态分配 VLLM_LLMDD_RPC_PORT
-    # （ephemeral 段），各 pod 端口不一致 → 非 head rank 连错端口 → ZMQ 握手静默超时（干等 5 分钟无报错）。
-    # 单 pod（dp_size_local==dp_size，全 rank 本地）端口仅本地用，无需干预。
-    if dp_size_local < dp_size:
-        if not rpc_port or _is_ephemeral_port(rpc_port):
-            forced = _PD_RPC_PORT_DEFAULT.get(role) or (rpc_port or "12777")
-            if rpc_port and rpc_port != forced:
-                logger.warning(
-                    "[PD external-lb] 多 pod 分布式 DP：VLLM_LLMDD_RPC_PORT=%s 落在 ephemeral 段"
-                    "（疑似平台按 pod 动态分配，各 pod 不一致会导致 DP 握手超时）→ 强制改用角色固定端口 %s。"
-                    "如需自定义，请对同角色所有 pod 下发相同的非 ephemeral 端口。", rpc_port, forced)
-            rpc_port = forced
-        head_ip = node_ips[0] if node_ips else ""
-        if head_ip and dp_address != head_ip:
-            logger.warning(
-                "[PD external-lb] 多 pod 分布式 DP：data-parallel-address=%r 与 NODE_IPS[0]=%r 不一致"
-                "（DP 协调端必须是 rank0=NODE_IPS[0]）→ 强制对齐到 %r。", dp_address, head_ip, head_ip)
-            dp_address = head_ip
+    # ── 多 pod 分布式 DP（dp_size_local < dp_size，DP 域跨 pod）的一致性提示（仅告警，不改写）──
+    # vLLM 硬要求：跨 pod 的 DP 域全部 rank 必须用【相同】的 --data-parallel-rpc-port、--data-parallel-address
+    # 都指向 rank0。这两个值由上层平台下发并负责跨 pod 一致（且常与 NetworkPolicy/端口放行绑定），
+    # wings 一律信任、原样透传——若在此强改（如把 ephemeral 端口改成固定常量），会顶掉平台协调好的端口、
+    # 反而打断已放行的连通性。故此处只在值可疑时打告警便于排查；未下发时由下游（vllm_adapter）回退角色固定端口。
+    if dp_size_local < dp_size and rpc_port and _is_ephemeral_port(rpc_port):
+        logger.warning(
+            "[PD external-lb] 多 pod 分布式 DP 的 VLLM_LLMDD_RPC_PORT=%s 落在 ephemeral 段（32768-60999），"
+            "wings 原样使用。务必确认同角色所有 pod 下发了【相同】的该端口，"
+            "否则非 head rank 连错端口会致 DP 握手静默超时。", rpc_port)
 
     return {
         "role": role,
