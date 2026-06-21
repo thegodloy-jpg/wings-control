@@ -1054,6 +1054,15 @@ def _build_pd_external_lb_kv(entry, ext):
     role_extra = (entry.get(role_key) or {}).get("extra_config") or {}
     if role_extra:
         extra.update(role_extra)
+    # 部署级可选规避（不改官方注册表）：仅当本部署显式设 PD_DISABLE_ASCEND_DIRECT 时，从 kv extra 移除
+    # use_ascend_direct，绕开 mooncake ADXL 直传（ascend_direct_transport 连 P 超时 / status 103902，
+    # 见 vllm-ascend#2970）。默认不设 → 官方 ADXL 行为不变；只有设了此 env 的 pod（如你的 1P1D 测试）受影响。
+    if os.getenv("PD_DISABLE_ASCEND_DIRECT", "").strip().lower() in ("1", "true", "yes", "on") \
+            and "use_ascend_direct" in extra:
+        extra.pop("use_ascend_direct", None)
+        logger.warning(
+            "[PD external-lb] PD_DISABLE_ASCEND_DIRECT 生效：已从 kv_connector_extra_config 移除 "
+            "use_ascend_direct（绕开 mooncake ADXL 直传，vllm-ascend#2970）。仅本部署受影响，注册表不变。")
     cfg = {
         "kv_connector": entry["connector"],
         "kv_role": kv_role,

@@ -800,6 +800,11 @@ def _build_pd_role_env_commands(engine: str, current_ip: str, network_interface:
                 "export CLOSE_MATMUL_K_SHIFT=1",
                 f"export VLLM_LLMDD_RPC_PORT={rpc_port}",
                 f"export VLLM_MOONCAKE_BOOTSTRAP_PORT={mooncake_bootstrap_port}",
+                # mooncake/ADXL KV 传输的连接与传输超时（ms）。PD 跨 pod 拉 KV 在慢链路/冷启动时，
+                # 引擎默认 ~10000(10s) 易触发 ascend_direct_transport connect timeout + status 103902
+                # （vllm-ascend#2970）。这里给 PD **软默认** 120000；平台/部署已设则其值优先（可覆盖、可调）。
+                "export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-120000}",
+                "export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-120000}",
                 f"export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:{os.getenv('NPU_MAX_SPLIT_SIZE_MB', '256')}",
                 # mooncake-transfer-engine 的 Ascend 传输后端 (ascend_transport.so)
                 # 安装在 /usr/local/lib，需追加到 LD_LIBRARY_PATH 以便运行时加载
