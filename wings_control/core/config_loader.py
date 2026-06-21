@@ -901,6 +901,22 @@ def _get_pd_config(ctx, pd_role):
     return config
 
 
+# DP 协调 RPC 端口的角色固定常量（与 vllm_adapter._build_vllm_pd_external_lb_script 的兜底一致）。
+_PD_RPC_PORT_DEFAULT = {"P": "12890", "D": "12777"}
+
+
+def _is_ephemeral_port(value) -> bool:
+    """端口是否落在 Linux 默认 ephemeral 段（32768-60999）。
+
+    平台按 pod 动态分配的端口通常落此区间；多 pod 分布式 DP 下各 pod 取值会不一致，
+    导致非 head rank 连错协调端口 → vLLM DP 握手静默超时。
+    """
+    try:
+        return 32768 <= int(value) <= 60999
+    except (ValueError, TypeError):
+        return False
+
+
 def _get_pd_external_lb_params():
     """读取上层下发的 external-lb DP 参数；未提供或 dp_size<=1 时返回 None。
 
@@ -951,12 +967,14 @@ def _get_pd_external_lb_params():
     dp_address = _first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS") or (get_master_ip() or "")
     rpc_port = _first_env("VLLM_LLMDD_RPC_PORT", "PD_DP_RPC_PORT") or ""
 
+    # NODE_IPS（角色域全部 pod IP，顺序即 rank）—— rank 派生与多 pod 一致性兜底共用。
+    node_ips = [ip.strip() for ip in (get_node_ips() or "").split(",") if ip.strip()]
+
     # dp_rank_start：优先显式 PD_DP_RANK_START，否则由本 pod 唯一 IP 在角色域 NODE_IPS 的位置派生。
     explicit_start = _first_env("PD_DP_RANK_START")
     if explicit_start is not None:
         dp_rank_start = _int("0", "PD_DP_RANK_START")
     else:
-        node_ips = [ip.strip() for ip in (get_node_ips() or "").split(",") if ip.strip()]
         # 必须用 RANK_IP（本 pod 唯一 IP，get_local_ip 亦读它），不能用 HOST_IP：
         # 同宿主机多 pod 共享同一 HOST_IP（K8s status.hostIP=节点物理 IP），用它派生会让
         # 多个 pod 算出同一 dp_rank_start → 多节点 rank 撞车（rank0 去 bind 别人 IP 的 rpc 端口报
@@ -972,6 +990,27 @@ def _get_pd_external_lb_params():
                     "多节点将 rank 撞车，DP 域无法组建。请确保 RANK_IP 与 NODE_IPS 中某项逐字一致。",
                     host_ip, node_ips)
         dp_rank_start = node_rank * dp_size_local
+
+    # ── 多 pod 分布式 DP（dp_size_local < dp_size，DP 域跨 pod）的一致性兜底 ──
+    # vLLM 硬要求：跨 pod 的 DP 域全部 rank 必须用相同的 --data-parallel-rpc-port，且 --data-parallel-address
+    # 都指向 rank0（= NODE_IPS[0]）。wings 原本纯透传 env：若平台对每个 pod 动态分配 VLLM_LLMDD_RPC_PORT
+    # （ephemeral 段），各 pod 端口不一致 → 非 head rank 连错端口 → ZMQ 握手静默超时（干等 5 分钟无报错）。
+    # 单 pod（dp_size_local==dp_size，全 rank 本地）端口仅本地用，无需干预。
+    if dp_size_local < dp_size:
+        if not rpc_port or _is_ephemeral_port(rpc_port):
+            forced = _PD_RPC_PORT_DEFAULT.get(role) or (rpc_port or "12777")
+            if rpc_port and rpc_port != forced:
+                logger.warning(
+                    "[PD external-lb] 多 pod 分布式 DP：VLLM_LLMDD_RPC_PORT=%s 落在 ephemeral 段"
+                    "（疑似平台按 pod 动态分配，各 pod 不一致会导致 DP 握手超时）→ 强制改用角色固定端口 %s。"
+                    "如需自定义，请对同角色所有 pod 下发相同的非 ephemeral 端口。", rpc_port, forced)
+            rpc_port = forced
+        head_ip = node_ips[0] if node_ips else ""
+        if head_ip and dp_address != head_ip:
+            logger.warning(
+                "[PD external-lb] 多 pod 分布式 DP：data-parallel-address=%r 与 NODE_IPS[0]=%r 不一致"
+                "（DP 协调端必须是 rank0=NODE_IPS[0]）→ 强制对齐到 %r。", dp_address, head_ip, head_ip)
+            dp_address = head_ip
 
     return {
         "role": role,
