@@ -346,6 +346,26 @@ PD_SCENARIOS = {
         "decode": {"dp": 16, "tp": 4, "local": 4,
                    "nodes": ["7.0.1.1", "7.0.1.2", "7.0.1.3", "7.0.1.4"], "rpc": "10523"},
     },
+    "glm52-a2": {
+        "description": "GLM-5.2 PD 分离 8×A2 4P4D (P:dp4×tp8 local1 / D:dp8×tp4 local2)",
+        "architecture": "GlmMoeDsaForCausalLM",
+        "model_name": "glm-5.2-chat",
+        "platform": "a2",
+        "prefill": {"dp": 4, "tp": 8, "local": 1,
+                    "nodes": ["7.0.0.1", "7.0.0.2", "7.0.0.3", "7.0.0.4"], "rpc": "12890"},
+        "decode": {"dp": 8, "tp": 4, "local": 2,
+                   "nodes": ["7.0.1.1", "7.0.1.2", "7.0.1.3", "7.0.1.4"], "rpc": "12777"},
+    },
+    "glm52-nosig": {
+        "description": "GLM-5.2 PD 8×A2 但【不设平台信号】→ 应靠 default_platform=a2 退到 A2",
+        "architecture": "GlmMoeDsaForCausalLM",
+        "model_name": "glm-5.2-chat",
+        "platform": "",
+        "prefill": {"dp": 4, "tp": 8, "local": 1,
+                    "nodes": ["7.0.0.1", "7.0.0.2", "7.0.0.3", "7.0.0.4"], "rpc": "12890"},
+        "decode": {"dp": 8, "tp": 4, "local": 2,
+                   "nodes": ["7.0.1.1", "7.0.1.2", "7.0.1.3", "7.0.1.4"], "rpc": "12777"},
+    },
     "v4flash": {
         "description": "DeepSeek-V4-Flash A3 PD 分离 (P:dp4×tp4 / D:dp16×tp1)",
         "architecture": "DeepseekV4ForCausalLM",
@@ -390,7 +410,7 @@ def run_pd_dry_run(name: str, scenario: dict) -> None:
             # —— ② 平台/硬件（无 CLI 等价，真机由 K8s/镜像注入）——
             # ⚠️ WINGS_ASCEND_PLATFORM 必填：缺省时 _resolve_deepseek_v4_flash_platform 回退 a2（非 a3！），
             #    A3 部署须显式 a3，或靠硬件探测（/shared-volume/hardware_info.json 含 910c / ASCEND_A3_ENABLE=1）。
-            "WINGS_DEVICE": "ascend", "WINGS_ASCEND_PLATFORM": "a3",
+            "WINGS_DEVICE": "ascend", "WINGS_ASCEND_PLATFORM": scenario.get("platform", "a3"),
             # DEVICE_COUNT：hardware_detect/device_utils 直读取硬件 count（--device-count 另喂 launcher）
             "DEVICE_COUNT": str(topo["local"] * topo["tp"]),
             # RANK_IP：上层(MaaS)下发的本 pod 唯一 IP，是标识本机的唯一真相源。

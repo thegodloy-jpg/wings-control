@@ -1108,8 +1108,17 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
     entry = copy.deepcopy(entry)
     # L4 平台 overlay：基条目放平台无关值，platform_overrides[<plat>] 深合并覆盖（A2/A3 等）。
     # 无 platform_overrides 的条目或平台解析为空 → 不动，退化为基条目（向后兼容）。
+    # default_platform（条目级，opt-in）：声明「无显式平台信号时按哪个平台」。仅本条目生效，
+    # 不动全局 _resolve_ascend_platform —— 其「空串→不 overlay→基条目」语义对 DeepseekV4(空→基=a3)
+    # 等条目必须保持。GlmMoeDsa 设 default_platform=a2：A2 部署即使漏设 WINGS_ASCEND_PLATFORM，
+    # 也按 a2 overlay 而非静默退成基条目(A3)；显式 a3 信号(-a3/ASCEND_A3_ENABLE/WINGS_ASCEND_PLATFORM=a3)
+    # 仍解析为 'a3' → 不命中 a2 overlay → 走基条目(A3 口径)。无 default_platform 的条目行为不变。
     plat = _resolve_ascend_platform()
     overrides = entry.pop("platform_overrides", None)
+    default_plat = entry.pop("default_platform", None)
+    if not plat and default_plat:
+        plat = default_plat
+        logger.info("[PD external-lb] 无显式平台信号 → 用条目默认平台 '%s' (arch=%s)", plat, arch)
     if overrides and plat and plat in overrides:
         entry = _merge_configs(entry, overrides[plat])
         logger.info("[PD external-lb] applied platform_overrides[%s] for arch=%s", plat, arch)
