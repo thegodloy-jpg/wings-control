@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """多 pod 分布式 DP 的 rpc-port / dp-address 处理契约回归。
 
-背景：多 pod（D 跨 pod）external-lb DP 要求 --data-parallel-rpc-port / --data-parallel-address
-全 pod 一致。该一致性由【上层平台】负责（页面统一下发同一值，且常与 NetworkPolicy/端口放行绑定）。
+契约（2026-06 变更）：--data-parallel-rpc-port 按角色【硬编码】（P=12890 / D=12777），
+config_loader 刻意【不读】VLLM_LLMDD_RPC_PORT / PD_DP_RPC_PORT。理由：同角色每个 pod
+各自算出同一常量 → DP 域 rpc-port 跨 pod 天然一致，无需平台协调。
+部署侧须放行这两个固定端口（而非平台动态分配的 ephemeral 口）。
 
-契约：wings 一律【信任并原样透传】平台下发的 VLLM_LLMDD_RPC_PORT / Master_IP，
-不在 wings 侧强改——强改（例如把 ephemeral 端口改成固定常量）会顶掉平台协调好的端口、
-反而打断已放行的连通性。仅当未下发时由下游回退角色固定端口；ephemeral 值只打告警不改写。
+注：--data-parallel-address 仍【信任并原样透传】平台下发的 Master_IP（指向 DP 域 rank0），
+不在 wings 侧改写——它常与 NetworkPolicy/端口放行绑定。
 """
 import os
 import sys
@@ -51,23 +52,42 @@ def _env_for(idx, rpc, master=None, local="2"):
     return e
 
 
-def test_multipod_consistent_ephemeral_preserved():
-    """平台对 4 pod 下发【相同】的 ephemeral 端口（真实修复后场景）→ 原样保留，不改写。"""
+def test_rpc_port_hardcoded_ignores_ephemeral_env():
+    """平台下发 ephemeral 端口 → 被忽略，D 恒为固定常量 12777。"""
     ports = {_derive(_env_for(i, "46982"))["rpc_port"] for i in range(4)}
-    assert ports == {"46982"}, ports  # 信任平台，不被改成 12777
+    assert ports == {"12777"}, ports  # env 不参与，硬编码常量
 
 
-def test_multipod_inconsistent_is_passthrough_not_masked():
-    """平台误下发不一致端口 → wings 原样透传（不静默替换）；一致性须由平台保证。"""
+def test_rpc_port_hardcoded_ignores_inconsistent_env():
+    """平台误下发不一致端口 → 全部忽略，统一为硬编码常量（一致性由常量保证）。"""
     dyn = ["41677", "53929", "47811", "39205"]
-    ports = [_derive(_env_for(i, dyn[i]))["rpc_port"] for i in range(4)]
-    assert ports == dyn, ports  # 各自原样，wings 不强行归一（避免顶掉网络策略）
+    ports = {_derive(_env_for(i, dyn[i]))["rpc_port"] for i in range(4)}
+    assert ports == {"12777"}, ports
 
 
-def test_multipod_fixed_port_preserved():
-    """非 ephemeral 固定端口原样保留。"""
+def test_rpc_port_hardcoded_ignores_fixed_env():
+    """即使平台下发固定端口也忽略，统一用 wings 硬编码常量。"""
     ports = {_derive(_env_for(i, "12321"))["rpc_port"] for i in range(4)}
-    assert ports == {"12321"}, ports
+    assert ports == {"12777"}, ports
+
+
+def test_rpc_port_hardcoded_when_env_missing():
+    """未下发任何 rpc env → D 恒为 12777。"""
+    got = _derive(_env_for(0, None))
+    assert got["rpc_port"] == "12777", got
+
+
+def test_rpc_port_role_prefill_is_distinct():
+    """P 角色硬编码为 12890，与 D（12777）不同 → 同机 P/D 不 bind 冲突。"""
+    env = {
+        "PD_ROLE": "P", "PD_PREFILL_DP_SIZE": "2", "PD_PREFILL_TP_SIZE": "1",
+        "PD_DECODE_DP_SIZE": "8", "PD_DECODE_TP_SIZE": "1",
+        "DP_SIZE_LOCAL": "2", "Master_IP": "10.254.13.83",
+        "NODE_IPS": "10.254.13.83,10.254.13.67", "RANK_IP": "10.254.13.83",
+        "VLLM_LLMDD_RPC_PORT": "46982",
+    }
+    got = _derive(env)
+    assert got["rpc_port"] == "12890", got
 
 
 def test_multipod_rank_consistent():
@@ -82,14 +102,8 @@ def test_multipod_address_trusted_not_realigned():
     assert got["dp_address"] == "9.9.9.9", got  # 原样透传，不改写
 
 
-def test_missing_rpc_port_left_empty_for_downstream_fallback():
-    """未下发 VLLM_LLMDD_RPC_PORT → config_loader 返回空，交由 vllm_adapter 回退角色固定端口。"""
-    got = _derive(_env_for(0, None))
-    assert got["rpc_port"] == "", got
-
-
-def test_singlepod_ephemeral_preserved():
-    """单 pod（local==dp）同样信任 env，原样保留。"""
+def test_singlepod_rpc_port_hardcoded():
+    """单 pod（local==dp）同样忽略 env，D 恒为 12777。"""
     env = {
         "PD_ROLE": "D", "PD_DECODE_DP_SIZE": "8", "PD_DECODE_TP_SIZE": "1",
         "PD_PREFILL_DP_SIZE": "2", "PD_PREFILL_TP_SIZE": "1",
@@ -98,7 +112,7 @@ def test_singlepod_ephemeral_preserved():
         "VLLM_LLMDD_RPC_PORT": "46982",
     }
     got = _derive(env)
-    assert got["rpc_port"] == "46982", got
+    assert got["rpc_port"] == "12777", got
     assert got["dp_rank_start"] == 0, got
 
 

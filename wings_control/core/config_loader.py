@@ -901,18 +901,6 @@ def _get_pd_config(ctx, pd_role):
     return config
 
 
-def _is_ephemeral_port(value) -> bool:
-    """端口是否落在 Linux 默认 ephemeral 段（32768-60999）。
-
-    平台按 pod 动态分配的端口通常落此区间；多 pod 分布式 DP 下各 pod 取值会不一致，
-    导致非 head rank 连错协调端口 → vLLM DP 握手静默超时。
-    """
-    try:
-        return 32768 <= int(value) <= 60999
-    except (ValueError, TypeError):
-        return False
-
-
 def _get_pd_external_lb_params():
     """读取上层下发的 external-lb DP 参数；未提供或 dp_size<=1 时返回 None。
 
@@ -921,10 +909,14 @@ def _get_pd_external_lb_params():
     上层契约（角色域，P/D 各自独立）：
       DP_SIZE / TP_SIZE / DP_SIZE_LOCAL：本角色全局 DP / 单实例 TP / 本节点 fork 数；
       Master_IP：本角色 DP 域 head（= --data-parallel-address）；
-      VLLM_LLMDD_RPC_PORT：DP RPC 端口（角色内一致）；
       NODE_IPS：本角色全部节点 IP（逗号分隔）；HOST_IP：本节点 IP。
     dp_rank_start 不由上层下发，而是 ``HOST_IP 在 NODE_IPS 中的位置 × DP_SIZE_LOCAL``。
     旧名 PD_* 作为兜底（PD_DP_SIZE / PD_TP_SIZE / ... / PD_DP_RANK_START）。
+
+    rpc_port（--data-parallel-rpc-port）按角色【硬编码】：P=12890 / D=12777，
+    刻意不读 VLLM_LLMDD_RPC_PORT / PD_DP_RPC_PORT。同角色每个 pod 各自算出同一常量
+    → DP 域 rpc-port 天然一致，无需平台协调。注意：网络策略须放行这两个固定端口
+    （而非平台动态分配的 ephemeral 口）。P/D 端口不同，同机部署也不会 bind 冲突。
     """
     role = get_pd_role_env()
     if not role:
@@ -961,7 +953,8 @@ def _get_pd_external_lb_params():
     tp_size = _int("1", "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
     dp_size_local = _int("1", "DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
     dp_address = _first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS") or (get_master_ip() or "")
-    rpc_port = _first_env("VLLM_LLMDD_RPC_PORT", "PD_DP_RPC_PORT") or ""
+    # rpc-port 按角色硬编码，刻意不读 env：同角色每 pod 各算同一常量 → DP 域天然一致。
+    rpc_port = "12890" if role == "P" else "12777"
 
     # NODE_IPS（角色域全部 pod IP，顺序即 rank）—— rank 派生与多 pod 一致性兜底共用。
     node_ips = [ip.strip() for ip in (get_node_ips() or "").split(",") if ip.strip()]
@@ -987,16 +980,8 @@ def _get_pd_external_lb_params():
                     host_ip, node_ips)
         dp_rank_start = node_rank * dp_size_local
 
-    # ── 多 pod 分布式 DP（dp_size_local < dp_size，DP 域跨 pod）的一致性提示（仅告警，不改写）──
-    # vLLM 硬要求：跨 pod 的 DP 域全部 rank 必须用【相同】的 --data-parallel-rpc-port、--data-parallel-address
-    # 都指向 rank0。这两个值由上层平台下发并负责跨 pod 一致（且常与 NetworkPolicy/端口放行绑定），
-    # wings 一律信任、原样透传——若在此强改（如把 ephemeral 端口改成固定常量），会顶掉平台协调好的端口、
-    # 反而打断已放行的连通性。故此处只在值可疑时打告警便于排查；未下发时由下游（vllm_adapter）回退角色固定端口。
-    if dp_size_local < dp_size and rpc_port and _is_ephemeral_port(rpc_port):
-        logger.warning(
-            "[PD external-lb] 多 pod 分布式 DP 的 VLLM_LLMDD_RPC_PORT=%s 落在 ephemeral 段（32768-60999），"
-            "wings 原样使用。务必确认同角色所有 pod 下发了【相同】的该端口，"
-            "否则非 head rank 连错端口会致 DP 握手静默超时。", rpc_port)
+    # 注：--data-parallel-rpc-port 现按角色硬编码（见上），不再读 env，故无需 ephemeral 一致性告警：
+    # 同角色每 pod 各自算出同一常量，跨 pod 天然一致。--data-parallel-address 仍信任平台 Master_IP 透传。
 
     return {
         "role": role,

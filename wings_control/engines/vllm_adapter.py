@@ -2924,7 +2924,8 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     start = pd_ext["dp_rank_start"]
     dp_size = pd_ext["dp_size"]
     addr = pd_ext.get("dp_address", "")
-    # rpc 端口来自上层契约 VLLM_LLMDD_RPC_PORT（pd_ext.rpc_port）；缺省按角色给死值
+    # --data-parallel-rpc-port 按角色硬编码（config_loader 已置 pd_ext.rpc_port=12890/12777，
+    # 刻意不读 env）；此处 or 仅作防御性兜底，常量须与 config_loader 保持一致。
     rpc = pd_ext.get("rpc_port") or ("12890" if pd_ext.get("role") == "P" else "12777")
 
     # 端口基址：优先取 base cmd 里的 --port，否则回退 ENGINE_PORT
