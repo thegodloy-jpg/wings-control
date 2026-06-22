@@ -157,6 +157,44 @@ SCENARIOS = {
             "quantization_config": {"quant_method": "ascend"},
         },
     },
+    "glm52-a3-16": {
+        "description": "GLM-5.2(复杂名) + 910C(A3 via engine-version) 单机16卡 (验证 is_glm52 子串检测/num=3/保留 additional_config/MLAPO)",
+        "architecture": "GlmMoeDsaForCausalLM",
+        "model_name": "GLM-5.2-355B-A3B-W8A8-Chat",
+        "engine": "vllm_ascend",
+        "device_count": 16,
+        "nnodes": 1,
+        "distributed": False,
+        "distributed_executor_backend": "dp_deployment",
+        "head_node_addr": "127.0.0.1",
+        "node_ips": "192.168.1.100",
+        "enable_speculative_decode": True,
+        "enable_sparse": False,
+        "platform": "",                  # 不用 WINGS_ASCEND_PLATFORM
+        "engine_version": "0.21.0-a3",   # ← 芯片(A3/910C)由 engine-version 后缀确定
+        "config_json_extra": {
+            "quantization_config": {"quant_method": "ascend"},
+        },
+    },
+    "glm52-a3-dual": {
+        "description": "GLM-5.2(复杂名) + 910C(A3 via engine-version) 双机32卡 dp_deployment (验证 num=3/A3双机保留 additional_config/EP/prefix/拓扑)",
+        "architecture": "GlmMoeDsaForCausalLM",
+        "model_name": "GLM-5.2-355B-A3B-W8A8-Chat",
+        "engine": "vllm_ascend",
+        "device_count": 16,
+        "nnodes": 2,
+        "distributed": True,
+        "distributed_executor_backend": "dp_deployment",
+        "head_node_addr": "192.168.1.100",
+        "node_ips": "192.168.1.100,192.168.1.101",
+        "enable_speculative_decode": True,
+        "enable_sparse": False,
+        "platform": "",                  # 不用 WINGS_ASCEND_PLATFORM
+        "engine_version": "0.21.0-a3",   # ← 芯片(A3/910C)由 engine-version 后缀确定
+        "config_json_extra": {
+            "quantization_config": {"quant_method": "ascend"},
+        },
+    },
     "v4pro-a3-dual": {
         "description": "DeepSeek-V4-Pro + 910C(A3) 双机32卡 dp_deployment (DP=2)",
         "architecture": "DeepseekV4ForCausalLM",
@@ -361,8 +399,10 @@ def setup_env(scenario: dict, model_dir: str) -> None:
         "SHARED_VOLUME_PATH": shared_vol,
         # 硬件设备类型（决定加载 ascend_default.json 还是 nvidia_default.json）
         "WINGS_DEVICE": device_type,
-        # 平台标识（A2/A3 细分）
+        # 平台标识（A2/A3 细分）。GLM-5.2 场景留空，改由 ENGINE_VERSION 后缀决定芯片。
         "WINGS_ASCEND_PLATFORM": scenario.get("platform", ""),
+        # 芯片(A2/A3)亦可由 engine-version 后缀确定（"-a3" → A3/910C）；platform 为空时生效。
+        "ENGINE_VERSION": scenario.get("engine_version", ""),
     }
     # KV 卸载容量（每卡 GB，V4-Flash 乘本节点卡数；仅在开启卸载时注入）
     if scenario.get("enable_kv_offload") and scenario.get("lmcache_max_local_cpu_size"):

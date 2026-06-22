@@ -118,6 +118,50 @@ def is_glm51_ascend_kvsparse_tmp_scope(model_info: Any, engine: Any,
         return False
     return is_glm_moe_dsa_glm51(model_info, model_name=model_name, model_path=model_path)
 
+
+# ── GLM-5.2 识别（架构同 GlmMoeDsaForCausalLM，与 GLM-5/5.1 靠名称/路径区分）──
+# GLM-5 / GLM-5.1 / GLM-5.2 的 config.json architectures[0] 同为 GlmMoeDsaForCausalLM，
+# 架构维度无分辨力。GLM-5.2 在 wings 上需与 GLM-5/5.1 反向处理（MTP num=3、A3 双机保留
+# additional_config），故用与 is_glm51_model 同范式、互斥的名称标识切出：
+#   5.2 标识 {glm-5.2, glm5.2, glm_5.2, glm 5.2, glm-52, glm52} 与
+#   5.1 标识 {glm-5.1, ..., glm-51, glm51} 不相交，亦不命中 GLM-5.0 基座（不含 5.2/52）。
+_GLM52_NAME_MARKERS = (
+    "glm-5.2",
+    "glm5.2",
+    "glm_5.2",
+    "glm 5.2",
+    "glm-52",
+    "glm52",
+)
+
+
+def _contains_glm52_marker(value: Any) -> bool:
+    """Return True when a free-form metadata value clearly names GLM-5.2."""
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    if not text:
+        return False
+    return any(marker in text for marker in _GLM52_NAME_MARKERS)
+
+
+def is_glm52_model(model_name: Any = None, model_path: Any = None,
+                   config: Optional[dict] = None) -> bool:
+    """Best-effort GLM-5.2 variant detection from stable metadata.
+
+    与 :func:`is_glm51_model` 同范式：先看 ``model_name`` / ``model_path``，再看
+    ``config.json`` 常见名字段（``_name_or_path`` 等）。标识集与 GLM-5.1 严格互斥，
+    且不会误命中 GLM-5.0 基座。
+    """
+    if _contains_glm52_marker(model_name) or _contains_glm52_marker(model_path):
+        return True
+    if isinstance(config, dict):
+        for key in _MODEL_NAME_CONFIG_KEYS:
+            if _contains_glm52_marker(config.get(key)):
+                return True
+    return False
+
+
 #
 _LLM_MODELS = {
     "DeepseekV3ForCausalLM": [
@@ -168,7 +212,10 @@ _LLM_MODELS = {
         "GLM-5-w4a8",
         "GLM-5.1",
         "GLM-5.1-w8a8",
-        "GLM-5.1-FP8"
+        "GLM-5.1-FP8",
+        "GLM-5.2",
+        "GLM-5.2-w8a8",
+        "GLM-5.2-FP8"
         ],
     "Glm4MoeForCausalLM": [
         "GLM-4.7",

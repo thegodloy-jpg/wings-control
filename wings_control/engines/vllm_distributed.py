@@ -9,7 +9,7 @@ import re
 import shlex
 from typing import Dict, Any, List
 
-from utils.model_utils import ModelIdentifier
+from utils.model_utils import ModelIdentifier, is_glm52_model
 from utils.vllm_helpers import (
     _strip_cli_flag, _safe_int, DistScriptCtx, DpDeploymentTopology,
     _transform_dp_cmd, _SH_VLLM_HOST, _SH_IF_DETECT,
@@ -202,6 +202,9 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
     vllm_adapter = _import_vllm_adapter()
     dp_arch = vllm_adapter.get_deepseek_ascend_dp_model_architecture(params)
     is_glm5_dp = dp_arch == "GlmMoeDsaForCausalLM"
+    # GLM-5.2 双机仅对齐 BALANCE_SCHEDULING=0 / +FLASHCOMM1=1（HCCL_BUFFSIZE 维持 1024，
+    # 不按模型硬编码——由平台 HCCL_BUFFSIZE env 覆盖）；GLM-5/5.1 维持 BALANCE=1 / 无 FLASHCOMM1。
+    is_glm52_dp = is_glm5_dp and is_glm52_model(params.get("model_name"), params.get("model_path"))
     is_v4_pro_dp = vllm_adapter.is_deepseek_v4_pro_adapted_scope(params)
     if is_glm5_dp:
         omp_default, buffsize_default, connect_timeout_default = "1", "1024", "1800"
@@ -235,7 +238,10 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
         # RoCE 互联场景不注入 HCCL_OP_EXPANSION_MODE=AIV
         if not (params.get("distributed") and vllm_adapter.is_roce_distributed()):
             env_commands.append("export HCCL_OP_EXPANSION_MODE=AIV")
-        env_commands.append("export VLLM_ASCEND_BALANCE_SCHEDULING=1")
+        env_commands.append(
+            f"export VLLM_ASCEND_BALANCE_SCHEDULING={'0' if is_glm52_dp else '1'}")
+        if is_glm52_dp:
+            env_commands.append("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1")
     if vllm_adapter.is_deepseek_ascend_dp_deployment(params):
         env_commands.append(f"export VLLM_ENGINE_READY_TIMEOUT_S={os.getenv('VLLM_ENGINE_READY_TIMEOUT_S', '7200')}")
     return env_commands

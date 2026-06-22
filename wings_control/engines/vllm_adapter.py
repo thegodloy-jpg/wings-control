@@ -27,7 +27,7 @@ import yaml
 
 from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8,
                                INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51,
-                               is_glm51_ascend_kvsparse_tmp_scope)
+                               is_glm51_ascend_kvsparse_tmp_scope, is_glm52_model)
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env
@@ -1757,6 +1757,15 @@ def _apply_generic_deepseek_ascend_dp_defaults(
     model_architecture = _get_deepseek_ascend_dp_model_architecture(params)
     device_count = _safe_int(params.get("device_count"))
     default_tp = _default_deepseek_ascend_dp_tensor_parallel_size(model_architecture or "", device_count)
+    # [GLM-5.2] 单机(nnodes==1)按官方 recipe 跑 DP=2 → TP=device_count//2（16卡 → TP8/DP2）；
+    # 双机维持每节点 TP=device_count（每节点 1 个 DP replica，TP16），由
+    # _resolve_dp_deployment_topology 推 DP-local=1/DP=2。按 is_glm52 子串标识，复杂名亦稳。
+    if (model_architecture == "GlmMoeDsaForCausalLM"
+            and is_glm52_model(params.get("model_name"), params.get("model_path"))
+            and (_safe_int(params.get("nnodes")) or 1) == 1
+            and device_count and device_count % 2 == 0):
+        default_tp = device_count // 2
+        _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", 2)
     if default_tp and "tensor_parallel_size" not in explicit_keys:
         engine_config["tensor_parallel_size"] = default_tp
 
@@ -1822,9 +1831,11 @@ def _apply_glm5_dsa_distributed_fixups(
         engine_config.pop("no_enable_prefix_caching", None)
         engine_config["enable_prefix_caching"] = True
 
-    # 仅 A3（910C）双机移除 additional_config
+    # 仅 A3（910C）双机移除 additional_config（GLM-5.1 规避全图 decode replay MTE 越界）。
+    # GLM-5.2 已稳定，豁免剥除——保留 fuse_muls_add/multistream/enable_npugraph_ex 三键图优化。
     if "additional_config" not in explicit_keys:
-        if _resolve_deepseek_v4_flash_platform(params) == "a3":
+        if (_resolve_deepseek_v4_flash_platform(params) == "a3"
+                and not is_glm52_model(params.get("model_name"), params.get("model_path"))):
             engine_config.pop("additional_config", None)
 
 
@@ -2227,6 +2238,24 @@ def _apply_glm5_ascend_engine_defaults(
     logger.info(
         "[GLM-5/5.1 Ascend] ensure additional_config defaults applied",
     )
+
+    # [GLM-5.2] async_scheduling + enable_expert_parallel 必产（官方单/双机命令均有）。
+    # 用代码 gate（is_glm52 子串标识）而非仅靠模板精确名命名组，确保复杂模型名
+    # （不命中 GLM-5.2-w8a8 精确键）也稳产；提前 return，不进入下面仅对 GLM-5.1
+    # 的 EP 强制关闭分支（5.2 与 5.1 标识互斥，本不会误入，return 仅为显式收口）。
+    if is_glm52_model(params.get("model_name"), params.get("model_path")):
+        _set_if_not_explicit(engine_config, explicit_keys, "async_scheduling", True)
+        _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
+        # 单机(nnodes==1) 官方 recipe：全局 DP=2 → TP=device_count//2（16卡→TP8/DP2）。
+        # 放此处覆盖**所有 backend**（含非 dp_deployment / 页面未下发 TP 的路径），
+        # 不依赖 generic DP；双机(nnodes>1)不动，由 _resolve_dp_deployment_topology 推 TP16/DP-local1。
+        if (_safe_int(params.get("nnodes")) or 1) == 1:
+            _dc = _safe_int(params.get("device_count"))
+            if _dc and _dc % 2 == 0:
+                _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", _dc // 2)
+                _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", 2)
+        logger.info("[GLM-5.2 Ascend] async_scheduling + EP (+单机 DP=2) ensured")
+        return
 
     # EP 强制关闭：范围与 KV 稀疏 force-on 严格一致（仅 GLM-5.1，覆盖
     # 910B/910C × 单机/双机 四象限）。GLM-5.0（非 5.1）的 GlmMoeDsa 走
@@ -2696,8 +2725,14 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         # DeepSeek-V4-Pro / V4-Flash / GLM-5/5.1 官方推荐 num=1；默认不启用，只有
         # enable_speculative_decode=True 时由 launcher 合成。
         # 其余 MTP（GLM-4.7 / 通用 DeepSeek-V3）保持 num=3。
-        if (_is_deepseek_v4_pro_params(params) or _is_deepseek_v4_flash_params(params)
-                or model_info.model_architecture == "GlmMoeDsaForCausalLM"):
+        # GLM-5.2 与 GLM-5/5.1 同架构(GlmMoeDsa) 但官方推荐 num=3，按名称标识切出，
+        # 不落入上面的 num=1 分支（GLM-5/5.1 维持 num=1 不回归）。
+        # 仅 vllm_ascend 生效：NV 的 GLM-5.2 是另一套（method=mtp/num=5），不应误产 num=3。
+        glm52_ascend = engine == "vllm_ascend" and is_glm52_model(
+            params.get("model_name"), params.get("model_path"))
+        if (not glm52_ascend
+                and (_is_deepseek_v4_pro_params(params) or _is_deepseek_v4_flash_params(params)
+                     or model_info.model_architecture == "GlmMoeDsaForCausalLM")):
             speculative_config_temp.append('"num_speculative_tokens": 1')
         else:
             speculative_config_temp.append('"num_speculative_tokens": 3')
