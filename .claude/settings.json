@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\adapt-trigger.ps1"
+            ],
+            "timeout": 15,
+            "statusMessage": "Checking model-adapt scenario..."
+          }
+        ]
+      }
+    ]
+  }
+}
