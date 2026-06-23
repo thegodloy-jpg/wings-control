@@ -162,6 +162,28 @@ def is_glm52_model(model_name: Any = None, model_path: Any = None,
     return False
 
 
+def is_glm52_single_node_even(source: Optional[dict]) -> bool:
+    """GLM-5.2 + vllm_ascend + 单机(nnodes==1) + 偶数卡 的统一判定（共享真相源）。
+
+    config_loader._set_parallelism_params(用 ctx)与
+    vllm_adapter._apply_generic_deepseek_ascend_dp_defaults(用 params)共用此判定，
+    确保「config_loader 让位 ⇔ adapter 接管 TP=device_count//2 + DP2」的条件逐字一致，
+    不会因两处各写一份布尔链而漂移。``source`` 须含 engine / nnodes / device_count /
+    model_name / model_path 键（ctx 与 params 同构）。
+    """
+    src = source or {}
+    if src.get("engine") != "vllm_ascend":
+        return False
+    try:
+        nnodes = int(src.get("nnodes") or 1)
+        device_count = int(src.get("device_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if nnodes != 1 or device_count <= 0 or device_count % 2 != 0:
+        return False
+    return is_glm52_model(src.get("model_name"), src.get("model_path"))
+
+
 #
 _LLM_MODELS = {
     "DeepseekV3ForCausalLM": [

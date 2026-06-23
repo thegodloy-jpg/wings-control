@@ -40,7 +40,7 @@ from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
 from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
                                is_deepseek_series_modelslim_quant, is_qwen3_series_fp8,
-                               is_glm_moe_dsa_glm51, is_glm52_model, resolve_thinking_off_policy,
+                               is_glm_moe_dsa_glm51, is_glm52_single_node_even, resolve_thinking_off_policy,
                                THINKING_ALWAYS_ON, THINKING_HYBRID, THINKING_NONE)
 from utils.device_utils import check_pcie_cards
 
@@ -838,20 +838,9 @@ def _set_parallelism_params(params, ctx):
     # [GLM-5.2] 单机 TP 由 vllm_adapter._apply_glm5_ascend_engine_defaults 接管
     # (TP=device_count//2 + DP2)，与上面 dp_deployment 同理短路：此处若按非分布式通用公式
     # 把 TP 钉成 device_count(单机=全卡)，下游 _set_if_not_explicit 只填空值、覆盖不掉 →
-    # TP×DP=device_count×2 超订(16 卡 → 请求 32)。条件须与 adapter 分支一致
-    # (is_glm52 + 单机 + device_count 偶数)，否则会给奇数卡留下 TP 空缺。
-    try:
-        _nnodes = int(ctx.get("nnodes") or 1)
-        _dc = int(ctx.get("device_count") or 0)
-    except (TypeError, ValueError):
-        _nnodes, _dc = 1, 0
-    if (
-        ctx.get("engine") == "vllm_ascend"
-        and _nnodes == 1
-        and _dc > 0
-        and _dc % 2 == 0
-        and is_glm52_model(ctx.get("model_name"), ctx.get("model_path"))
-    ):
+    # TP×DP=device_count×2 超订(16 卡 → 请求 32)。判定与 adapter 分支共用
+    # is_glm52_single_node_even，保证两处条件逐字一致(否则会给奇数卡留下 TP 空缺)。
+    if is_glm52_single_node_even(ctx):
         return
     _adjust_tensor_parallelism(
         params,

@@ -27,7 +27,8 @@ import yaml
 
 from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8,
                                INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51,
-                               is_glm51_ascend_kvsparse_tmp_scope, is_glm52_model)
+                               is_glm51_ascend_kvsparse_tmp_scope, is_glm52_model,
+                               is_glm52_single_node_even)
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env
@@ -1765,10 +1766,7 @@ def _apply_generic_deepseek_ascend_dp_defaults(
     # [GLM-5.2] 单机(nnodes==1)按官方 recipe 跑 DP=2 → TP=device_count//2（16卡 → TP8/DP2）；
     # 双机维持每节点 TP=device_count（每节点 1 个 DP replica，TP16），由
     # _resolve_dp_deployment_topology 推 DP-local=1/DP=2。按 is_glm52 子串标识，复杂名亦稳。
-    if (model_architecture == "GlmMoeDsaForCausalLM"
-            and is_glm52_model(params.get("model_name"), params.get("model_path"))
-            and (_safe_int(params.get("nnodes")) or 1) == 1
-            and device_count and device_count % 2 == 0):
+    if model_architecture == "GlmMoeDsaForCausalLM" and is_glm52_single_node_even(params):
         default_tp = device_count // 2
         _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", 2)
     if default_tp and "tensor_parallel_size" not in explicit_keys:
@@ -2738,9 +2736,12 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         # 仅 vllm_ascend 生效：NV 的 GLM-5.2 是另一套（method=mtp/num=5），不应误产 num=3。
         glm52_ascend = engine == "vllm_ascend" and is_glm52_model(
             params.get("model_name"), params.get("model_path"))
-        if (not glm52_ascend
-                and (_is_deepseek_v4_pro_params(params) or _is_deepseek_v4_flash_params(params)
-                     or model_info.model_architecture == "GlmMoeDsaForCausalLM")):
+        _num1_arch = (
+            _is_deepseek_v4_pro_params(params)
+            or _is_deepseek_v4_flash_params(params)
+            or model_info.model_architecture == "GlmMoeDsaForCausalLM"
+        )
+        if not glm52_ascend and _num1_arch:
             speculative_config_temp.append('"num_speculative_tokens": 1')
         else:
             speculative_config_temp.append('"num_speculative_tokens": 3')
