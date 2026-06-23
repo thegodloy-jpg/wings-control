@@ -1,0 +1,413 @@
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p /var/log/wings
+rm -rf /var/log/wings/prometheus_multiproc
+mkdir -p /var/log/wings/prometheus_multiproc
+# --- wings: env echo helpers ---
+wings_source_env_with_diff() {
+    local script_path="$1"
+    local label="${2:-$1}"
+    if [ "$#" -ge 2 ]; then
+        shift 2
+    else
+        shift 1
+    fi
+    if [ ! -f "$script_path" ]; then
+        echo "[wings-env-source] WARN: $label not found: $script_path"
+        return 0
+    fi
+
+    local before_file after_file
+    before_file="$(mktemp)"
+    after_file="$(mktemp)"
+    env | sort > "$before_file" || true
+
+    set +u
+    # shellcheck disable=SC1090
+    source "$script_path" "$@"
+    local source_rc=$?
+    set -u
+
+    env | sort > "$after_file" || true
+    comm -13 "$before_file" "$after_file" | sed "s|^|[wings-env-source] $label |" || true
+    rm -f "$before_file" "$after_file"
+    return "$source_rc"
+}
+# --- end wings env echo helpers ---
+export PROMETHEUS_MULTIPROC_DIR=/var/log/wings/prometheus_multiproc
+echo "[wings-env] export PROMETHEUS_MULTIPROC_DIR=${PROMETHEUS_MULTIPROC_DIR:-}"
+
+# --- log_analyzer: Worker节点不运行分析器 ---
+echo "[log_analyzer] Worker节点(node_rank > 0)，跳过分析器启动"
+# 确保共享卷目录存在
+mkdir -p /shared-volume
+
+export PYTHONUNBUFFERED=1
+echo "[wings-env] export PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-}"
+exec > >(tee -a /var/log/wings/engine-full.log | grep --line-buffered -vE '"GET\s+/(health|metrics)\s|\b(Prefill|Decode) batch\b' | tee -a /var/log/wings/engine.log) 2>&1
+# Patch triton driver.py: Ascend NPU has no Triton backend, return dummy driver
+python3 << 'TRITON_PATCH_EOF'
+try:
+    import triton.runtime, os
+    drv_path = os.path.join(os.path.dirname(triton.runtime.__file__), 'driver.py')
+    with open(drv_path) as f:
+        src = f.read()
+    if 'raise RuntimeError' in src and 'PATCHED_NPU' not in src:
+        patch = '''
+        # PATCHED_NPU: Ascend NPU has no Triton backend, provide dummy driver
+        class _NpuDummyDrv:
+            def get_current_target(self):
+                import types; return types.SimpleNamespace(backend='npu', arch='Ascend910B', warp_size=0)
+            def get_current_device(self): return 0
+            def get_device_capability(self, *a): return (0, 0)
+            def get_device_properties(self, device=0):
+                try:
+                    import torch_npu; n = torch_npu.npu.get_device_name(device); c = 20 if '910B' in str(n) else 30
+                except Exception: c = 20
+                return {'num_aicore': c, 'num_vectorcore': c}
+            def __getattr__(self, name): return _NpuDummyDrv()
+            def __call__(self, *a, **k): return self
+            def __repr__(self): return '<NpuDummy>'
+            def __int__(self): return 0
+            def __bool__(self): return False
+        return _NpuDummyDrv()'''
+        src = src.replace(
+            'raise RuntimeError(f"{len(active_drivers)} active drivers ({active_drivers}). There should only be one.")',
+            patch.strip()
+        )
+        with open(drv_path, 'w') as f:
+            f.write(src)
+        print('[triton-patch] Patched', drv_path, 'for Ascend NPU')
+    else:
+        print('[triton-patch] Already patched or not needed')
+except Exception as e:
+    print(f'[triton-patch] Skip: {e}')
+TRITON_PATCH_EOF
+# --- wings: modelslim_config.py QuaRot compatibility patch ---
+python3 << 'MODELSLIM_PATCH_EOF'
+try:
+    import importlib.util, pathlib
+    spec = importlib.util.find_spec('vllm_ascend.quantization.modelslim_config')
+    if spec and spec.origin:
+        p = pathlib.Path(spec.origin)
+        txt = p.read_text()
+        old = 'self.quant_description[shard_prefix + ' + '"' + '.weight' + '"' + ']'
+        new = 'self.quant_description.get(shard_prefix + ' + '"' + '.weight' + '"' + ')'
+        if old in txt:
+            p.write_text(txt.replace(old, new))
+            print('[modelslim-patch] Patched modelslim_config.py: dict[] -> dict.get() for QuaRot compatibility')
+        else:
+            print('[modelslim-patch] Already patched or pattern not found')
+    else:
+        print('[modelslim-patch] modelslim_config module not found, skipping')
+except Exception as e:
+    print(f'[modelslim-patch] Skip: {e}')
+MODELSLIM_PATCH_EOF
+# --- end modelslim patch ---
+# --- wings-accel: install speculative decoding runtime deps (fault-tolerant) ---
+if [ -f "/accel-volume/install.py" ]; then
+    echo '[wings-accel] Installing speculative decoding runtime deps...'
+    set +e
+    python3 /accel-volume/install.py --install-runtime-deps
+    SPEC_RC=$?
+    set -e
+    if [ $SPEC_RC -ne 0 ]; then
+        echo "[wings-accel] WARNING: Speculative decoding runtime deps install failed (exit=$SPEC_RC), skipping. Service will continue without patches."
+        python3 -c "import json, os; p='/shared-volume\advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
+    else
+        echo '[wings-accel] Speculative decoding runtime deps installed successfully.'
+    fi
+else
+    echo '[wings-accel] WARNING: /accel-volume/install.py not found, skipping speculative decoding runtime deps.'
+fi
+ENGINE_START_EPOCH=$(date +%s)
+# =============================================================================
+# vLLM-Ascend (华为昇腾) 引擎环境初始化脚本
+# 用途: 被 _build_base_env_commands() 读取并内联到 start_command.sh
+# 来源: 参考 wings/config/set_vllm_ascend_env.sh，适配 sidecar 架构
+#
+# 注意: 此脚本在 engine 容器内执行，不是在 wings-control 容器内。
+#       因此路径应指向 engine 镜像中实际存在的位置。
+#       engine 镜像预装 CANN toolkit，此处补充运行时环境变量。
+# =============================================================================
+
+# CANN/ATB 环境初始化脚本在 engine 容器内执行；若 helper 已注入，则打印 source 前后的环境变量差异。
+set +u
+[ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] && { if command -v wings_source_env_with_diff >/dev/null 2>&1; then wings_source_env_with_diff /usr/local/Ascend/ascend-toolkit/set_env.sh ascend-toolkit/set_env.sh; else source /usr/local/Ascend/ascend-toolkit/set_env.sh; fi; } || echo 'WARN: ascend-toolkit/set_env.sh not found'
+[ -f /usr/local/Ascend/nnal/atb/set_env.sh ] && { if command -v wings_source_env_with_diff >/dev/null 2>&1; then wings_source_env_with_diff /usr/local/Ascend/nnal/atb/set_env.sh nnal/atb/set_env.sh; else source /usr/local/Ascend/nnal/atb/set_env.sh; fi; } || echo 'WARN: nnal/atb/set_env.sh not found'
+set -u
+
+# Ascend 驱动库路径（libascend_hal.so 等位于此目录）
+# 如果驱动目录不存在，说明宿主机驱动未挂载到容器
+if [ -d /usr/local/Ascend/driver/lib64/driver ]; then
+    export LD_LIBRARY_PATH="/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:${LD_LIBRARY_PATH:-}"
+    echo "[wings-env] export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
+else
+    echo '================================================================'
+    echo 'FATAL: Ascend driver not found!'
+    echo '  • /usr/local/Ascend/driver/lib64/driver directory is missing'
+    echo '  • libascend_hal.so is required by torch_npu / vllm_ascend'
+    echo ''
+    echo 'FIX: Mount the host Ascend driver into the container:'
+    echo '  volumeMounts:'
+    echo '    - name: ascend-driver'
+    echo '      mountPath: /usr/local/Ascend/driver'
+    echo '  volumes:'
+    echo '    - name: ascend-driver'
+    echo '      hostPath:'
+    echo '        path: /usr/local/Ascend/driver'
+    echo '        type: Directory'
+    echo '================================================================'
+    exit 1
+fi
+
+# 昇腾通用环境变量
+export TASK_QUEUE_ENABLE=1
+echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
+
+
+# Pre-flight: verify Ascend driver is accessible
+if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
+    echo 'FATAL: libascend_hal.so not found at /usr/local/Ascend/driver/lib64/driver/'
+    echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
+    exit 1
+fi
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export HCCL_BUFFSIZE=1024
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
+export VLLM_ASCEND_ENABLE_MLAPO=1
+echo "[wings-env] export VLLM_ASCEND_ENABLE_MLAPO=${VLLM_ASCEND_ENABLE_MLAPO:-}"
+export VLLM_VERSION=0.21.0
+echo "[wings-env] export VLLM_VERSION=${VLLM_VERSION:-}"
+export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
+echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
+export HCCL_WHITELIST_DISABLE=1
+echo "[wings-env] export HCCL_WHITELIST_DISABLE=${HCCL_WHITELIST_DISABLE:-}"
+export HCCL_IF_IP=$VLLM_HOST_IP
+echo "[wings-env] export HCCL_IF_IP=${HCCL_IF_IP:-}"
+export GLOO_SOCKET_IFNAME=eth0
+echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
+export TP_SOCKET_IFNAME=eth0
+echo "[wings-env] export TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME:-}"
+export HCCL_SOCKET_IFNAME=eth0
+echo "[wings-env] export HCCL_SOCKET_IFNAME=${HCCL_SOCKET_IFNAME:-}"
+export HCCL_CONNECT_TIMEOUT=1800
+echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
+export HCCL_EXEC_TIMEOUT=7200
+echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export HCCL_BUFFSIZE=1024
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=0
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+echo "[wings-env] export VLLM_ASCEND_ENABLE_FLASHCOMM1=${VLLM_ASCEND_ENABLE_FLASHCOMM1:-}"
+export VLLM_ENGINE_READY_TIMEOUT_S=7200
+echo "[wings-env] export VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-}"
+echo '[wings-cmd] >>> exec vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_ufa9nkx9 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 16 --async-scheduling --enable-prefix-caching --speculative-config '"'"'{"method": "deepseek_mtp", "num_speculative_tokens": 3}'"'"' --data-p...<truncated>'
+vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_ufa9nkx9 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 16 --async-scheduling --enable-prefix-caching --speculative-config '{"method": "deepseek_mtp", "num_speculative_tokens": 3}' --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-start-rank 1 &
+ENGINE_PID=$!
+echo "[Engine] Engine PID: $ENGINE_PID (advanced features enabled)"
+
+# --- Engine process wait and exception handling (with advanced feature fallback) ---
+echo "[AdvFeature] Engine process monitor started, PID=$ENGINE_PID"
+echo "[AdvFeature] Active advanced features: speculative_decode"
+if wait "$ENGINE_PID"; then
+  echo "[Engine] Engine process exited normally"
+  echo "[引擎] 停止日志解析进程..."
+  [ -n "${LOG_ANALYZER_PID:-}" ] && kill "$LOG_ANALYZER_PID" 2>/dev/null || true
+  trap - EXIT
+else
+  EXIT_CODE=$?
+  ENGINE_DURATION=$(( $(date +%s) - ENGINE_START_EPOCH ))
+  echo "[Engine] Engine process exited abnormally, exit_code=$EXIT_CODE, runtime=${ENGINE_DURATION}s"
+
+  # 一刀切策略：高级特性启用时崩溃 → 无条件禁用所有高级特性重试一次
+  echo "[AdvFeature] ┌── Advanced Feature Fallback Triggered ──"
+  echo "[AdvFeature] │ Reason: Engine crashed (exit_code=$EXIT_CODE, runtime=${ENGINE_DURATION}s)"
+  echo "[AdvFeature] │ Features disabled: speculative_decode"
+  echo "[AdvFeature] │ Action: Restarting engine without advanced features"
+  echo "[AdvFeature] └── Fallback command about to execute..."
+  echo "[Engine] Falling back to basic mode (disabled: speculative_decode)..."
+  # 更新 advanced_features.json：引擎级特性全部置 false，RAG 保持不变
+  cat > "/shared-volume\advanced_features.json" <<'FEATURES_EOF'
+{
+    "engine": "vllm_ascend",
+    "features": {
+        "speculative_decode": false,
+        "sparse_kv": false,
+        "kv_offload": false,
+        "rag_acc": false
+    }
+}
+FEATURES_EOF
+  echo "[AdvFeature] Updated advanced_features.json: all engine features disabled"
+  # 清理上一次启动残留：ray head/worker 进程 + 端口占用
+  # （fallback 会重新执行 ray start --head，若旧 head 仍在则会因端口冲突失败）
+  if command -v ray >/dev/null 2>&1; then
+    echo "[AdvFeature] Stopping leftover Ray cluster before fallback restart..."
+    echo '[wings-cmd] >>> ray stop --force >/dev/null 2>&1 || true'
+    ray stop --force >/dev/null 2>&1 || true
+  fi
+  # 兜底：杀掉残留的 vLLM EngineCore / WorkerProc（父进程已死但子进程可能还在）
+  pkill -9 -f 'vllm.*EngineCore' 2>/dev/null || true
+  pkill -9 -f 'vllm.*WorkerProc' 2>/dev/null || true
+  pkill -9 -f 'multiproc_executor' 2>/dev/null || true
+  # 一刀切：unset 所有补丁/加速层使能环境变量，退到最基本的启动命令
+  # （不动 VLLM_ASCEND_ENABLE_* / VLLM_USE_V1 等常规性能 flag，它们不是补丁）
+  echo "[AdvFeature] Unsetting patch/accel env vars for fallback: WINGS_ENGINE_PATCH_OPTIONS VLLM_EARS_TOLERANCE"
+  unset WINGS_ENGINE_PATCH_OPTIONS
+  unset VLLM_EARS_TOLERANCE
+  echo "[Engine] Waiting 5s for port release before restart..."
+  sleep 5
+  ENGINE_START_EPOCH=$(date +%s)
+# =============================================================================
+# vLLM-Ascend (华为昇腾) 引擎环境初始化脚本
+# 用途: 被 _build_base_env_commands() 读取并内联到 start_command.sh
+# 来源: 参考 wings/config/set_vllm_ascend_env.sh，适配 sidecar 架构
+#
+# 注意: 此脚本在 engine 容器内执行，不是在 wings-control 容器内。
+#       因此路径应指向 engine 镜像中实际存在的位置。
+#       engine 镜像预装 CANN toolkit，此处补充运行时环境变量。
+# =============================================================================
+
+# CANN/ATB 环境初始化脚本在 engine 容器内执行；若 helper 已注入，则打印 source 前后的环境变量差异。
+set +u
+[ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ] && { if command -v wings_source_env_with_diff >/dev/null 2>&1; then wings_source_env_with_diff /usr/local/Ascend/ascend-toolkit/set_env.sh ascend-toolkit/set_env.sh; else source /usr/local/Ascend/ascend-toolkit/set_env.sh; fi; } || echo 'WARN: ascend-toolkit/set_env.sh not found'
+[ -f /usr/local/Ascend/nnal/atb/set_env.sh ] && { if command -v wings_source_env_with_diff >/dev/null 2>&1; then wings_source_env_with_diff /usr/local/Ascend/nnal/atb/set_env.sh nnal/atb/set_env.sh; else source /usr/local/Ascend/nnal/atb/set_env.sh; fi; } || echo 'WARN: nnal/atb/set_env.sh not found'
+set -u
+
+# Ascend 驱动库路径（libascend_hal.so 等位于此目录）
+# 如果驱动目录不存在，说明宿主机驱动未挂载到容器
+if [ -d /usr/local/Ascend/driver/lib64/driver ]; then
+    export LD_LIBRARY_PATH="/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:${LD_LIBRARY_PATH:-}"
+    echo "[wings-env] export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
+else
+    echo '================================================================'
+    echo 'FATAL: Ascend driver not found!'
+    echo '  • /usr/local/Ascend/driver/lib64/driver directory is missing'
+    echo '  • libascend_hal.so is required by torch_npu / vllm_ascend'
+    echo ''
+    echo 'FIX: Mount the host Ascend driver into the container:'
+    echo '  volumeMounts:'
+    echo '    - name: ascend-driver'
+    echo '      mountPath: /usr/local/Ascend/driver'
+    echo '  volumes:'
+    echo '    - name: ascend-driver'
+    echo '      hostPath:'
+    echo '        path: /usr/local/Ascend/driver'
+    echo '        type: Directory'
+    echo '================================================================'
+    exit 1
+fi
+
+# 昇腾通用环境变量
+export TASK_QUEUE_ENABLE=1
+echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
+
+
+# Pre-flight: verify Ascend driver is accessible
+if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
+    echo 'FATAL: libascend_hal.so not found at /usr/local/Ascend/driver/lib64/driver/'
+    echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
+    exit 1
+fi
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export HCCL_BUFFSIZE=1024
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
+export VLLM_ASCEND_ENABLE_MLAPO=1
+echo "[wings-env] export VLLM_ASCEND_ENABLE_MLAPO=${VLLM_ASCEND_ENABLE_MLAPO:-}"
+export VLLM_VERSION=0.21.0
+echo "[wings-env] export VLLM_VERSION=${VLLM_VERSION:-}"
+export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
+echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
+export HCCL_WHITELIST_DISABLE=1
+echo "[wings-env] export HCCL_WHITELIST_DISABLE=${HCCL_WHITELIST_DISABLE:-}"
+export HCCL_IF_IP=$VLLM_HOST_IP
+echo "[wings-env] export HCCL_IF_IP=${HCCL_IF_IP:-}"
+export GLOO_SOCKET_IFNAME=eth0
+echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
+export TP_SOCKET_IFNAME=eth0
+echo "[wings-env] export TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME:-}"
+export HCCL_SOCKET_IFNAME=eth0
+echo "[wings-env] export HCCL_SOCKET_IFNAME=${HCCL_SOCKET_IFNAME:-}"
+export HCCL_CONNECT_TIMEOUT=1800
+echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
+export HCCL_EXEC_TIMEOUT=7200
+echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export HCCL_BUFFSIZE=1024
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=0
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+echo "[wings-env] export VLLM_ASCEND_ENABLE_FLASHCOMM1=${VLLM_ASCEND_ENABLE_FLASHCOMM1:-}"
+export VLLM_ENGINE_READY_TIMEOUT_S=7200
+echo "[wings-env] export VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-}"
+echo '[wings-cmd] >>> exec vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_ufa9nkx9 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --async-scheduling --tensor-parallel-size 16 --enable-prefix-caching --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 13355 --data-parallel-si...<truncated>'
+vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_ufa9nkx9 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --async-scheduling --tensor-parallel-size 16 --enable-prefix-caching --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-start-rank 1 &
+ENGINE_PID=$!
+echo "[Engine] Engine PID: $ENGINE_PID (advanced features disabled: speculative_decode, fallback mode)"
+  echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."
+  if wait "$ENGINE_PID"; then
+    echo "[Engine] Engine process exited normally (fallback mode)"
+    echo "[AdvFeature] Fallback-mode engine exited normally"
+    echo "[引擎] 停止日志解析进程..."
+    [ -n "${LOG_ANALYZER_PID:-}" ] && kill "$LOG_ANALYZER_PID" 2>/dev/null || true
+    trap - EXIT
+  else
+    EXIT_CODE=$?
+    echo "[Engine] Fallback mode also exited abnormally, exit_code=$EXIT_CODE"
+    echo "[AdvFeature] ✗ Fallback mode also failed, exit_code=$EXIT_CODE — unrecoverable"
+
+    CURR_TIME=$(date -Iseconds)
+    SCRIPT_START_EPOCH="${SCRIPT_START_EPOCH:-$(date +%s)}"
+    START_TIME=$(date -Iseconds -d "@${SCRIPT_START_EPOCH}")
+    ELAPSED_TIME=$(( $(date +%s) - SCRIPT_START_EPOCH ))
+
+    cat >> "/shared-volume/progress.jsonl" <<EOF
+{"progress": 0, "phase_code": "engine_crash", "phase_name": "引擎进程异常退出", "status": "failed", "key_log": "引擎进程异常退出，退出码: $EXIT_CODE", "curr_time": "$CURR_TIME", "start_time": "$START_TIME", "elapsed_time_s": $ELAPSED_TIME}
+EOF
+
+    echo "[引擎] 停止日志解析进程..."
+    [ -n "${LOG_ANALYZER_PID:-}" ] && kill "$LOG_ANALYZER_PID" 2>/dev/null || true
+    trap - EXIT
+
+    exit "$EXIT_CODE"
+  fi
+fi
+

@@ -2200,26 +2200,6 @@ _GLM5_A2_ADDITIONAL_CONFIG: Dict[str, Any] = {
 }
 
 
-def _flatten_glm52_npugraph_ex(engine_config: Dict[str, Any]) -> None:
-    """GLM-5.2 对齐官方：把 ``additional_config.ascend_compilation_config.enable_npugraph_ex``
-    提到 ``additional_config`` 顶层平铺。
-
-    嵌套版会被 vLLM-Ascend 的 AscendConfig 当未知键静默忽略（启动日志从不打印 enable_npugraph_ex），
-    等于 NPU 图扩展没生效，且疑似 worker 原生初始化期 ``basic_string null`` 崩溃来源。无论 additional_config
-    来自 ascend_default.json 命名组 / GlmMoeDsa default / 代码默认，统一在此平铺；保留 ascend_compilation_config
-    内其余键，仅含 enable_npugraph_ex 则移除该包层。additional_config 为 JSON 字符串或缺失时不处理。
-    """
-    ac = engine_config.get("additional_config")
-    if not isinstance(ac, dict):
-        return
-    acc = ac.get("ascend_compilation_config")
-    if not isinstance(acc, dict) or "enable_npugraph_ex" not in acc:
-        return
-    ac.setdefault("enable_npugraph_ex", acc.pop("enable_npugraph_ex"))
-    if not acc:
-        ac.pop("ascend_compilation_config", None)
-
-
 def _apply_glm52_ascend_recipe(params: Dict[str, Any], engine_config: Dict[str, Any],
                                explicit_keys: set) -> bool:
     """GLM-5.2 专属 engine 默认：async_scheduling + enable_expert_parallel 必产；单机
@@ -2232,7 +2212,6 @@ def _apply_glm52_ascend_recipe(params: Dict[str, Any], engine_config: Dict[str, 
     """
     if not is_glm52_model(params.get("model_name"), params.get("model_path")):
         return False
-    _flatten_glm52_npugraph_ex(engine_config)
     _set_if_not_explicit(engine_config, explicit_keys, "async_scheduling", True)
     _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
     if is_glm52_single_node_even(params):
@@ -2983,22 +2962,6 @@ def build_start_command(params: Dict[str, Any]) -> str:
 
 
 
-def _filter_glm52_incompatible_env(commands: List[str], params: Dict[str, Any], engine: str) -> List[str]:
-    """GLM-5.2 对齐官方 recipe：剔除 ``TASK_QUEUE_ENABLE``（官方单/双机命令均不设）。
-
-    GLM-5.2 的 TASK_QUEUE 仅来自内联 set_vllm_ascend_env.sh（GLM-5 架构 env 构造器不注入），
-    故在 env 汇总去重后按模型统一剔除（连带其 echo 行）。仅作用于 vllm_ascend + GLM-5.2。
-    """
-    if engine != "vllm_ascend":
-        return commands
-    if not is_glm52_model(params.get("model_name"), params.get("model_path")):
-        return commands
-    kept = [c for c in commands if "TASK_QUEUE_ENABLE" not in c]
-    if len(kept) != len(commands):
-        logger.info("[GLM-5.2] removed TASK_QUEUE_ENABLE to align with official recipe")
-    return kept
-
-
 def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str]:
     """构建 vLLM 公共环境变量命令链（对所有部署模式均适用）。"""
     # sidecar 容器无 GPU/NPU，使用环境变量代替 netifaces 探测网络接口
@@ -3022,8 +2985,6 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     # 多个 builder（内联 set_vllm_ascend_env.sh / 架构块 / forced 软默认）会重复导出同名变量，
     # 这里收口去重，保证每个变量最终只有一条 export 生效（等价最终值，不动累加型与块内导出）。
     cmds = dedupe_env_exports(cmds)
-    # GLM-5.2 对齐官方：去重后剔除 TASK_QUEUE_ENABLE（官方单/双机命令均无）。
-    cmds = _filter_glm52_incompatible_env(cmds, params, engine)
     return cmds
 
 

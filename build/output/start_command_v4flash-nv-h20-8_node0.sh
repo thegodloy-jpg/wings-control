@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_skn0n823", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -112,23 +112,6 @@ else
     echo '[wings-accel] WARNING: /accel-volume/install.py not found, skipping speculative decoding runtime deps.'
 fi
 
-# --- wings-accel: install LMCache patches (fault-tolerant) ---
-if [ -f "/accel-volume/install.py" ]; then
-    echo '[wings-accel] Installing LMCache patches (target: nvidia-x86)...'
-    set +e
-    python3 /accel-volume/install.py --lmcache-target nvidia-x86
-    LMCACHE_RC=$?
-    set -e
-    if [ $LMCACHE_RC -ne 0 ]; then
-        echo "[wings-accel] WARNING: LMCache patch install failed (exit=$LMCACHE_RC), skipping. Service will continue without LMCache patches."
-        python3 -c "import json, os; p='/shared-volume\advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['kv_offload']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
-    else
-        echo '[wings-accel] LMCache patches installed successfully.'
-    fi
-else
-    echo '[wings-accel] WARNING: /accel-volume/install.py not found, skipping LMCache patch install.'
-fi
-
 export WINGS_ENGINE_PATCH_OPTIONS='{"vllm": {"version": "0.17.0", "features": ["ears"]}}'
 echo "[wings-env] export WINGS_ENGINE_PATCH_OPTIONS=${WINGS_ENGINE_PATCH_OPTIONS:-}"
 echo "[wings-accel] Patch version: 0.17.0 (from ENGINE_VERSION)"
@@ -160,8 +143,8 @@ fi
 ENGINE_START_EPOCH=$(date +%s)
 export VLLM_EARS_TOLERANCE=0.5
 echo "[wings-env] export VLLM_EARS_TOLERANCE=${VLLM_EARS_TOLERANCE:-}"
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_skn0n823 --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --speculative-config '"'"'{"method": "mtp", "num_speculative_tokens": 1}'"'"' --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"' --kv_offloading_backend native --kv_offloading_size 200'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_skn0n823 --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --speculative-config '{"method": "mtp", "num_speculative_tokens": 1}' --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' --kv_offloading_backend native --kv_offloading_size 200 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '"'"'{"thinking":false}'"'"' --tensor-parallel-size 8 --speculative-config '"'"'{"method": "mtp", "num_speculative_tokens": 1}'"'"' --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"' --kv_offloading_backend native --kv_offloading_size 200'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '{"thinking":false}' --tensor-parallel-size 8 --speculative-config '{"method": "mtp", "num_speculative_tokens": 1}' --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' --kv_offloading_backend native --kv_offloading_size 200 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features enabled)"
 
@@ -217,8 +200,8 @@ FEATURES_EOF
   echo "[Engine] Waiting 5s for port release before restart..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_skn0n823 --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"''
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_skn0n823 --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '"'"'{"thinking":false}'"'"' --tensor-parallel-size 8 --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"''
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '{"thinking":false}' --tensor-parallel-size 8 --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features disabled: speculative_decode, lmcache_offload, fallback mode)"
   echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."
