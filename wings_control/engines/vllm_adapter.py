@@ -1667,6 +1667,11 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
                 "[GLM-5.1 RoCE] Removed HCCL_OP_EXPANSION_MODE, "
                 "appended VLLM_ASCEND_ENABLE_MLAPO=1, VLLM_ASCEND_ENABLE_FUSED_MC2=0"
             )
+        # GLM-5.2 专属:官方 W8A8 单/双机 recipe 固定 VLLM_VERSION=0.21.0(仅 5.2,不注入 5.0/5.1)。
+        # 通过 _build_model_env_commands 注入 → 单机/双机两路都覆盖。
+        if is_glm52_model(params.get("model_name"), params.get("model_path")):
+            env_commands.append("export VLLM_VERSION=0.21.0")
+            logger.info("[GLM-5.2] pinned VLLM_VERSION=0.21.0 (single/dual recipe)")
         return env_commands
     return builder(arch)
 

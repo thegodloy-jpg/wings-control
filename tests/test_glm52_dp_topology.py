@@ -142,6 +142,35 @@ class Glm52DualNodeTopologyTest(unittest.TestCase):
                                  f"双机本节点 TP×DP_local={tp*dp_local} 必须 == {device_count}")
 
 
+class Glm52EnvTest(unittest.TestCase):
+    """GLM-5.2 专属 env:单/双机均须 ``export VLLM_VERSION=0.21.0``;GLM-5.1 不得注入。"""
+
+    def test_glm52_single_pins_vllm_version(self):
+        for platform in ("a2", "a3"):
+            with self.subTest(platform=platform):
+                script = _gen_script(_GLM52_NAME, 16, nnodes=1, platform=platform)
+                self.assertIn("export VLLM_VERSION=0.21.0", script)
+
+    def test_glm52_dual_pins_vllm_version(self):
+        script = _gen_script(
+            _GLM52_NAME, 16, nnodes=2, platform="a3",
+            argv_extra=[
+                "--distributed",
+                "--distributed-executor-backend", "dp_deployment",
+                "--head-node-addr", "10.0.0.1",
+            ],
+            extra_env={
+                "NODE_IPS": "10.0.0.1,10.0.0.2", "RANK_IP": "10.0.0.1",
+                "MASTER_IP": "10.0.0.1", "POD_IP": "10.0.0.1",
+            },
+        )
+        self.assertIn("export VLLM_VERSION=0.21.0", script)
+
+    def test_glm51_does_not_pin_vllm_version(self):
+        script = _gen_script(_GLM51_NAME, 16, nnodes=1, platform="a3")
+        self.assertNotIn("VLLM_VERSION", script)
+
+
 class Glm51ControlTest(unittest.TestCase):
     """对照:GLM-5.1 单机【不】减半,证明 carve-out 仅命中 GLM-5.2。"""
 
