@@ -61,7 +61,8 @@ SCENARIOS = {
         "node_ips": "192.168.1.100",
         "enable_speculative_decode": True,
         "enable_sparse": False,
-        "platform": "a3",
+        "platform": "",
+        "engine_version": "0.21.0-a3",   # ← 芯片(A3/910C)由 engine-version 后缀确定（单机 TP/DP 门控只认它）
         "config_json_extra": {
             "quantization_config": {"quant_method": "ascend"},
         },

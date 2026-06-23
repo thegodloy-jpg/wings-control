@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "dp_deployment", "tensor_parallel_size": 16, "model_name": "GLM-5.2-355B-A3B-W8A8-Chat", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_c0pag6dr", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "dp_deployment", "tensor_parallel_size": 16, "model_name": "GLM-5.2-355B-A3B-W8A8-Chat", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_bhq6uv3v", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -212,8 +212,6 @@ else
 fi
 
 # 昇腾通用环境变量
-export TASK_QUEUE_ENABLE=1
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -238,8 +236,8 @@ export VLLM_ASCEND_ENABLE_MLAPO=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_MLAPO=${VLLM_ASCEND_ENABLE_MLAPO:-}"
 export VLLM_VERSION=0.21.0
 echo "[wings-env] export VLLM_VERSION=${VLLM_VERSION:-}"
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_c0pag6dr --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8 --data-parallel-size 2 --async-...<truncated>'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_c0pag6dr --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 --data-parallel-size 2 --async-scheduling --enable-prefix-caching --speculative-config '{"method": "deepseek_mtp", "num_speculative_tokens": 3}' &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_bhq6uv3v --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8 --data-parallel-size 2 --async-...<truncated>'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_bhq6uv3v --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 --data-parallel-size 2 --async-scheduling --enable-prefix-caching --speculative-config '{"method": "deepseek_mtp", "num_speculative_tokens": 3}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features enabled)"
 
@@ -336,8 +334,6 @@ else
 fi
 
 # 昇腾通用环境变量
-export TASK_QUEUE_ENABLE=1
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -362,8 +358,8 @@ export VLLM_ASCEND_ENABLE_MLAPO=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_MLAPO=${VLLM_ASCEND_ENABLE_MLAPO:-}"
 export VLLM_VERSION=0.21.0
 echo "[wings-env] export VLLM_VERSION=${VLLM_VERSION:-}"
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_c0pag6dr --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --async-scheduling --tensor-parallel-size 8 --data-paral...<truncated>'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_c0pag6dr --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --async-scheduling --tensor-parallel-size 8 --data-parallel-size 2 --enable-prefix-caching &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_bhq6uv3v --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --async-scheduling --tensor-parallel-size 8 --data-paral...<truncated>'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-355B-A3B-W8A8-Chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_bhq6uv3v --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --async-scheduling --tensor-parallel-size 8 --data-parallel-size 2 --enable-prefix-caching &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features disabled: speculative_decode, fallback mode)"
   echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."

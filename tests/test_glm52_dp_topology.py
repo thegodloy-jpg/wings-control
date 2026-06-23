@@ -9,9 +9,10 @@ device_count,下游 ``vllm_adapter`` 的 ``_set_if_not_explicit`` 只填空值�
 
 本测试**端到端**(parse_launch_args → load_and_merge_configs → build_start_script)断言:
   * 核心不变式:单机 ``TP × DP == device_count``(精确占满本节点,绝不超订);
-  * GLM-5.2 单机配方:``TP == device_count//2`` 且 ``DP == 2``;
+  * GLM-5.2 **a3(910C)** 单机配方:``TP == device_count//2`` 且 ``DP == 2``;
+  * GLM-5.2 **a2(910B)** 单机:平台门控不命中减半分支,整卡 ``TP == device_count``、无 DP2;
   * 双机仍是每节点整卡 TP(``TP == device_count``,``DP_local == 1``);
-  * GLM-5.1(对照)单机不减半(``TP == device_count``),证明 carve-out 仅作用于 5.2。
+  * GLM-5.1(对照)单机不减半(``TP == device_count``),证明 carve-out 仅作用于 5.2 + a3。
 """
 # pyright: reportMissingImports=false
 
@@ -61,7 +62,11 @@ def _gen_script(model_name, device_count, *, nnodes=1, platform="a3", argv_extra
             "--trust-remote-code",
         ]
         argv += (argv_extra or [])
-        env = {"WINGS_DEVICE": "ascend", "WINGS_ASCEND_PLATFORM": platform}
+        # 平台只按 engine-version 后缀判定(与生产/dry_run 一致):a2/a3 → "0.21.0-{platform}"。
+        # GLM-5.2 单机 TP/DP 门控 is_glm52_single_node_even 只认 ENGINE_VERSION 的 -a3 后缀。
+        env = {"WINGS_DEVICE": "ascend"}
+        if platform:
+            env["ENGINE_VERSION"] = f"0.21.0-{platform}"
         env.update(extra_env or {})
         with patch.object(sys, "argv", ["wings-launcher"] + argv):
             with patch.dict(os.environ, env, clear=True):
@@ -79,26 +84,35 @@ def _flag_int(script, flag):
 
 
 class Glm52SingleNodeTopologyTest(unittest.TestCase):
-    """单机:TP=device_count//2 / DP=2 / TP×DP==device_count(无超订)。"""
+    """单机:a3 → TP=device_count//2 / DP=2;a2 → 整卡 TP / 无 DP2;两者均 TP×节点占用==device_count。"""
 
-    def test_single_node_matrix_no_oversubscription(self):
+    def test_single_node_a3_halves_with_dp2_no_oversubscription(self):
+        """a3(910C):官方 recipe 减半 + DP2,且 TP×DP==device_count(精确占满,绝不超订)。"""
         for device_count in (8, 16):
-            for platform in ("a2", "a3"):
-                with self.subTest(device_count=device_count, platform=platform):
-                    script = _gen_script(_GLM52_NAME, device_count, nnodes=1, platform=platform)
-                    tp = _flag_int(script, "tensor-parallel-size")
-                    dp = _flag_int(script, "data-parallel-size")
-                    self.assertIsNotNone(tp, "缺少 --tensor-parallel-size")
-                    self.assertIsNotNone(dp, "缺少 --data-parallel-size")
-                    # 配方
-                    self.assertEqual(tp, device_count // 2,
-                                     f"GLM-5.2 单机 TP 应为 device_count//2={device_count//2}")
-                    self.assertEqual(dp, 2, "GLM-5.2 单机 DP 应为 2")
-                    # ★核心不变式:精确占满本节点,绝不超订(历史 bug 是 TP×DP=2×device_count)
-                    self.assertEqual(
-                        tp * dp, device_count,
-                        f"单机 TP×DP={tp*dp} 必须 == device_count={device_count}（否则超订）",
-                    )
+            with self.subTest(device_count=device_count):
+                script = _gen_script(_GLM52_NAME, device_count, nnodes=1, platform="a3")
+                tp = _flag_int(script, "tensor-parallel-size")
+                dp = _flag_int(script, "data-parallel-size")
+                self.assertIsNotNone(tp, "缺少 --tensor-parallel-size")
+                self.assertIsNotNone(dp, "缺少 --data-parallel-size")
+                self.assertEqual(tp, device_count // 2,
+                                 f"GLM-5.2 a3 单机 TP 应为 device_count//2={device_count//2}")
+                self.assertEqual(dp, 2, "GLM-5.2 a3 单机 DP 应为 2")
+                # ★核心不变式:精确占满本节点,绝不超订(历史 bug 是 TP×DP=2×device_count)
+                self.assertEqual(
+                    tp * dp, device_count,
+                    f"单机 TP×DP={tp*dp} 必须 == device_count={device_count}（否则超订）",
+                )
+
+    def test_single_node_a2_not_halved_no_dp2(self):
+        """a2(910B):平台门控不命中减半分支,整卡 TP、无 DP2(减半仅 a3)。"""
+        for device_count in (8, 16):
+            with self.subTest(device_count=device_count):
+                script = _gen_script(_GLM52_NAME, device_count, nnodes=1, platform="a2")
+                tp = _flag_int(script, "tensor-parallel-size")
+                self.assertEqual(tp, device_count,
+                                 "GLM-5.2 910B 单机应整卡 TP,不减半")
+                self.assertNotIn("--data-parallel-size 2", script)
 
     def test_single_node_emits_dp2_recipe(self):
         """显式锁住 16 卡单机的最终命令片段(用户报障原型)。"""
@@ -140,6 +154,38 @@ class Glm52DualNodeTopologyTest(unittest.TestCase):
                 # 本节点占用 = TP × DP_local 必须 == device_count(每节点也不超订)
                 self.assertEqual(tp * dp_local, device_count,
                                  f"双机本节点 TP×DP_local={tp*dp_local} 必须 == {device_count}")
+
+
+class Glm52SingleNodeTaskQueueTest(unittest.TestCase):
+    """单机 GLM-5.2(a3) 对齐官方 recipe:剔除 TASK_QUEUE_ENABLE;a2 / 双机保留。"""
+
+    def test_a3_single_node_drops_task_queue(self):
+        for device_count in (8, 16):
+            with self.subTest(device_count=device_count):
+                script = _gen_script(_GLM52_NAME, device_count, nnodes=1, platform="a3")
+                self.assertNotIn("export TASK_QUEUE_ENABLE", script,
+                                 "a3 单机 GLM-5.2 应剔除 TASK_QUEUE_ENABLE(官方 recipe 不设)")
+
+    def test_a2_single_node_keeps_task_queue(self):
+        """a2(910B) 单机不进官方单机 recipe,保留通用 TASK_QUEUE_ENABLE。"""
+        script = _gen_script(_GLM52_NAME, 16, nnodes=1, platform="a2")
+        self.assertIn("export TASK_QUEUE_ENABLE", script)
+
+    def test_dual_node_keeps_task_queue(self):
+        """双机不进单机 carve-out,保留 TASK_QUEUE_ENABLE。"""
+        script = _gen_script(
+            _GLM52_NAME, 16, nnodes=2, platform="a3",
+            argv_extra=[
+                "--distributed",
+                "--distributed-executor-backend", "dp_deployment",
+                "--head-node-addr", "10.0.0.1",
+            ],
+            extra_env={
+                "NODE_IPS": "10.0.0.1,10.0.0.2", "RANK_IP": "10.0.0.1",
+                "MASTER_IP": "10.0.0.1", "POD_IP": "10.0.0.1",
+            },
+        )
+        self.assertIn("export TASK_QUEUE_ENABLE", script)
 
 
 class Glm52EnvTest(unittest.TestCase):

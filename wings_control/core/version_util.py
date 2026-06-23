@@ -78,6 +78,32 @@ def parse_engine_version_tuple(ver_str: str | None = None) -> tuple[int, int]:
     return DEFAULT_VERSION_TUPLE
 
 
+def engine_version_platform(ver_str: str | None = None) -> str | None:
+    """从 ``ENGINE_VERSION`` 后缀解析 Ascend 芯片：``'a3'``(910C) / ``'a2'``(910B)。
+
+    镜像构建版本号以 ``-a3`` / ``-a2`` 后缀标识芯片（如 ``"0.21.0-a3"`` → a3/910C）。
+    无可识别后缀时返回 ``None``（由调用方决定默认）。
+
+    本函数是 engine-version → 芯片 的【单一归口】：
+      * ``vllm_adapter._get_engine_config_platform`` 复用它（取代原内联 ``endswith("-a3")``）；
+      * ``model_utils.is_glm52_single_node_even`` 复用它做单机 GLM-5.2 的 a3 门控。
+
+    Args:
+        ver_str: 版本字符串。为 None 时从 ``ENGINE_VERSION`` 环境变量读取。
+
+    Returns:
+        ``"a3"`` / ``"a2"`` / ``None``。
+    """
+    if ver_str is None:
+        ver_str = os.getenv("ENGINE_VERSION", "")
+    ver = (ver_str or "").strip().lower()
+    if ver.endswith("-a3"):
+        return "a3"
+    if ver.endswith("-a2"):
+        return "a2"
+    return None
+
+
 def normalize_engine_version(ver_str: str | None = None) -> str:
     """将版本字符串规范化为 "major.minor.0" 格式。
 

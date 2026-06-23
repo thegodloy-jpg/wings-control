@@ -46,9 +46,9 @@ except ImportError:
     from vllm_distributed import _build_vllm_distributed_script, _resolve_dp_deployment_topology  # noqa: F401
 
 try:
-    from wings_control.core.version_util import parse_engine_version_tuple
+    from wings_control.core.version_util import parse_engine_version_tuple, engine_version_platform
 except ImportError:
-    from core.version_util import parse_engine_version_tuple  # noqa: F811
+    from core.version_util import parse_engine_version_tuple, engine_version_platform  # noqa: F811
 
 
 def _sanitize_shell_path(path: str) -> str:
@@ -214,6 +214,11 @@ _DEEPSEEK_ASCEND_DP_ARCHES = {
     "GlmMoeDsaForCausalLM",
     "KimiK25ForConditionalGeneration",
 }
+
+# GLM-5.2 单机(a3)官方 recipe 的全局 DP 度。单机每节点用 DP 个 replica，
+# 每 replica 占 device_count // DP 卡，故 TP = device_count // _GLM52_SINGLE_NODE_DP，
+# 且 TP × DP == device_count（精确占满本节点，不超订）。具名以替代散落的字面量 2。
+_GLM52_SINGLE_NODE_DP = 2
 
 
 def _default_deepseek_ascend_dp_tensor_parallel_size(
@@ -1244,11 +1249,9 @@ def _get_engine_config_platform(params: Dict[str, Any]) -> str:
     declared = str(value).strip().lower()
     if declared:
         return declared
-    # ENGINE_VERSION 后缀作次级信号（来自镜像构建版本号，如 "0.13.0rc3-a3"）
-    version = os.getenv("ENGINE_VERSION", "").strip().lower()
-    if version.endswith("-a3"):
-        return "a3"
-    return ""
+    # ENGINE_VERSION 后缀作次级信号（来自镜像构建版本号，如 "0.13.0rc3-a3"）。
+    # 复用 version_util.engine_version_platform 单一归口（取代原内联 endswith("-a3")）。
+    return engine_version_platform() or ""
 
 
 _DEEPSEEK_V4_IDENTITY_CONFIG_KEYS = (
@@ -1770,8 +1773,8 @@ def _apply_generic_deepseek_ascend_dp_defaults(
     # 双机维持每节点 TP=device_count（每节点 1 个 DP replica，TP16），由
     # _resolve_dp_deployment_topology 推 DP-local=1/DP=2。按 is_glm52 子串标识，复杂名亦稳。
     if model_architecture == "GlmMoeDsaForCausalLM" and is_glm52_single_node_even(params):
-        default_tp = device_count // 2
-        _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", 2)
+        default_tp = device_count // _GLM52_SINGLE_NODE_DP
+        _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", _GLM52_SINGLE_NODE_DP)
     if default_tp and "tensor_parallel_size" not in explicit_keys:
         engine_config["tensor_parallel_size"] = default_tp
 
@@ -2216,9 +2219,9 @@ def _apply_glm52_ascend_recipe(params: Dict[str, Any], engine_config: Dict[str, 
     _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
     if is_glm52_single_node_even(params):
         _dc = _safe_int(params.get("device_count"))
-        _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", _dc // 2)
-        _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", 2)
-    logger.info("[GLM-5.2 Ascend] async_scheduling + EP (+单机 DP=2) ensured")
+        _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", _dc // _GLM52_SINGLE_NODE_DP)
+        _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", _GLM52_SINGLE_NODE_DP)
+    logger.info("[GLM-5.2 Ascend] async_scheduling + EP (+单机 DP=%d) ensured", _GLM52_SINGLE_NODE_DP)
     return True
 
 
@@ -2962,6 +2965,31 @@ def build_start_command(params: Dict[str, Any]) -> str:
 
 
 
+def _filter_glm52_single_node_task_queue(
+    commands: List[str],
+    params: Dict[str, Any],
+    engine: str,
+) -> List[str]:
+    """单机 GLM-5.2(a3) 对齐官方 recipe：剔除 ``TASK_QUEUE_ENABLE``（官方单机命令不设）。
+
+    ``TASK_QUEUE_ENABLE`` 由两个 vllm_ascend 通用源注入——内联 ``set_vllm_ascend_env.sh``
+    的字面量 ``=1`` 与 ``_build_vllm_ascend_forced_env_commands`` 的软默认 ``=${...:-1}``——
+    去重后合并为一条。此处在 ``dedupe_env_exports`` **之后**按变量名剔除其 export 行；
+    echo 行由 ``_inject_env_echo`` 依 export 生成，export 没了 echo 自然不生成，无需单独删。
+
+    范围与单机 TP=device_count//DP + DP2 配方严格一致：仅 ``is_glm52_single_node_even`` 命中
+    （vllm_ascend + GLM-5.2 + 单机偶数卡 + **a3**）才剔除；双机 / a2(910B) / 其它模型保留。
+    """
+    if engine != "vllm_ascend":
+        return commands
+    if not is_glm52_single_node_even(params):
+        return commands
+    kept = [c for c in commands if "TASK_QUEUE_ENABLE" not in c]
+    if len(kept) != len(commands):
+        logger.info("[GLM-5.2 single-node] removed TASK_QUEUE_ENABLE to align with official recipe")
+    return kept
+
+
 def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str]:
     """构建 vLLM 公共环境变量命令链（对所有部署模式均适用）。"""
     # sidecar 容器无 GPU/NPU，使用环境变量代替 netifaces 探测网络接口
@@ -2985,6 +3013,8 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     # 多个 builder（内联 set_vllm_ascend_env.sh / 架构块 / forced 软默认）会重复导出同名变量，
     # 这里收口去重，保证每个变量最终只有一条 export 生效（等价最终值，不动累加型与块内导出）。
     cmds = dedupe_env_exports(cmds)
+    # 单机 GLM-5.2(a3) 对齐官方 recipe：去重后剔除 TASK_QUEUE_ENABLE（官方单机命令不设）。
+    cmds = _filter_glm52_single_node_task_queue(cmds, params, engine)
     return cmds
 
 

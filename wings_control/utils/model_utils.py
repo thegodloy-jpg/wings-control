@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from utils.file_utils import load_json_config
+from core.version_util import engine_version_platform
 
 logger = logging.getLogger(__name__)
 
@@ -163,13 +164,18 @@ def is_glm52_model(model_name: Any = None, model_path: Any = None,
 
 
 def is_glm52_single_node_even(source: Optional[dict]) -> bool:
-    """GLM-5.2 + vllm_ascend + 单机(nnodes==1) + 偶数卡 的统一判定（共享真相源）。
+    """GLM-5.2 + vllm_ascend + 单机(nnodes==1) + 偶数卡 + **a3(910C)** 的统一判定（共享真相源）。
 
     config_loader._set_parallelism_params(用 ctx)与
     vllm_adapter._apply_generic_deepseek_ascend_dp_defaults(用 params)共用此判定，
-    确保「config_loader 让位 ⇔ adapter 接管 TP=device_count//2 + DP2」的条件逐字一致，
+    确保「config_loader 让位 ⇔ adapter 接管 TP=device_count//DP + DP2」的条件逐字一致，
     不会因两处各写一份布尔链而漂移。``source`` 须含 engine / nnodes / device_count /
     model_name / model_path 键（ctx 与 params 同构）。
+
+    平台门控：单机 TP 减半 + DP2 是 **910C(a3) 官方 recipe**，仅 a3 触发；910B(a2) 上触发
+    GLM-5.2 不进此分支，回落通用 GlmMoeDsa 单机整卡 TP（DP1）。平台**只按 engine-version
+    后缀**判定（``-a3``），复用 :func:`core.version_util.engine_version_platform`——它读全局
+    ``ENGINE_VERSION``，ctx / params 两侧取值一致，不依赖各自字典里是否带平台键。
     """
     src = source or {}
     if src.get("engine") != "vllm_ascend":
@@ -180,6 +186,8 @@ def is_glm52_single_node_even(source: Optional[dict]) -> bool:
     except (TypeError, ValueError):
         return False
     if nnodes != 1 or device_count <= 0 or device_count % 2 != 0:
+        return False
+    if engine_version_platform() != "a3":
         return False
     return is_glm52_model(src.get("model_name"), src.get("model_path"))
 
