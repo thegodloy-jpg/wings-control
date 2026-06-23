@@ -1593,6 +1593,28 @@ def _build_deepseek_v4_pro_env(params: Dict[str, Any]) -> List[str]:
     ]
 
 
+def _build_glm5_model_env(params: Dict[str, Any], arch: str) -> List[str]:
+    """GLM-5/5.1/5.2 (GlmMoeDsa) 的 Ascend 模型 env（从 _build_model_env_commands 抽出，避免主函数超长）。
+
+      * 基础 env 由 _build_glm5_ascend_env 按平台给（A3 含 MLAPO）；
+      * RoCE 互联：剔除 HCCL_OP_EXPANSION_MODE=AIV，追加 MLAPO/FUSED_MC2=0；
+      * GLM-5.2 专属：固定 VLLM_VERSION=0.21.0（官方单/双机 recipe，仅 5.2，不注入 5.0/5.1）。
+    """
+    env_commands = _build_glm5_ascend_env(arch, _resolve_deepseek_v4_flash_platform(params))
+    if params.get("distributed") and _is_roce_distributed():
+        env_commands = [c for c in env_commands if "HCCL_OP_EXPANSION_MODE" not in c]
+        env_commands.append("export VLLM_ASCEND_ENABLE_MLAPO=1")
+        env_commands.append("export VLLM_ASCEND_ENABLE_FUSED_MC2=0")
+        logger.info(
+            "[GLM-5.1 RoCE] Removed HCCL_OP_EXPANSION_MODE, "
+            "appended VLLM_ASCEND_ENABLE_MLAPO=1, VLLM_ASCEND_ENABLE_FUSED_MC2=0"
+        )
+    if is_glm52_model(params.get("model_name"), params.get("model_path")):
+        env_commands.append("export VLLM_VERSION=0.21.0")
+        logger.info("[GLM-5.2] pinned VLLM_VERSION=0.21.0 (single/dual recipe)")
+    return env_commands
+
+
 def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     """构建模型架构特定的环境变量命令（支持 NVIDIA 和 Ascend）。
 
@@ -1654,26 +1676,7 @@ def _build_model_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     # GLM-5 (GlmMoeDsaForCausalLM) 在 A3 上需要追加 VLLM_ASCEND_ENABLE_MLAPO=1，
     # 与 vllm-ascend W8A8 官方双机命令对齐；其它架构构造器签名不变。
     if engine == "vllm_ascend" and arch == "GlmMoeDsaForCausalLM":
-        env_commands = builder(arch, _resolve_deepseek_v4_flash_platform(params))
-        # RoCE 互联场景：剔除 HCCL_OP_EXPANSION_MODE=AIV，追加 MLAPO/FUSED_MC2
-        if params.get("distributed") and _is_roce_distributed():
-            env_commands = [
-                c
-                for c in env_commands
-                if "HCCL_OP_EXPANSION_MODE" not in c
-            ]
-            env_commands.append("export VLLM_ASCEND_ENABLE_MLAPO=1")
-            env_commands.append("export VLLM_ASCEND_ENABLE_FUSED_MC2=0")
-            logger.info(
-                "[GLM-5.1 RoCE] Removed HCCL_OP_EXPANSION_MODE, "
-                "appended VLLM_ASCEND_ENABLE_MLAPO=1, VLLM_ASCEND_ENABLE_FUSED_MC2=0"
-            )
-        # GLM-5.2 专属:官方 W8A8 单/双机 recipe 固定 VLLM_VERSION=0.21.0(仅 5.2,不注入 5.0/5.1)。
-        # 通过 _build_model_env_commands 注入 → 单机/双机两路都覆盖。
-        if is_glm52_model(params.get("model_name"), params.get("model_path")):
-            env_commands.append("export VLLM_VERSION=0.21.0")
-            logger.info("[GLM-5.2] pinned VLLM_VERSION=0.21.0 (single/dual recipe)")
-        return env_commands
+        return _build_glm5_model_env(params, arch)
     return builder(arch)
 
 
@@ -2197,6 +2200,55 @@ _GLM5_A2_ADDITIONAL_CONFIG: Dict[str, Any] = {
 }
 
 
+def _apply_glm52_ascend_recipe(params: Dict[str, Any], engine_config: Dict[str, Any],
+                               explicit_keys: set) -> bool:
+    """GLM-5.2 专属 engine 默认：async_scheduling + enable_expert_parallel 必产；单机
+    (nnodes==1, 偶数卡)官方 recipe 全局 DP=2 → TP=device_count//2（覆盖所有 backend，含非
+    dp_deployment / 页面未下发 TP）；双机不动 TP，由 _resolve_dp_deployment_topology 推。
+
+    命中 GLM-5.2 返回 True（调用方应提前 return，不进 GLM-5.1 的 EP 强制关闭）。单机 TP 能落地
+    依赖 config_loader._set_parallelism_params 对 GLM-5.2 单机短路（两处共用 is_glm52_single_node_even，
+    须配套，否则 _set_if_not_explicit 只填空值、覆盖不掉被预置的 TP）。
+    """
+    if not is_glm52_model(params.get("model_name"), params.get("model_path")):
+        return False
+    _set_if_not_explicit(engine_config, explicit_keys, "async_scheduling", True)
+    _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
+    if is_glm52_single_node_even(params):
+        _dc = _safe_int(params.get("device_count"))
+        _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", _dc // 2)
+        _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", 2)
+    logger.info("[GLM-5.2 Ascend] async_scheduling + EP (+单机 DP=2) ensured")
+    return True
+
+
+def _force_glm51_ascend_ep_off(params: Dict[str, Any], model_info,
+                               engine_config: Dict[str, Any], explicit_keys: set) -> None:
+    """GLM-5.1 ascend：强制关闭 enable_expert_parallel。参考社区 W8A8 单/双机命令均无 EP；
+    开启会改路由/通信路径，与当前 vllm-ascend image 的 ACL graph 已知不稳定(vllm-ascend#8015 类)。
+    范围与 KV 稀疏 force-on 严格一致(仅 GLM-5.1，覆盖 910B/910C × 单/双机四象限)。
+    """
+    if not is_glm51_ascend_kvsparse_tmp_scope(
+        model_info, params.get("engine"),
+        model_name=params.get("model_name"),
+        model_path=params.get("model_path"),
+    ):
+        return
+    prev_ep = engine_config.get("enable_expert_parallel")
+    engine_config["enable_expert_parallel"] = False
+    if prev_ep is True:
+        if "enable_expert_parallel" in explicit_keys:
+            logger.warning(
+                "[GLM5.1-Ascend-Tmp] --enable-expert-parallel forcibly disabled; "
+                "GLM-5.1 ascend path requires EP off (overriding user request).",
+            )
+        else:
+            logger.info(
+                "[GLM5.1-Ascend-Tmp] enable_expert_parallel forcibly disabled "
+                "(was True from defaults).",
+            )
+
+
 def _apply_glm5_ascend_engine_defaults(
     params: Dict[str, Any],
     engine_config: Dict[str, Any],
@@ -2242,49 +2294,11 @@ def _apply_glm5_ascend_engine_defaults(
         "[GLM-5/5.1 Ascend] ensure additional_config defaults applied",
     )
 
-    # [GLM-5.2] async_scheduling + enable_expert_parallel 必产（官方单/双机命令均有）。
-    # 用代码 gate（is_glm52 子串标识）而非仅靠模板精确名命名组，确保复杂模型名
-    # （不命中 GLM-5.2-w8a8 精确键）也稳产；提前 return，不进入下面仅对 GLM-5.1
-    # 的 EP 强制关闭分支（5.2 与 5.1 标识互斥，本不会误入，return 仅为显式收口）。
-    if is_glm52_model(params.get("model_name"), params.get("model_path")):
-        _set_if_not_explicit(engine_config, explicit_keys, "async_scheduling", True)
-        _set_if_not_explicit(engine_config, explicit_keys, "enable_expert_parallel", True)
-        # 单机(nnodes==1) 官方 recipe：全局 DP=2 → TP=device_count//2（16卡→TP8/DP2）。
-        # 放此处覆盖**所有 backend**（含非 dp_deployment / 页面未下发 TP 的路径），
-        # 不依赖 generic DP；双机(nnodes>1)不动，由 _resolve_dp_deployment_topology 推 TP16/DP-local1。
-        if (_safe_int(params.get("nnodes")) or 1) == 1:
-            _dc = _safe_int(params.get("device_count"))
-            if _dc and _dc % 2 == 0:
-                # 单机 TP=device_count//2 + DP2。TP 能落地依赖上游
-                # config_loader._set_parallelism_params 对 GLM-5.2 单机短路、不再把 TP 钉成
-                # device_count(否则 _set_if_not_explicit 只填空值、覆盖不掉那个预置值)。二者须配套。
-                _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", _dc // 2)
-                _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", 2)
-        logger.info("[GLM-5.2 Ascend] async_scheduling + EP (+单机 DP=2) ensured")
+    # GLM-5.2 提前收口(async/EP/单机 DP=2)；命中则不进下面仅对 GLM-5.1 的 EP 强制关闭。
+    if _apply_glm52_ascend_recipe(params, engine_config, explicit_keys):
         return
-
-    # EP 强制关闭：范围与 KV 稀疏 force-on 严格一致（仅 GLM-5.1，覆盖
-    # 910B/910C × 单机/双机 四象限）。GLM-5.0（非 5.1）的 GlmMoeDsa 走
-    # 上面的 additional_config 注入但不强制 EP/sparse，保留用户原始配置。
-    if not is_glm51_ascend_kvsparse_tmp_scope(
-        model_info, params.get("engine"),
-        model_name=params.get("model_name"),
-        model_path=params.get("model_path"),
-    ):
-        return
-    prev_ep = engine_config.get("enable_expert_parallel")
-    engine_config["enable_expert_parallel"] = False
-    if prev_ep is True:
-        if "enable_expert_parallel" in explicit_keys:
-            logger.warning(
-                "[GLM5.1-Ascend-Tmp] --enable-expert-parallel forcibly disabled; "
-                "GLM-5.1 ascend path requires EP off (overriding user request).",
-            )
-        else:
-            logger.info(
-                "[GLM5.1-Ascend-Tmp] enable_expert_parallel forcibly disabled "
-                "(was True from defaults).",
-            )
+    # GLM-5.1：强制关闭 EP（范围严格限 GLM-5.1；GLM-5.0 走上面 additional_config 注入但保留用户 EP）。
+    _force_glm51_ascend_ep_off(params, model_info, engine_config, explicit_keys)
 
 
 def _is_deepseek_ascend_dp_deployment(params: Dict[str, Any]) -> bool:
