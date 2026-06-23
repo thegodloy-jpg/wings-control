@@ -242,6 +242,8 @@ def _build_ascend_dp_env_commands(params: Dict[str, Any], net_if: str) -> List[s
             f"export VLLM_ASCEND_BALANCE_SCHEDULING={'0' if is_glm52_dp else '1'}")
         if is_glm52_dp:
             env_commands.append("export VLLM_ASCEND_ENABLE_FLASHCOMM1=1")
+            # 对齐官方 GLM-5.2 双机命令：显式 ASCEND_LAUNCH_BLOCKING=0（=默认非阻塞，仅为对齐标准）。
+            env_commands.append("export ASCEND_LAUNCH_BLOCKING=0")
     if vllm_adapter.is_deepseek_ascend_dp_deployment(params):
         env_commands.append(f"export VLLM_ENGINE_READY_TIMEOUT_S={os.getenv('VLLM_ENGINE_READY_TIMEOUT_S', '7200')}")
     return env_commands
