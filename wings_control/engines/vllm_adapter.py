@@ -2252,6 +2252,9 @@ def _apply_glm5_ascend_engine_defaults(
         if (_safe_int(params.get("nnodes")) or 1) == 1:
             _dc = _safe_int(params.get("device_count"))
             if _dc and _dc % 2 == 0:
+                # 单机 TP=device_count//2 + DP2。TP 能落地依赖上游
+                # config_loader._set_parallelism_params 对 GLM-5.2 单机短路、不再把 TP 钉成
+                # device_count(否则 _set_if_not_explicit 只填空值、覆盖不掉那个预置值)。二者须配套。
                 _set_if_not_explicit(engine_config, explicit_keys, "tensor_parallel_size", _dc // 2)
                 _set_if_not_explicit(engine_config, explicit_keys, "data_parallel_size", 2)
         logger.info("[GLM-5.2 Ascend] async_scheduling + EP (+单机 DP=2) ensured")
