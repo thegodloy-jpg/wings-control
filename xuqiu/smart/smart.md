@@ -68,7 +68,7 @@ flowchart TD
 | `kvCacheDiskSize` / `kvCacheDiskPath`            | `LMCACHE_LOCAL_DISK` + `LMCACHE_MAX_LOCAL_DISK_SIZE`         | `_build_cache_env_commands` 694-695                          | 磁盘卸载 + YAML           |
 | （QAT，老逻辑）                                  | `LMCACHE_QAT=true`                                           | `get_qat_env()` 195                                          | QAT 硬件压缩              |
 
-> Maas：内存自动计算逻辑，复用`LMCACHE_MAX_LOCAL_CPU_SIZE`，auto传入wings自动计算，具体数值，则不计算。整个pod的内存，需要新增环境变量，
+> Maas：内存自动计算逻辑，复用 `LMCACHE_MAX_LOCAL_CPU_SIZE`，`=auto` 传入则 wings 自算、给具体数值则不算；并**新增环境变量 `LMCACHE_POD_MEMORY` 注入「本节点容器 DRAM 上限」（GiB，非全 pod 之和，见[需求一-三特性使能.md](需求一-三特性使能.md) §3.0 C4）**。
 
 **PD（一票否决）**
 
@@ -376,4 +376,4 @@ flowchart LR
 | **合计(wings)**          | **约 15–24**               |
 
 > C14 是把白名单变「单一真相源」的关键——没有它，C1 只gate产出口，感知/补丁/回退仍错。
-> auto 容量自算（C4 内）的 OS 常量/DP 占用/熔断阈值仍依赖运维口径；未给前 auto 档先按「显式值透传」兜底，不阻塞主线。
+> auto 容量自算（C4，公式见[需求一-三特性使能.md](需求一-三特性使能.md) §3.0）依赖：worker 实测 PSS 表（含 worker 计数口径）、`C_fixed` 的 DP≥4 拟合、graph 三态判定、权重挂载本地盘/NFS、`f_margin`/熔断下限——仍待运维/实测确认；未给前先保守兜底（worker 取 full-graph 上沿、`f_margin=0.15`、`swap_space=0`），不阻塞主线。
