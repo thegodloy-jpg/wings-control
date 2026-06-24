@@ -74,7 +74,7 @@ bash /opt/wings-control/wings_start.sh --model-name Qwen3.6-27B \
 | `param` 块（自定义启动字段 JSON） | `/shared-volume/param_config.json` 的 `param`（**非** JSON 内的 `config-file` 键，该键已删） | wings 额外解析（§C.4 / §4.4 C11） | 归一 kebab→snake → **启动字段复用默认 / 非启动字段转 env** → 合并 `engine_config` → 渲染 CLI |
 | `param` + 强制覆盖 | `CONFIG_FORCE=true` | `get_config_force_env()` 2733 | 用户配置**独占**，跳过模板 |
 | `param` 内用户按引擎追加键 | 同 `param` 合并范式 | `_load_user_config` 1718 | 透传（优先级见 §4.4 C13 / §6-③） |
-| `env` 块（自定义环境变量 JSON） | **wings 注入引擎子进程 env**（过黑名单，非全局、非 Pod spec） | wings 额外解析（§C.4 / §4.4 C12） | 直达引擎进程，wings 自身不受污染 |
+| `env` 块（自定义环境变量 JSON） | **emit 进 `build_start_script` 的 export 区**（过黑名单，引擎容器脚本，非 wings 全局、非 Pod spec） | wings 额外解析（§C.4 / §4.4 C12） | 引擎容器执行脚本时生效，wings 自身不受污染 |
 
 > ⚠ **机制变更（相对旧版）**：旧版「复用现有 `--config-file`/`CONFIG_FILE`，wings 无改」**作废**。
 > 约束明确「JSON 内 `config-file` 字段删除」+「新增 json 路径供 wings 额外解析」→ **承载方式从 `--config-file` 文本改为约定路径，wings 需新增解析**。
@@ -102,16 +102,29 @@ bash /opt/wings-control/wings_start.sh --model-name Qwen3.6-27B \
 
 ### C.4 wings 额外解析 = 一层薄拆分器（定稿）
 
+> **执行模型（两面，先读这段再看下面的链路）**：JSON **全程由 wings-control 处理**，引擎拿不到「裸 JSON」，只拿到 wings 生成的脚本。
+>
+> | 面 | 谁 | 干什么 |
+> | --- | --- | --- |
+> | **控制面** | wings-control 容器（当前进程） | 解析 JSON → 拆 `{param,env}` → 合并 config → **跑加速特性使能** → 生成 `start_command.sh` 写共享卷 |
+> | **数据面** | 引擎容器（独立） | 执行 `start_command.sh`，把引擎（vLLM/…）拉起 |
+>
+> - 「**引擎不由 wings `Popen`**」**只**指引擎**进程**在引擎容器里被脚本拉起，**不等于** wings 不处理 JSON；交接物是脚本，**不是** `Popen(env=...)`。
+> - 拆分器挂在 `load_and_merge_configs` **最前端**（[2732-2734](../../wings_control/core/config_loader.py#L2732)）→ `param` 拆出后**继续走完整条管线**（`get_lmcache_env` 卸载 / `_should_append_auto_speculative_config`(2783) 投机 / 稀疏产出口）→ **JSON 路径复用整条加速特性管线、不旁路、不开并行链路**（对齐 smart.md「wings 依旧需要使能加速特性」）。
+> - `env` 块对加速开关前缀（`ENABLE_SPARSE/LMCACHE_*/SD_*/SPARSE_*`）做黑名单，**正是为不让用户 env 覆盖 wings 的加速使能**——加速由 wings 权威决定，`env` 只承载自定义业务变量；`param` 预置 `speculative_config/kv_transfer_config` 则走 C13「已预置不合成」共存。
+
 > 页面 JSON 是**嵌套** `{param, env}`，而下游 `_load_user_config`([config_loader.py:1744-1759](../../wings_control/core/config_loader.py#L1744)) 期望**扁平**引擎参数 dict。故「额外解析」不是新写 parser，而是固定路径读取 + 一层拆分，**复用既有合并/注入，不开并行链路**：
 
 ```
 读 /shared-volume/param_config.json   （固定路径，启动早期无条件探测）
- ├─ obj["param"] → 现有 _load_user_config 合并范式（kebab→snake、合 engine_config）   ← C11
+ ├─ obj["param"] → 现有 _load_user_config 合并范式（kebab→snake、合 engine_config）       ← C11
  │                  其中：启动字段复用原有默认；非启动字段转 env（§B.2 映射）
- └─ obj["env"]   → 过保留字黑名单 → 注入引擎子进程 env（child_env，非 os.environ）     ← C12
+ └─ obj["env"]   → 过保留字黑名单 → 随 params 透传 adapter → build_start_script 内
+                    emit `export K=V`（引擎容器执行的脚本，非 wings 全局/非 Pod spec）      ← C12
 ```
 
-- **C12 落点（定稿）**：`child_env = os.environ.copy(); child_env.update(过滤后的 env 块)`，作为引擎启动 `env=` 传入 —— **作用域限引擎子进程**，wings 全局与 Pod spec 均不被写入，满足母注「统一放一起、勿入全局」。
+- **C12 落点（定稿，已纠正架构口径）**：⚠ 本项目是 **launcher 模式**——引擎**不由 wings `Popen`**，而是 `build_start_script()` 把 bash 脚本写共享卷、**由独立引擎容器执行**（[mindie_adapter.py:1917](../../wings_control/engines/mindie_adapter.py#L1917)「生成的脚本将写入共享卷，由 engine 容器执行」）。故**不存在 Python `env=` 注入点**，`env` 块只能 **emit 成 `export` 行进生成脚本的 env 区**。
+- 复用既有同型函数 `_append_lmcache_env_export`（[vllm_adapter.py:611-616](../../wings_control/engines/vllm_adapter.py#L611)：`env_commands.append(f"export {name}={shlex.quote(value)}")`），挂进 `_build_env_commands`/`_build_cache_env_commands`（656/690）产出的 env 命令块即可。脚本只跑引擎 → 天然引擎侧、不污染 wings 进程、不入 Pod spec，满足母注「统一放一起、勿入全局」。
 
 > Maas：找傲宇确认 json 内部参数设计的逻辑（vllm，sglang，mindie），json 页面开启后，需要环境变量承载；引擎侧环境变量，需要统一放置在一起，不要放在全局中。
 >
@@ -124,10 +137,51 @@ bash /opt/wings-control/wings_start.sh --model-name Qwen3.6-27B \
 ### 4.4 C11/C12/C13 透传
 
 - **C11 param 块（定稿）**：wings 从固定路径 `/shared-volume/param_config.json` 读 `param` → 归一 kebab→snake → **启动字段复用原有默认参数、非启动字段转 env（§B.2 映射，见 [需求二 §B.2](需求二-参数删减.md)）** → 合并 `engine_config`。新增的只是「固定路径读取 + `{param,env}` 拆分器」（§C.4），合并/渲染**复用** `_load_user_config`(1718)，旧「无改」作废、但不开并行链路。
-- **C12 env 块（定稿 = wings 注入子进程 env）**：wings 读 `env` 块 → 过保留字黑名单（禁覆盖 `WINGS_*/LMCACHE_*/PD_*/SD_*/SPARSE_*`）→ 注入**引擎子进程** env（`child_env`，非 `os.environ`、非 Pod spec），见 §C.4。满足母注「统一放一起、勿入全局」；**不走 K8s Pod env**（Pod env 对整容器全局可见、且破坏单一 json 来源，已否决）。
+- **C12 env 块（定稿 = emit 进引擎启动脚本 export 区）**：wings 读 `env` 块 → 过保留字黑名单（禁覆盖 `WINGS_*/LMCACHE_*/PD_*/SD_*/SPARSE_*`）→ 在 `build_start_script` 内 emit `export {name}={shlex.quote(value)}`（复用 `_append_lmcache_env_export` 同型，[vllm_adapter.py:611](../../wings_control/engines/vllm_adapter.py#L611)），见 §C.4。launcher 模式下引擎由独立容器执行该脚本 → 引擎侧生效、不污染 wings、不入 Pod spec；**不走 K8s Pod env**（Pod env 对整容器全局可见、且破坏单一 json 来源，已否决）。
 - **C13 自定义 vs 白名单优先级**（需求一×三耦合点）：用户在 `param` 显式写 `kv_transfer_config/kv_cache_dtype/speculative_config` 时是否覆盖白名单——**待定见 §6-③**；实现挂靠现有「已预置不合成」范式（`_should_append_auto_speculative_config` 2722）。
 
 > ⚠ **C13 优先级未决**：`param` 手写 `kv_transfer_config` 等，用户显式 > 白名单 还是反之？暂按「用户显式优先」。给值后 §4.4 即最终态——详见索引 [smart.md](smart.md) §6-③。
+
+### 4.5 实施细节（代码级 diff）
+
+> 新增面收敛到「一个固定路径读取 + 一层 `{param,env}` 拆分」，下游全部复用既有函数。
+
+**① 拆分器 — `config_loader.load_and_merge_configs()`（[config_loader.py:2732-2734](../../wings_control/core/config_loader.py#L2732) 处）**
+
+```python
+# 现状：config = known_args.config_file; user_config = _load_user_config(config)
+# 改后：config_file 为空时回落固定路径，并拆出 env 块
+PARAM_CONFIG_PATH = "/shared-volume/param_config.json"   # 常量，改名只动此处（遗留-④）
+config = known_args.config_file
+custom_env: dict = {}
+if not config and os.path.isfile(PARAM_CONFIG_PATH):
+    obj = load_json_config(PARAM_CONFIG_PATH) or {}
+    config = obj.get("param") or {}            # dict → _load_user_config(1740) 直接吃
+    custom_env = obj.get("env") or {}          # 留给 adapter emit
+user_config = _load_user_config(config)
+# custom_env 过黑名单后塞进 cmd_known_params，随 params 透传到 adapter
+cmd_known_params["_custom_engine_env"] = _filter_reserved_env(custom_env)
+```
+
+- `param` 是 dict → `_load_user_config` 在 [1740](../../wings_control/core/config_loader.py#L1740) 走 `isinstance(config, dict)` 分支，归一后并入既有合并链（2742-2750），**零新增合并逻辑**。
+- 新增小函数 `_filter_reserved_env(d)`：剔除前缀命中 `WINGS_/LMCACHE_/PD_/SD_/SPARSE_` 的键（C12 黑名单）。
+
+**② env emit — `vllm_adapter._build_env_commands()`（env 命令块尾部，~[690](../../wings_control/engines/vllm_adapter.py#L690)）**
+
+```python
+# 复用既有同型 export 写法（_append_lmcache_env_export, 611-616）
+for k, v in (params.get("_custom_engine_env") or {}).items():
+    env_commands.append(f"export {k}={shlex.quote(str(v))}")
+```
+
+- 引擎容器执行 `build_start_script` 产出脚本时生效；wings 进程与 Pod spec 均不写入。
+- sglang/mindie 各自的 `build_start_script` 同理在其 env 块追加（mindie 走 `_build_start_script_env_block` [1889](../../wings_control/engines/mindie_adapter.py#L1889)）。
+
+**③ param 内三类语义落点**
+
+- **auto→回填默认**（`max-num-seqs`/`max-num-batched-tokens`）：拆分器读出后若值为 `"auto"`，回填 256/4096 再入 `param`（**与需求二 C9 相反**：此处不放行 None）。
+- **删除键**（`quantization`/`quantization-param-path`/`config-file`）：MaaS 不应写入 `param`；若误写，`_filter` 阶段一并剔除（保险）。
+- **按引擎追加键**：原样进 `_load_user_config`→`engine_config`，优先级见 C13。
 
 ---
 
@@ -138,5 +192,5 @@ bash /opt/wings-control/wings_start.sh --model-name Qwen3.6-27B \
 | ① | **非启动字段清单 + env 映射**：与需求二 §遗留-① 同源，§B.2 已给现成映射，待 MaaS 确认。 | C11 转 env | 代码内 `_env` 回退名 |
 | ② | **C13 优先级**：`param` 手写 `kv_transfer_config` 等，用户显式 > 白名单 还是反之？ | C13 实现 | 暂按「用户显式优先」 |
 
-> ✅ **已收口（原 ③/④）**：③ `env` 块承载 = **wings 注入引擎子进程 env**（§C.4/C12，否决 Pod env）；④ 新增 json 路径 = 固定 **`/shared-volume/param_config.json`**。
-> 仅 ④ 的**最终路径名**待 MaaS 复核（不影响机制，改名只动常量）。
+> ✅ **已收口（原 ③/④）**：③ `env` 块承载 = **emit 进 `build_start_script` 的 export 区**（launcher 模式无 Popen 注入点，§C.4/§4.5；否决 Pod env）；④ 新增 json 路径 = 固定 **`/shared-volume/param_config.json`**。
+> 仅 ④ 的**最终路径名**待 MaaS 复核（不影响机制，改名只动 §4.5 的 `PARAM_CONFIG_PATH` 常量）。
