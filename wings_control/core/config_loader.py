@@ -2071,6 +2071,12 @@ def _detect_explicit_cli_keys(engine: str | None = None) -> set:
         if os.environ.get(env_var) is not None:
             explicit.add(param_key)
 
+    # max_model_len 由 input_length + output_length 派生（见 _set_sequence_length）：
+    # 用户显式给了序列长度 ⟹ 派生出的 max_model_len 也应视为显式，否则 PD external-lb 合并
+    # （_apply_pd_external_lb 按 explicit 门控）会用 pd_config 注册表值覆盖掉用户算出的 max_model_len。
+    if explicit & {"input_length", "output_length"}:
+        explicit.add("max_model_len")
+
     return explicit
 
 
