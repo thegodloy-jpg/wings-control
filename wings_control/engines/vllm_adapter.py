@@ -2952,6 +2952,21 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     # L3：common_env/角色 env 追加在 base 之后（bash 后者生效）；对整段去重，使注册表覆盖值收口、
     # 消掉 base 的同名重复（common_env_cmds 内部已去重，这里把角色 env 一并纳入再收口一次）。
     env_lines = dedupe_env_exports(env_lines)
+    # strip_env（注册表 _pd_strip_env，按场景/平台/角色声明）：剔除本部署不应出现的 env export，
+    # 对齐官方"不设某些 env"的口径。仅声明了 strip_env 的条目（如 GLM5 A2）生效，
+    # 空集 → 不过滤，其它 PD 模型行为不变。
+    strip_env = set(params.get("_pd_strip_env") or [])
+    if strip_env:
+        def _export_name(line: str):
+            m = _re.match(r"\s*export ([A-Za-z_][A-Za-z0-9_]*)=", line)
+            return m.group(1) if m else None
+        env_lines = [c for c in env_lines if _export_name(c) not in strip_env]
+
+    # bootstrap 端口逐 service 唯一，供 MooncakeConnectorV1/Layerwise/Hybrid；若 strip_env 含
+    # VLLM_MOONCAKE_BOOTSTRAP_PORT（如官方 p2p MooncakeConnector 不设），内联前缀也一并省去。
+    rt_prefix = "ASCEND_RT_VISIBLE_DEVICES=$CARDS"
+    if "VLLM_MOONCAKE_BOOTSTRAP_PORT" not in strip_env:
+        rt_prefix += " VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP"
 
     # fork 主体包进子 shell，使其作为单个可后台化单元被上层监控
     # （wings_entry._strip_exec_and_backgroundify 给末行 ')' 追加 ' &' + ENGINE_PID=$!）。
@@ -2963,7 +2978,7 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
         f"    RANK=$(({start} + i)); PORT=$(({base_port} + i))",
         f"    KVPORT=$(({kv_base} + i)); BOOTSTRAP=$(({bootstrap_base} + i))",
         f"    LO=$((i * {tp})); HI=$((LO + {tp} - 1)); CARDS=$(seq -s, $LO $HI)",
-        (f"    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP"
+        (f"    {rt_prefix}"
          f" {svc_cmd} --port $PORT"
          f" --tensor-parallel-size {tp} --data-parallel-size {dp_size}"
          f" --data-parallel-rank $RANK --data-parallel-size-local 1"

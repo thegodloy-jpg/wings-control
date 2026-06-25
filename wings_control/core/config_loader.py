@@ -1171,6 +1171,11 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
         **entry.get("common_env", {}),
         **entry.get(role_key, {}).get("env", {}),
     }
+    # strip_env：注册表声明应从最终 env 段剔除的多余变量（common + 角色级；平台 overlay 经
+    # _merge_configs 注入）。仅声明 strip_env 的条目生效（如 GLM5 A2 对齐官方"不设这些 env"）；
+    # 其它模型为空集 → vllm_adapter 的 PD fork 构建器不过滤，行为不变。
+    cmd_known_params["_pd_strip_env"] = list(entry.get("strip_env", [])) + list(
+        (entry.get(role_key) or {}).get("strip_env", []))
     cmd_known_params["distributed"] = False
     logger.info("[PD external-lb] arch=%s role=%s connector=%s dp_size=%d local=%d rank_start=%d addr=%s",
                 arch, role, entry["connector"], ext["dp_size"], ext["dp_size_local"],
