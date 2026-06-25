@@ -183,6 +183,228 @@ for k, v in (params.get("_custom_engine_env") or {}).items():
 - **删除键**（`quantization`/`quantization-param-path`/`config-file`）：MaaS 不应写入 `param`；若误写，`_filter` 阶段一并剔除（保险）。
 - **按引擎追加键**：原样进 `_load_user_config`→`engine_config`，优先级见 C13。
 
+### 4.6 JSON 逻辑下发 · 处理流程模拟
+
+> **本节模拟「JSON 逻辑」如何下发**：页面下发 JSON 文件 → wings 每一步对数据做了什么（带 file:line）→ 引擎最终拿到什么脚本。
+> **核心认知（JSON 逻辑的真相）**：页面下发的是 `/shared-volume/param_config.json`（**不是 CLI**），**wings 全程处理**——读固定路径 → 拆 `{param,env}` → param 走合并管线渲染成 CLI、env emit 成 `export` → 拼成 `start_command.sh` 写共享卷 → **引擎容器执行**（★非 wings `Popen`）。引擎拿不到「裸 JSON」。
+> 结构：总览管线（§4.6.0）→ 端到端数据流模拟（§4.6.1，逐阶段追踪数据变化）→ 关键分支细化（§4.6.2–4.6.5，IN/EXEC/OUT 三泳道）。
+
+#### 4.6.0 通用管线骨架
+
+```mermaid
+flowchart LR
+  subgraph IN["入参"]
+    direction TB
+    I1["/shared-volume/param_config.json = {param, env}"]
+    I2["极简 CLI：--model-name / --model-path / --port"]
+    I3["hardware_info.json / CONFIG_FORCE / 加速开关 ENV"]
+  end
+  subgraph EXEC["执行"]
+    direction TB
+    X1["拆分器(2732-2734)：读固定路径 → 拆 {param,env}"]
+    X2["param → _load_user_config dict(1740) → merge(2747) → override(2750)"]
+    X3["env → _filter_reserved_env → cmd_known_params._custom_engine_env"]
+    X4["加速管线：get_lmcache_env / _should_append_auto_speculative_config(2783) / 稀疏产出口"]
+    X5["build_start_script：渲染 CLI + emit export(611 同型)"]
+    X1 --> X2 --> X4 --> X5
+    X1 --> X3 --> X5
+  end
+  subgraph OUT["出参"]
+    direction TB
+    O1["start_command.sh：完整 CLI + export 自定义 env"]
+    O2["写 /shared-volume → 引擎容器执行（★非 wings Popen）"]
+  end
+  IN --> EXEC --> OUT
+```
+
+#### 4.6.1 端到端数据流模拟（逐阶段追踪数据变化）
+
+**阶段0 · 页面下发**（一个 JSON 文件 + 极简命令）
+
+```bash
+# /shared-volume/param_config.json
+{ "param": { "gpu-memory-utilization": 0.8, "max-num-seqs": "auto", "quantization": null },
+  "env":   { "MY_VAR": "1", "ENABLE_SPARSE": "true" } }
+# 极简命令（无 --config-file，调优全在 JSON）
+bash /opt/wings-control/wings_start.sh --model-name Qwen3.6-27B --model-path /usr/local/serving/models/ --port 18000
+```
+
+**阶段1→8 · 逐阶段数据流**（JSON 如何变成最终脚本）
+
+| 阶段 | 处理（file:line） | 数据变化 |
+| --- | --- | --- |
+| ① 拆分器 | 读固定路径，拆双块(2732-2734) | `param={gpu-util:0.8, max-num-seqs:"auto", quantization:null}` / `env={MY_VAR, ENABLE_SPARSE}` |
+| ② param·auto 回填 | 值为 `"auto"`→默认 | `max-num-seqs: "auto" → 256` 🟧（**与需求二相反**，不放行 None） |
+| ③ param·删除键 | `null`/保留前缀剔除 | `quantization` 丢弃（靠 C7 自动检测） |
+| ④ param·合并 | `_load_user_config` dict(1740)→merge(2747)→override(2750) | `engine_config.gpu_memory_utilization=0.8` |
+| ⑤ env·过滤 | `_filter_reserved_env` | `MY_VAR` 保留 / `ENABLE_SPARSE` **剔除**（防覆盖加速） |
+| ⑥ 加速管线 | `get_lmcache_env` / `_should_append_auto_speculative_config`(2783) / 稀疏产出口 | 按白名单合成（**不旁路**；Qwen3.6-27B 非白名单→无） |
+| ⑦ build_start_script | 渲染 CLI + emit export(611 同型) | `--gpu-memory-utilization 0.8 --max-num-seqs 256 …` + `export MY_VAR=1` |
+| ⑧ 下发 | 写 `/shared-volume/start_command.sh` | 引擎容器执行脚本拉起 vLLM（★非 wings Popen） |
+
+**阶段8 · 最终 start_command.sh（出参）**
+
+```bash
+export MY_VAR=1                                  # env 块（ENABLE_SPARSE 已被拦）
+... vllm serve ... --gpu-memory-utilization 0.8 --max-num-seqs 256 \
+    --max-model-len 2048 ...                     # param 块（quantization 丢弃，auto 已回填）
+    # 加速字段：按 glm 等白名单模型合成；Qwen3.6-27B 非白名单则无
+```
+
+> **JSON 逻辑真相（结论）**：
+> 1. **wings 全程处理**：JSON 不被引擎直接吃；新增**只有「固定路径读取 + `{param,env}` 拆分器」一层**，下游合并/加速/emit 全复用既有代码、不开并行链路。
+> 2. **三处与需求二/直觉不同**：`max-num-*` auto = **回填默认**（非不下发）；`env` 落点是**脚本 export 区**（launcher 模式无 Popen 注入点）；加速开关前缀**黑名单拦截**（不让用户 env 覆盖 wings 使能）。
+> 3. **加速不旁路**：拆分器在管线最前端，`param` 拆出后续走整条加速管线，预置走 C13 共存、未预置由 wings 按白名单合成。
+
+**关键分支细化**（IN/EXEC/OUT 三泳道，§4.6.2–4.6.5）：U0/U1 param 覆盖+env emit → U2/U3 auto 回填/删除键 → U5/U6 env emit/黑名单 → U8/U9 加速预置共存/自动合成。下接各图。
+
+#### 4.6.2 U0/U1 · 触发 param 覆盖（+ env emit 基线）
+
+**入参**
+```bash
+cat > /shared-volume/param_config.json <<'EOF'
+{ "param": { "gpu-memory-utilization": 0.8 }, "env": { "MY_VAR": "1" } }
+EOF
+bash /opt/wings-control/wings_start.sh \
+  --model-name Qwen3.6-27B --model-path /usr/local/serving/models/ --port 18000
+```
+```mermaid
+flowchart LR
+  subgraph IN["入参"]
+    direction TB
+    A1["命令无 --config-file"]
+    A2["param_config.json = {param:{gpu-util:0.8}, env:{MY_VAR:1}}"]
+  end
+  subgraph EXEC["执行"]
+    direction TB
+    B1{"config_file 空 且 固定路径存在?"}
+    B1 -- 否 --> B2["走老 config_file 逻辑（兼容不变）"]
+    B1 -- 是 --> B3["load_json → 拆 {param,env}"]
+    B3 --> B4["param(dict) → _load_user_config 1740 → merge(2747)/override(2750)"]
+    B3 --> B5["env → _filter_reserved_env → _custom_engine_env → emit"]
+  end
+  subgraph OUT["出参"]
+    direction TB
+    C1["🟩 --gpu-memory-utilization 0.8"]
+    C2["🟩 脚本 export MY_VAR=1"]
+  end
+  B4 --> C1
+  B5 --> C2
+  IN --> EXEC
+```
+> 决策要点：拆分器是**唯一新增**，挂 `load_and_merge_configs` 最前端；`param` 是 dict 直走 1740 分支，零新增合并逻辑。
+
+#### 4.6.3 U2/U3 · 触发 param auto 回填 / 删除键
+
+**入参**
+```bash
+cat > /shared-volume/param_config.json <<'EOF'
+{ "param": { "max-num-seqs": "auto", "max-num-batched-tokens": "auto", "quantization": null }, "env": {} }
+EOF
+bash /opt/wings-control/wings_start.sh \
+  --model-name Qwen3.6-27B --model-path /usr/local/serving/models/ --port 18000
+```
+```mermaid
+flowchart LR
+  subgraph IN["入参"]
+    direction TB
+    A1["param.max-num-seqs='auto'"]
+    A2["param.quantization=null（删除键）"]
+  end
+  subgraph EXEC["执行"]
+    direction TB
+    B1{"值 == 'auto'?"}
+    B1 -- 是 --> B2["拆分器回填 256/4096（★不放行 None）"]
+    B3["删除键：_filter 剔除（quantization 靠 C7 自动检测）"]
+  end
+  subgraph OUT["出参"]
+    direction TB
+    C1["🟧 --max-num-seqs 256（与需求二「不下发=auto」相反）"]
+    C2["🟥 引擎无 --quantization"]
+  end
+  B2 --> C1
+  B3 --> C2
+  IN --> EXEC
+```
+> 决策要点：JSON 页 `max-num-*` auto = **回填默认再下发**，与需求二普通页（不下发=vLLM auto，C9）刻意相反；删除键即便误写也在 `_filter` 阶段剔除。
+
+#### 4.6.4 U5/U6 · 触发 env emit vs 黑名单拦截
+
+**入参**
+```bash
+cat > /shared-volume/param_config.json <<'EOF'
+{ "param": {}, "env": { "MY_VAR": "1", "ENABLE_SPARSE": "true" } }
+EOF
+bash /opt/wings-control/wings_start.sh \
+  --model-name Qwen3.6-27B --model-path /usr/local/serving/models/ --port 18000
+```
+```mermaid
+flowchart LR
+  subgraph IN["入参"]
+    direction TB
+    A1["env.MY_VAR=1（业务变量）"]
+    A2["env.ENABLE_SPARSE=true（保留前缀）"]
+  end
+  subgraph EXEC["执行"]
+    direction TB
+    B1{"前缀 ∈ WINGS_/LMCACHE_/PD_/SD_/SPARSE_/ENABLE_*加速?"}
+    B1 -- 否 --> B2["进 _custom_engine_env → emit(611 同型)"]
+    B1 -- 是 --> B3["_filter_reserved_env 剔除"]
+  end
+  subgraph OUT["出参"]
+    direction TB
+    C1["🟩 脚本 export MY_VAR=1（引擎容器执行）"]
+    C2["🟥 ENABLE_SPARSE 不 emit（防覆盖 wings 加速使能）"]
+  end
+  B2 --> C1
+  B3 --> C2
+  IN --> EXEC
+```
+> 决策要点：env 落点是**生成脚本的 export 区**（launcher 模式无 Popen 注入点）；黑名单刻意拦加速开关，使加速由 wings 权威决定。
+
+#### 4.6.5 U8/U9 · 触发加速复用：预置共存 vs 自动合成
+
+**入参 · U8（param 预置）**
+```bash
+cat > /shared-volume/param_config.json <<'EOF'
+{ "param": { "speculative_config": { "method": "eagle3", "num_speculative_tokens": 3 } }, "env": {} }
+EOF
+bash /opt/wings-control/wings_start.sh \
+  --model-name Qwen3.6-27B --model-path /usr/local/serving/models/ --port 18000
+```
+**入参 · U9（未预置 + 白名单模型 + 开关 on）**
+```bash
+echo '{"count":2,"details":[{"name":"ascend910b3"}],"device":"ascend"}' > /shared-volume/hardware_info.json
+echo '{"param":{},"env":{}}' > /shared-volume/param_config.json
+ENABLE_SPECULATIVE_DECODE=true bash /opt/wings-control/wings_start.sh \
+  --engine vllm_ascend --model-name glm-5.1 --model-path /usr/local/serving/models/ --port 18000
+```
+```mermaid
+flowchart LR
+  subgraph IN["入参"]
+    direction TB
+    A1["U8：param 预置 speculative_config"]
+    A2["U9：无预置 + glm-5.1(白名单) + ENABLE_SPECULATIVE_DECODE=true + card=910b"]
+  end
+  subgraph EXEC["执行"]
+    direction TB
+    B0["param 合并进 engine_config（拆分器在前端）"]
+    B1{"_should_append_auto_speculative_config 2783<br/>engine_config 已有 speculative_config?"}
+    B0 --> B1
+    B1 -- 是(U8 预置) --> B2["不重复合成（C13 共存）"]
+    B1 -- 否(U9) --> B3["白名单命中 spec → wings 合成 --speculative-config"]
+  end
+  subgraph OUT["出参"]
+    direction TB
+    C1["🟨 U8：用户的 speculative_config 生效"]
+    C2["🟪 U9：wings 合成的 spec 产物（不旁路）"]
+  end
+  B2 --> C1
+  B3 --> C2
+  IN --> EXEC
+```
+> 决策要点：JSON 路径**复用整条加速管线**——`param` 拆出后续走 2783/卸载/稀疏产出口；预置走「已预置不合成」，未预置由 wings 按白名单合成。U9 的 `hardware_info.json` 给了 `details[0].name=ascend910b3` → `card_token` 含 `910b` → glm-5.1 命中白名单（对照 [需求二 §4.5.2 B0](需求二-参数删减.md) 的 `details:[]` → `card_token=''` → miss）。对齐 smart.md「wings 依旧使能加速特性」。
+
 ---
 
 ## 遗留（MaaS / 设计待给值）
