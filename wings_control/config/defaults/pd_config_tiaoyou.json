@@ -1,0 +1,112 @@
+{
+  "_comment": "【调优实验副本】手工 GLM-5.1 P/D 命令的注册表化复现。使用时把本文件改名为 pd_config.json 顶替原文件即可（无需改任何 .py）。⚠️ 本文件只保留 default + GlmMoeDsaForCausalLM 两条；顶替后其它模型(Qwen3Moe/DeepseekV32/Qwen3.5/DeepseekV4)的 PD 支持会消失——若需共存，应改为在真正的 pd_config.json 里替换 GLM 条目，而非整文件替换。复现口径见 _reproduce_notes。",
+  "_reproduce_notes": {
+    "可由本 json 复现": [
+      "connector=MooncakeConnectorV1 + connector_module_path",
+      "kv_port P=30000 / D=30100（单 pod 单 service 即 dp_size_local=1 时逐字一致；多 service 时按 base+i 偏移）",
+      "extra_config.use_ascend_direct=true",
+      "P/D 引擎参数：max_model_len=135168、async_scheduling、enable_chunked_prefill、enable_prefix_caching、quantization=ascend、seed=1024、tool/reasoning parser、speculative_config",
+      "角色差异：P max_num_batched_tokens=4096/max_num_seqs=256/enforce_eager；D=32/8 + compilation_config(FULL_DECODE_ONLY+capture_sizes)",
+      "additional_config（含 fuse_qknorm_rope 等，按手工原样）",
+      "env：除 BALANCE_SCHEDULING 外的全部；FLASHCOMM1 仅 P（放 prefill.env）"
+    ],
+    "本 json 无法复现（由 .py / 部署期 env 决定，改 json 无效）": {
+      "engine_id 固定 0/1": "py 强制 __PD_RANK__→$RANK，恒按 dp_rank；本 json 无 engine_id 字段，由运行时注入",
+      "prefill{dp4,tp8}/decode{dp8,tp4}": "来自部署期 env PD_PREFILL_DP_SIZE=4/PD_PREFILL_TP_SIZE=8/PD_DECODE_DP_SIZE=8/PD_DECODE_TP_SIZE=4，必须在下发时设，否则 KV 映射回退本角色并告警",
+      "VLLM_ASCEND_BALANCE_SCHEDULING=1": "vllm_adapter._filter_pd_incompatible_env 对所有 PD 路径无条件剔除（留着引擎会 ValidationError），故本 json 刻意不写",
+      "--data-parallel-rpc-port": "py 角色硬编码 P=12890/D=12777，不读 env/json（手工的 $6 不会被采用）",
+      "命令形态": "走 wings external-lb fork（需 PD_ROLE∈{P,D} 且 DP_SIZE>1 触发），是 fork 多 service，不是手工那条 standalone vllm serve"
+    },
+    "由 wings 其它机制提供（非本注册表）": [
+      "HCCL_IF_IP / GLOO|TP|HCCL_SOCKET_IFNAME / LD_LIBRARY_PATH / ASCEND_RT_VISIBLE_DEVICES：网卡探测 + 设备分配",
+      "--host / --port / --data-parallel-* 拓扑：external-lb fork 循环按 service 生成",
+      "--served-model-name：由 --model-name 派生（手工的 glm5.1）"
+    ]
+  },
+  "pd_config": {
+    "default": {
+      "_comment": "未注册模型的 PD 分离兜底模板（与官方文件一致，原样保留）。",
+      "connector": "MooncakeConnectorV1",
+      "kv_port": { "P": "30100", "D": "30400" },
+      "extra_config": {},
+      "common": { "trust_remote_code": true, "disable_hybrid_kv_cache_manager": true },
+      "prefill": { "engine": { "enforce_eager": true }, "env": {} },
+      "decode": {
+        "engine": { "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" } },
+        "env": { "TASK_QUEUE_ENABLE": "1" }
+      }
+    },
+    "GlmMoeDsaForCausalLM": {
+      "_source": "手工 GLM-5.1 P/D 启动命令注册表化（见 docs/reference/deploy-glm5.1-pd-vllm-serve-manual.md）。connector 用手工的 MooncakeConnectorV1（非官方 GLM5.2 的 kv_p2p MooncakeConnector）。无 platform_overrides：基条目即手工 910b 口径，两端 max_model_len=135168 同值。",
+      "connector": "MooncakeConnectorV1",
+      "connector_module_path": "vllm_ascend.distributed.mooncake_connector",
+      "kv_port": { "P": "30000", "D": "30100" },
+      "extra_config": { "use_ascend_direct": true },
+      "common_env": {
+        "HCCL_OP_EXPANSION_MODE": "AIV",
+        "OMP_PROC_BIND": "false",
+        "OMP_NUM_THREADS": "10",
+        "VLLM_ASCEND_ENABLE_MLAPO": "1",
+        "VLLM_ASCEND_ENABLE_NZ": "1",
+        "HCCL_BUFFSIZE": "256",
+        "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
+        "TASK_QUEUE_ENABLE": "1",
+        "CPU_AFFINITY_CONF": "1",
+        "ASCEND_AGGREGATE_ENABLE": "1",
+        "ASCEND_TRANSPORT_PRINT": "1",
+        "ACL_OP_INIT_MODE": "1",
+        "VLLM_NIXL_ABORT_REQUEST_TIMEOUT": "30000000",
+        "HCCL_INTRA_ROCE_ENABLE": "1"
+      },
+      "common": {
+        "enable_expert_parallel": true,
+        "quantization": "ascend",
+        "seed": 1024,
+        "max_model_len": 135168,
+        "async_scheduling": true,
+        "enable_chunked_prefill": true,
+        "enable_prefix_caching": true,
+        "enable_auto_tool_choice": true,
+        "tool_call_parser": "glm47",
+        "reasoning_parser": "glm45",
+        "speculative_config": { "num_speculative_tokens": 3, "method": "deepseek_mtp" }
+      },
+      "prefill": {
+        "engine": {
+          "max_num_batched_tokens": 4096,
+          "max_num_seqs": 256,
+          "gpu_memory_utilization": 0.95,
+          "enforce_eager": true,
+          "compilation_config": null,
+          "additional_config": {
+            "recompute_scheduler_enable": true,
+            "multistream_overlap_shared_expert": true,
+            "fuse_qknorm_rope": true,
+            "fuse_muls_add": true,
+            "enable_npugraph_ex": true
+          }
+        },
+        "env": { "VLLM_ASCEND_ENABLE_FLASHCOMM1": "1" }
+      },
+      "decode": {
+        "engine": {
+          "max_num_batched_tokens": 32,
+          "max_num_seqs": 8,
+          "gpu_memory_utilization": 0.95,
+          "compilation_config": {
+            "cudagraph_capture_sizes": [4, 8, 12, 16, 20, 24, 28, 32],
+            "cudagraph_mode": "FULL_DECODE_ONLY"
+          },
+          "additional_config": {
+            "recompute_scheduler_enable": true,
+            "multistream_overlap_shared_expert": true,
+            "fuse_qknorm_rope": true,
+            "fuse_muls_add": true,
+            "enable_npugraph_ex": true
+          }
+        },
+        "env": {}
+      }
+    }
+  }
+}
