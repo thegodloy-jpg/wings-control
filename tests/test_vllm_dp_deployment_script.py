@@ -63,6 +63,9 @@ def _base_params(node_rank=0, enable_speculative_decode=False):
         "model_path": "/usr/local/serving/models/",
         "model_type": "",
         "enable_speculative_decode": enable_speculative_decode,
+        # 直接调 build_start_script（绕过 load_and_merge→C14），灌入收口产物 _smart_feats，
+        # 模拟 C14 已按 hardware_env 判定 DeepSeek-V3.1·Ascend 命中白名单（spec/offload），放行 §2.3 gate。
+        "_smart_feats": ["spec", "offload"],
         "engine_config": engine_config,
     }
 

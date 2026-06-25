@@ -33,6 +33,9 @@ def _v4_flash_params(**overrides):
         "engine": "vllm",
         "device_count": 8,
         "engine_config": {},
+        # 这些用例直接调 build_*（绕过 load_and_merge→C14），故灌入收口产物 _smart_feats，
+        # 模拟 C14 已按 hardware_env 判定 V4-Flash 命中白名单（spec/offload），让 §2.3 gate 放行。
+        "_smart_feats": ["spec", "sparse", "offload"],
     }
     params.update(overrides)
     return params
@@ -86,7 +89,7 @@ class TestIndexCache(unittest.TestCase):
 
 
 class TestSparseSwitchGating(unittest.TestCase):
-    """端到端：NV V4-Flash IndexCache 默认强制开（方案 A，绕过 enable_sparse，关不掉）。"""
+    """端到端：NV V4-Flash IndexCache 走普通开关门控（§0 裁定1 删 forced：开关 on 且命中白名单才产，关得掉）。"""
 
     def test_sparse_on_emits_hf_overrides(self):
         params = _v4_flash_params(enable_sparse=True)
@@ -96,23 +99,23 @@ class TestSparseSwitchGating(unittest.TestCase):
             script = vllm_adapter.build_start_script(params)
         self.assertIn("use_index_cache", script)
 
-    def test_sparse_off_still_emits_hf_overrides(self):
-        """显式 enable_sparse=False 也关不掉（与 GLM-5.1-Ascend 同范式：强制开）。"""
+    def test_sparse_off_no_hf_overrides(self):
+        """显式 enable_sparse=False → 不产（§0 删 forced：不再强制开，关得掉）。"""
         params = _v4_flash_params(enable_sparse=False)
         with patch.object(vllm_adapter, "ModelIdentifier",
                           return_value=_FakeModelInfo("DeepseekV4ForCausalLM")), \
              patch.dict("os.environ", {}, clear=True):
             script = vllm_adapter.build_start_script(params)
-        self.assertIn("use_index_cache", script)
+        self.assertNotIn("use_index_cache", script)
 
-    def test_sparse_missing_emits_hf_overrides(self):
-        """未传 enable_sparse → 默认开。"""
+    def test_sparse_missing_no_hf_overrides(self):
+        """未传 enable_sparse（默认关）→ 不产（无 forced 复活）。"""
         params = _v4_flash_params()  # 未传 enable_sparse
         with patch.object(vllm_adapter, "ModelIdentifier",
                           return_value=_FakeModelInfo("DeepseekV4ForCausalLM")), \
              patch.dict("os.environ", {}, clear=True):
             script = vllm_adapter.build_start_script(params)
-        self.assertIn("use_index_cache", script)
+        self.assertNotIn("use_index_cache", script)
 
 
 class TestNativeKvOffload(unittest.TestCase):

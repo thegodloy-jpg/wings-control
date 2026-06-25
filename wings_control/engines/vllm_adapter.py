@@ -28,7 +28,8 @@ import yaml
 from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8,
                                INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51,
                                is_glm51_ascend_kvsparse_tmp_scope, is_glm52_model,
-                               is_glm52_single_node_even)
+                               is_glm52_single_node_even, feature_allowed)
+from utils.device_utils import resolve_card_token
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env
@@ -693,6 +694,26 @@ def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = No
 
     local_cpu_value = os.getenv("LMCACHE_LOCAL_CPU", "").strip()
     max_cpu_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
+    # C4：auto 模式反向预算并写回「均卡」CPU 容量（LMCache 每 rank 一池，需 per-card）。需求一 §3.0。
+    auto_total = resolve_offload_cpu_capacity_gb(params)
+    if auto_total is not None:
+        if auto_total <= 0:
+            # 熔断：容量低于下限 → 不建 CPU 卸载池（offload 退化为无 CPU 池）。
+            logger.warning(
+                "[KVCache Offload] auto CPU capacity below floor %dG -> skip CPU offload pool.",
+                _OFFLOAD_MIN_GB,
+            )
+            local_cpu_value, max_cpu_size = "", ""
+        else:
+            n_card = _safe_int(params.get("device_count")) or 1
+            per_card = max(1, auto_total // n_card)
+            max_cpu_size = str(per_card)
+            local_cpu_value = local_cpu_value or "true"
+            logger.info(
+                "[KVCache Offload] auto CPU per-card = M_offload(%dG) / N_card(%d) = %dG "
+                "(LMCACHE_MAX_LOCAL_CPU_SIZE).",
+                auto_total, n_card, per_card,
+            )
     if local_cpu_value or max_cpu_size:
         _append_lmcache_env_export(env_commands, "LMCACHE_LOCAL_CPU", local_cpu_value or "true")
         _append_lmcache_env_export(env_commands, "LMCACHE_MAX_LOCAL_CPU_SIZE", max_cpu_size)
@@ -714,6 +735,54 @@ def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = No
         )
 
     return env_commands
+
+
+def resolve_offload_variant(params: Optional[Dict[str, Any]], engine: str) -> str:
+    """纯函数：返回卸载 variant「后端[+模式][+修饰]」（advanced_features.json 监控用，无副作用）。
+
+    镜像 ``_build_cache_env_commands`` 的后端选择 + C4 容量模式（需求一 §4.3）。
+    ⚠ 与 ``_build_cache_env_commands`` 同源同序，二者分支须同步修改。
+    监控在写 JSON 时（早于产出口在脚本生成阶段运行）调用，故此处独立按 merged/env 推导，
+    不依赖产出口先跑，也绝不改 engine_config。
+
+    variant 形态：后端 ``[+auto|+custom][+qat][+cold_start]``，如
+    ``lmcache_cpu+auto`` / ``lmcache_cpu+custom+qat`` / ``native_cpu_connector`` / ``disabled``。
+    """
+    if not get_lmcache_env():
+        return ""
+    # 守卫（与 _build_cache_env_commands 同序）：GLM-5.1·NV 强制关 → disabled；V4 → native
+    if _is_glm51_nvidia_vllm_params(params, engine):
+        return "disabled"
+    if params and _is_deepseek_v4_cpu_offload_params(params, engine=engine):
+        return "native_cpu_connector"
+    if params and engine == "vllm" and _is_deepseek_v4_flash_params(params):
+        return "native_kv_offloading_backend"
+    # LMCache 路径：CPU(auto/custom) / Disk / 分层
+    auto_total = resolve_offload_cpu_capacity_gb(params)
+    if auto_total is not None:
+        has_cpu = auto_total > 0          # 熔断(0) → 无 CPU 池
+        cpu_mode = "auto"
+    else:
+        has_cpu = bool(os.getenv("LMCACHE_LOCAL_CPU", "").strip()
+                       or os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip())
+        cpu_mode = "custom" if has_cpu else ""
+    has_disk = bool(os.getenv("LMCACHE_LOCAL_DISK", "").strip())
+    if has_cpu and has_disk:
+        backend = "lmcache_cpu_disk"
+    elif has_cpu:
+        backend = "lmcache_cpu"
+    elif has_disk:
+        backend = "lmcache_disk"
+    else:
+        return "disabled"                # offload on 但无任何容量段（含熔断）
+    variant = backend
+    if cpu_mode and backend in ("lmcache_cpu", "lmcache_cpu_disk"):
+        variant += "+" + cpu_mode
+    if get_qat_env():
+        variant += "+qat"
+    if get_cold_start_env():
+        variant += "+cold_start"
+    return variant
 
 
 def _build_qat_env_commands(engine) -> List[str]:
@@ -1861,6 +1930,24 @@ def _writeback_dp_topology_to_params(params: Dict[str, Any], engine_config: Dict
             params_engine_config[key] = engine_config[key]
 
 
+def _apply_auto_offload_swap_space(params: Dict[str, Any], engine_config: Dict[str, Any],
+                                   explicit_keys: set) -> None:
+    """C4 挂载点②：auto 卸载模式强制 ``swap_space=0``（与卸载池预算原子绑定）。需求一 §3.0。
+
+    auto 把整块可用 host RAM 预算给卸载池；若不归零 vLLM 自身 swap_space，二者争抢同一
+    host RAM → 预算凭空少算 4G×本节点卡数（TP8≈32G）→ OOM 风险。前提：无 beam search / n>1。
+    注：部分 vLLM 版本可能弃用 swap_space，落地时按目标引擎版本核对该 flag 仍被接受。
+    """
+    if "swap_space" in explicit_keys:
+        return
+    if not get_lmcache_env():
+        return
+    if resolve_offload_cpu_capacity_gb(params) is None:
+        return  # 非 auto（custom 透传或无 LMCACHE_POD_MEMORY）
+    engine_config["swap_space"] = 0
+    logger.info("[KVCache Offload] auto mode -> force swap_space=0 (atomic with offload budget).")
+
+
 def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     """准备最终传给 ``_build_vllm_cmd_parts`` 的 engine_config。
 
@@ -1882,6 +1969,7 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
     _apply_generic_deepseek_ascend_dp_defaults(params, engine_config, explicit_keys)
     _apply_glm5_dsa_distributed_fixups(params, engine_config, explicit_keys)
+    _apply_auto_offload_swap_space(params, engine_config, explicit_keys)
 
     # ── GLM-5.1 RoCE 互联场景：强制剔除 async_scheduling / enable_expert_parallel，
     #    并将投机推理 speculative_config 替换为 RoCE 适配版本 ──
@@ -2132,15 +2220,82 @@ def _apply_deepseek_v4_pro_engine_defaults(
         engine_config["data_parallel_start_rank"] = _safe_int(params.get("node_rank")) or 0
 
 
+# ── C4: KV 卸载 auto 容量反向预算（需求一 §3.0）────────────────────────────────
+# 两路卸载（LMCache / native CPUOffloading）复用同一 M_offload，仅落地单位不同：
+#   LMCache  LMCACHE_MAX_LOCAL_CPU_SIZE = M_offload ÷ N_card（均卡/per-card）
+#   native   cpu_swap_space_gb / --kv_offloading_size = M_offload（整节点，不除卡数）
+_OFFLOAD_ENGINE_SELF_PER_WORKER_GB = 7   # 每 worker 常驻（CANN/torch_npu/.so/激活）线性系数
+_OFFLOAD_ENGINE_SELF_BASE_GB = 3         # 固定开销
+_OFFLOAD_MARGIN_RATIO = 0.10             # 安全垫
+_OFFLOAD_MIN_GB = 100                    # 熔断下限：低于此不建卸载池
+
+
+def _offload_parallel_size(params: Dict[str, Any], key: str) -> int:
+    """从 params 或 engine_config 读取并行度（TP/DP），缺省 1。"""
+    val = _safe_int(params.get(key))
+    if val:
+        return val
+    ec = params.get("engine_config")
+    if isinstance(ec, dict):
+        val = _safe_int(ec.get(key))
+        if val:
+            return val
+    return 1
+
+
+def resolve_offload_cpu_capacity_gb(params: Dict[str, Any]) -> Optional[int]:
+    """C4：auto 模式反向预算「本节点总」CPU 卸载容量 M_offload (GiB)。需求一 §3.0。
+
+    判定（不靠字面值 =auto）：
+        LMCACHE_MAX_LOCAL_CPU_SIZE 缺省(空) 且 LMCACHE_POD_MEMORY 非空 → auto；
+        否则（custom 带值 / 无 POD_MEMORY）→ 返回 None，调用方走原透传逻辑。
+
+    公式（M_swap=0 由 swap_space=0 原子绑定保证）：
+        M_offload = M_container − (7G×TP×DP + 3G) − M_container×10%
+
+    本函数只算「本节点总额」M_offload；两路卸载共用，仅落地单位不同：
+        LMCache 落地需再 ÷ N_card（均卡）；native/CPUOffloading 直接用整节点 M_offload。
+
+    Returns:
+        None: 非 auto（custom 透传或无 POD_MEMORY）→ 调用方按原逻辑处理。
+        0:    auto 命中但 M_offload < 熔断下限 → 调用方不建卸载池。
+        >0:   auto「本节点总」容量 M_offload。
+    """
+    max_cpu = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
+    pod_mem = os.getenv("LMCACHE_POD_MEMORY", "").strip()
+    if max_cpu or not pod_mem:
+        return None
+    try:
+        m_container = float(pod_mem)
+    except (TypeError, ValueError):
+        logger.warning("[KVCache Offload] Invalid LMCACHE_POD_MEMORY=%r; auto capacity skipped.", pod_mem)
+        return None
+    tp = _offload_parallel_size(params, "tensor_parallel_size")
+    dp = _offload_parallel_size(params, "data_parallel_size")
+    m_engine_self = _OFFLOAD_ENGINE_SELF_PER_WORKER_GB * (tp * dp) + _OFFLOAD_ENGINE_SELF_BASE_GB
+    m_margin = m_container * _OFFLOAD_MARGIN_RATIO
+    m_offload = m_container - m_engine_self - m_margin  # M_swap=0（auto 强制 swap_space=0）
+    if m_offload < _OFFLOAD_MIN_GB:
+        return 0
+    return int(m_offload)
+
+
 def _resolve_v4_flash_offload_gb(params: Dict[str, Any]) -> int:
     """Resolve KV-offload CPU size (GB) shared by ascend ``cpu_swap_space_gb``
     and NV native ``--kv_offloading_size``.
 
     取值规则（整节点口径，两路径同源同值）：
+      * **auto**（LMCACHE_MAX_LOCAL_CPU_SIZE 缺省 + LMCACHE_POD_MEMORY 非空）：
+        直接用反向预算「本节点总」M_offload，native **不除卡数**（需求一 §3.0）；
       * ``LMCACHE_MAX_LOCAL_CPU_SIZE`` 未设/非法 → 200（默认平铺，不乘）；
       * **V4-Flash**：该值视作「每卡」，乘本节点卡数 ``device_count``；
       * V4-Pro / 其它：直接使用该值（维持原行为）。
     """
+    # auto 命中且未熔断（>0）：native 复用整节点总额 M_offload，不除卡数。
+    auto_total = resolve_offload_cpu_capacity_gb(params)
+    if auto_total:
+        logger.info("[KVCache Offload] native auto size = M_offload(%dG) (整节点，不除卡数).", auto_total)
+        return auto_total
     raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
     try:
         per_card_gb = int(raw_size) if raw_size else None
@@ -2619,6 +2774,20 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
 
     mtp_method = _resolve_mtp_method(model_info.model_architecture)
     if mtp_method:
+        # §2.3 白名单 gate：spec 不在白名单 → suffix 地板（恒产 suffix，不返回空）。
+        #   修真实 bug：GLM-5.1·Ascend（清单 sparse-only）现状误产 deepseek_mtp，改后回落 suffix。
+        #   优先复用 C14 收口（hardware_env 解析卡型最准）stash 的白名单结论；adapter 内拿不到
+        #   hardware_env 时才回退 resolve_card_token() 的 env/engine-version 兜底（需求一 §5）。
+        smart_feats = params.get("_smart_feats")
+        if smart_feats is not None:
+            spec_ok = "spec" in smart_feats
+        else:
+            spec_ok = feature_allowed(engine, params.get("model_name"),
+                                      params.get("model_path"), resolve_card_token(), "spec")
+        if not spec_ok:
+            logger.info("[SpecDecode] spec not in whitelist -> suffix floor (arch=%s)",
+                        model_info.model_architecture)
+            return "suffix"
         lmcache_effective = get_lmcache_env()
         if lmcache_effective and _is_glm51_nvidia_vllm_params(params, engine, model_info):
             logger.warning(
@@ -2807,48 +2976,6 @@ def should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
 #   - 其他架构 → FP8 KV CACHE 量化
 
 
-def _force_kv_sparse_for_glm51_ascend(params: Dict[str, Any], engine: str) -> bool:
-    """[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 默认启用 KV 稀疏。
-
-    范围（与 EP 强制关闭同范围）：
-      * engine == ``vllm_ascend``
-      * 架构 ``GlmMoeDsaForCausalLM`` + 名称/路径标识为 GLM-5.1
-      * 910B(A2) / 910C(A3) × 单机 / 双机 四象限均生效
-
-    行为：绕过 ``enable_sparse`` 开关，强制走 IndexCache ``--hf-overrides`` 路径。
-    """
-    if engine != "vllm_ascend":
-        return False
-    try:
-        model_info = ModelIdentifier(
-            params.get("model_name"),
-            params.get("model_path"),
-            params.get("model_type"),
-        )
-    except Exception:  # noqa: BLE001
-        return False
-    return is_glm51_ascend_kvsparse_tmp_scope(
-        model_info, engine,
-        model_name=params.get("model_name"),
-        model_path=params.get("model_path"),
-    )
-
-
-def _force_kv_sparse_for_v4flash_nv(params: Dict[str, Any], engine: str) -> bool:
-    """[V4-Flash-NV-Day0] NV V4-Flash 默认启用 KV 稀疏（IndexCache）。
-
-    范围：
-      * engine == ``vllm``（NV；vllm_ascend 的 V4-Flash 在 _build_kv_sparse_cmd 内提前 return 空串）
-      * 架构/名称判定为 DeepSeek-V4-Flash
-
-    行为：绕过 ``enable_sparse`` 开关，强制走 IndexCache ``use_index_cache`` 路径
-    （与 _force_kv_sparse_for_glm51_ascend 同范式：强制开、关不掉）。
-    """
-    if engine != "vllm":
-        return False
-    return _is_deepseek_v4_flash_params(params)
-
-
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     """构建 KV 稀疏特性的启动命令参数。
 
@@ -2917,6 +3044,31 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
         engine_config["kv_cache_dtype"] = "fp8"
         engine_config["calculate_kv_scales"] = True
         return ""
+
+
+def resolve_sparse_variant(params: Dict[str, Any], engine: str) -> str:
+    """纯函数：返回稀疏 variant 名（advanced_features.json 监控用，无副作用）。
+
+    镜像 ``_build_kv_sparse_cmd`` 的分支（需求一 §4.2）。⚠ 二者须同步修改。
+    与产出口的区别：本函数**不修改 engine_config**（fp8 分支仅报名，无副作用）。
+    """
+    if engine not in ("vllm", "vllm_ascend"):
+        return ""                        # none（engine 否决）
+    model_info = ModelIdentifier(params.get("model_name"), params.get("model_path"),
+                                 params.get("model_type"))
+    arch = model_info.model_architecture
+    if engine == "vllm_ascend":
+        if is_glm51_ascend_kvsparse_tmp_scope(
+            model_info, engine,
+            model_name=params.get("model_name"), model_path=params.get("model_path"),
+        ):
+            return "indexcache_topk8"
+        return "noop"                    # Ascend 非 GLM-5.1
+    if _is_deepseek_v4_flash_params(params, model_info):
+        return "indexcache_use_index_cache_topk4"
+    if arch in INDEXCACHE_ARCHS:
+        return "indexcache_topk4"
+    return "fp8"
 
 
 def _build_kv_offload_cmd(params: Dict[str, Any], engine: str) -> str:
@@ -3068,11 +3220,10 @@ def build_start_script(params: Dict[str, Any]) -> str:
     """
     engine = params.get("engine", "vllm")
     # KV 稀疏：必须在 _build_vllm_cmd_parts 之前调用，
-    # FP8 路径会就地修改 engine_config，避免 --kv-cache-dtype 重复
-    # [GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 强制开启，绕过 enable_sparse 开关
-    should_emit_sparse = bool(params.get("enable_sparse")) or \
-        _force_kv_sparse_for_glm51_ascend(params, engine) or \
-        _force_kv_sparse_for_v4flash_nv(params, engine)
+    # FP8 路径会就地修改 engine_config，避免 --kv-cache-dtype 重复。
+    # enable_sparse 已由 config_loader.apply_effective_feature_enablement (§2.0 C14) 收口为
+    # 「有效开关」（开关 on 且命中白名单才为真，无 forced）。原 _force_kv_sparse_* 已按 §0 裁定1 删除。
+    should_emit_sparse = bool(params.get("enable_sparse"))
     sparse_args = _build_kv_sparse_cmd(params, engine) if should_emit_sparse else ""
     # GLM-4.7-W8A8 引擎参数注入（必须在 _build_vllm_cmd_parts 之前，且只动 W8A8 量化变体）
     _inject_glm47_w8a8_engine_config(params, force_non_explicit=True)

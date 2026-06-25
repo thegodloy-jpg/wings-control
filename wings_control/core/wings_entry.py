@@ -29,6 +29,8 @@ from core.start_args_compat import LaunchArgs
 from core.version_util import normalize_engine_version
 from engines.vllm_adapter import (
     resolve_speculative_strategy,
+    resolve_sparse_variant,
+    resolve_offload_variant,
     _is_deepseek_v4_cpu_offload_params,
     _is_deepseek_v4_flash_params,
     _inject_env_echo,
@@ -955,11 +957,17 @@ _ADVANCED_FEATURES_FILE = os.path.join(settings.SHARED_VOLUME_PATH, "advanced_fe
 def _write_advanced_features_json(engine: str, merged: dict) -> None:
     """写入高级特性初始状态 JSON 到共享卷。
 
-    4 个 bool 字段：
+    4 个 bool 字段（features，类型不变，旧消费者继续读）：
       - speculative_decode: 投机推理
       - sparse_kv: KV 稀疏
       - kv_offload: LMCache KV 卸载
       - rag_acc: RAG 加速
+
+    variants 段（需求一 §4，纯新增）：bool 旁挂「具体走哪种变体」细粒度，仅
+    features[x]=true 有意义，false 给 null。变体由产出口同源纯函数推导
+    （resolve_speculative_strategy / resolve_sparse_variant / resolve_offload_variant）；
+    因本写入早于产出口在脚本生成阶段运行，故独立按 merged/env 推导，不依赖产出口先跑。
+    下游消费者＝log_analyzer（经 --accel-file 读取），加段前须与其字段对齐。
     """
     features = {
         "speculative_decode": bool(merged.get("enable_speculative_decode")),
@@ -967,13 +975,19 @@ def _write_advanced_features_json(engine: str, merged: dict) -> None:
         "kv_offload": os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true",
         "rag_acc": os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true",
     }
-    data = {"engine": engine, "features": features}
+    variants = {
+        "speculative_decode": (resolve_speculative_strategy(merged, engine) or "none")
+        if features["speculative_decode"] else None,
+        "sparse_kv": resolve_sparse_variant(merged, engine) if features["sparse_kv"] else None,
+        "kv_offload": resolve_offload_variant(merged, engine) if features["kv_offload"] else None,
+    }
+    data = {"engine": engine, "features": features, "variants": variants}
     ok = safe_write_file(
         _ADVANCED_FEATURES_FILE, data, is_json=True,
         options=WriteOptions(is_json=True, atomic=True),
     )
     if ok:
-        logger.info("Wrote advanced_features.json: %s", features)
+        logger.info("Wrote advanced_features.json: features=%s variants=%s", features, variants)
     else:
         logger.error("Failed to write advanced_features.json")
 

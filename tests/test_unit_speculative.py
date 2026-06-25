@@ -80,6 +80,9 @@ class TestResolveSpeculativeStrategy(unittest.TestCase):
             "model_path": "/models/test",
             "model_type": "llm",
             "speculative_decode_model_path": spec_model_path,
+            # 本套用例测 arch→投机策略映射，与白名单成员资格正交。灌入收口产物
+            # _smart_feats（模拟 C14 已判定该模型允许 spec），让 §2.3 gate 放行专注测 arch。
+            "_smart_feats": ["spec", "sparse", "offload"],
         }
 
     def _fake_model(self, arch):

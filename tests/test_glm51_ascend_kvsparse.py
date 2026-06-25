@@ -6,7 +6,7 @@
   2. vllm_ascend + 非 GLM-5.1（含 GLM-5、Qwen、DeepseekV32） → no-op
   3. vllm（NVIDIA）回归：GLM-5.1/DeepseekV32 仍走 IndexCache，其他走 FP8
   4. rag 与 sparse 开关在所有场景下独立（rag→sparse 翻译已下线）
-  5. ascend + GLM-5.1 强制开启 KV 稀疏：enable_sparse=False/未设亦输出 --hf-overrides
+  5. ascend + GLM-5.1 KV 稀疏走普通开关门控（§0 裁定1 删 forced）：enable_sparse on 才产，off/未设不产
   6. _collect_indexcache_patch_features：vllm_ascend 永远返回 []（补丁不安装）
   7. is_glm51_ascend_kvsparse_tmp_scope 谓词单测
 
@@ -307,84 +307,10 @@ class TestRagAndSparseAreIndependent(unittest.TestCase):
         self.assertEqual(os.environ.get("RAG_ACC_ENABLED"), "true")
 
 
-class TestForceKvSparseForGlm51Ascend(unittest.TestCase):
-    """[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 强制开启 KV 稀疏（绕过 enable_sparse 开关）。"""
-
-    def test_ascend_glm51_force_on_when_sparse_false(self):
-        """vllm_ascend + GLM-5.1 + enable_sparse=False → force-on 返回 True。"""
-        params = _glm51_params("vllm_ascend")
-        with patch.object(
-            vllm_adapter, "ModelIdentifier",
-            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
-        ):
-            self.assertTrue(
-                vllm_adapter._force_kv_sparse_for_glm51_ascend(params, "vllm_ascend")
-            )
-
-    def test_ascend_glm51_force_on_when_sparse_missing(self):
-        """vllm_ascend + GLM-5.1 + 未传 enable_sparse → force-on 仍返回 True。"""
-        params = _glm51_params("vllm_ascend")
-        params.pop("enable_sparse", None)
-        with patch.object(
-            vllm_adapter, "ModelIdentifier",
-            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
-        ):
-            self.assertTrue(
-                vllm_adapter._force_kv_sparse_for_glm51_ascend(params, "vllm_ascend")
-            )
-
-    def test_ascend_glm5_not_51_force_off(self):
-        """vllm_ascend + GLM-5（非 5.1） → force-on 不命中。"""
-        params = _glm5_params("vllm_ascend")
-        with patch.object(
-            vllm_adapter, "ModelIdentifier",
-            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
-        ):
-            self.assertFalse(
-                vllm_adapter._force_kv_sparse_for_glm51_ascend(params, "vllm_ascend")
-            )
-
-    def test_ascend_non_glm_arch_force_off(self):
-        """vllm_ascend + Qwen → force-on 不命中。"""
-        params = {
-            "model_name": "Qwen3-32B",
-            "model_path": "/models/qwen3-32b",
-            "model_type": "llm",
-            "engine": "vllm_ascend",
-        }
-        with patch.object(
-            vllm_adapter, "ModelIdentifier",
-            return_value=_FakeModelInfo("Qwen3ForCausalLM"),
-        ):
-            self.assertFalse(
-                vllm_adapter._force_kv_sparse_for_glm51_ascend(params, "vllm_ascend")
-            )
-
-    def test_nvidia_glm51_not_forced(self):
-        """vllm（NVIDIA）+ GLM-5.1 → force-on 仅对 ascend 生效，NVIDIA 仍由 enable_sparse 守门。"""
-        params = _glm51_params("vllm")
-        with patch.object(
-            vllm_adapter, "ModelIdentifier",
-            return_value=_FakeModelInfo("GlmMoeDsaForCausalLM"),
-        ):
-            self.assertFalse(
-                vllm_adapter._force_kv_sparse_for_glm51_ascend(params, "vllm")
-            )
-
-    def test_model_identifier_failure_returns_false(self):
-        """ModelIdentifier 抛异常 → force-on 安全返回 False，不抛出。"""
-        params = _glm51_params("vllm_ascend")
-        with patch.object(
-            vllm_adapter, "ModelIdentifier",
-            side_effect=RuntimeError("config.json missing"),
-        ):
-            self.assertFalse(
-                vllm_adapter._force_kv_sparse_for_glm51_ascend(params, "vllm_ascend")
-            )
-
-
-class TestBuildStartScriptAscendForceKvSparse(unittest.TestCase):
-    """端到端：vllm_ascend + GLM-5.1 + enable_sparse=False/未传 → 脚本仍含 --hf-overrides。"""
+class TestBuildStartScriptAscendSwitchGated(unittest.TestCase):
+    """端到端：vllm_ascend + GLM-5.1 KV 稀疏走普通开关门控（§0 裁定1 删 forced）：
+    enable_sparse=False/未传 → 脚本不含 --hf-overrides（不再强制开）。
+    注：本套用例直接调 build_start_script（绕过 C14），enable_sparse 即「有效开关」。"""
 
     def _params(self, *, distributed: bool = False, with_sparse: bool = False,
                 with_rag: bool = False, rank: int = 0) -> dict:
@@ -423,29 +349,34 @@ class TestBuildStartScriptAscendForceKvSparse(unittest.TestCase):
         ):
             return vllm_adapter.build_start_script(params)
 
-    def test_single_node_sparse_missing_still_emits_hf_overrides(self):
-        """单机 vllm_ascend + GLM-5.1 + 未传 enable_sparse → 脚本仍含 --hf-overrides。"""
+    def test_single_node_sparse_missing_no_hf_overrides(self):
+        """单机 vllm_ascend + GLM-5.1 + 未传 enable_sparse → 脚本不含 --hf-overrides（无 forced 复活）。"""
         params = self._params(with_sparse=False)
         params.pop("enable_sparse", None)
         script = self._build(params)
+        self.assertNotIn("--hf-overrides", script)
+
+    def test_single_node_sparse_on_emits_hf_overrides(self):
+        """单机 vllm_ascend + GLM-5.1 + enable_sparse=True → 脚本含 --hf-overrides（开关 on 正常产）。"""
+        script = self._build(self._params(with_sparse=True))
         self.assertIn("--hf-overrides", script)
 
-    def test_dual_node_dp_head_sparse_false_still_emits_hf_overrides(self):
-        """双机 DP head + GLM-5.1 + enable_sparse=False → 脚本仍含 --hf-overrides。"""
+    def test_dual_node_dp_head_sparse_false_no_hf_overrides(self):
+        """双机 DP head + GLM-5.1 + enable_sparse=False → 脚本不含 --hf-overrides。"""
         script = self._build(self._params(distributed=True, with_sparse=False, rank=0))
-        self.assertIn("--hf-overrides", script)
+        self.assertNotIn("--hf-overrides", script)
 
-    def test_dual_node_dp_worker_sparse_false_still_emits_hf_overrides(self):
-        """双机 DP worker + GLM-5.1 + enable_sparse=False → 脚本仍含 --hf-overrides。"""
+    def test_dual_node_dp_worker_sparse_false_no_hf_overrides(self):
+        """双机 DP worker + GLM-5.1 + enable_sparse=False → 脚本不含 --hf-overrides。"""
         script = self._build(self._params(distributed=True, with_sparse=False, rank=1))
-        self.assertIn("--hf-overrides", script)
+        self.assertNotIn("--hf-overrides", script)
 
-    def test_dual_node_dp_head_rag_only_emits_hf_overrides_and_keeps_rag(self):
-        """双机 DP head + GLM-5.1 + 仅 rag → 脚本仍含 --hf-overrides（force-on 不依赖 sparse 开关）。"""
+    def test_dual_node_dp_head_rag_only_no_hf_overrides(self):
+        """双机 DP head + GLM-5.1 + 仅 rag（sparse off）→ 脚本不含 --hf-overrides（sparse 与 rag 独立、无 forced）。"""
         script = self._build(
             self._params(distributed=True, with_sparse=False, with_rag=True, rank=0)
         )
-        self.assertIn("--hf-overrides", script)
+        self.assertNotIn("--hf-overrides", script)
 
     def test_ascend_glm5_not_51_sparse_false_no_hf_overrides(self):
         """vllm_ascend + GLM-5（非 5.1） + enable_sparse=False → 脚本不含 --hf-overrides。"""

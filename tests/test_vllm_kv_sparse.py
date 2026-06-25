@@ -108,11 +108,13 @@ class TestVllmKvSparse(unittest.TestCase):
             "engine_config": {"model": "/models/deepseek-v32"},
         }
 
+        # feature_allowed mock 为 True：本用例验证「spec(mtp)+indexcache sparse 渲染并存」，
+        # 与白名单成员资格正交（§2.3 白名单门控由 GLM 用例 + 单测 smoke 覆盖）。
         with patch.object(
             vllm_adapter,
             "ModelIdentifier",
             return_value=_FakeModelInfo("DeepseekV32ForCausalLM"),
-        ):
+        ), patch.object(vllm_adapter, "feature_allowed", return_value=True):
             script = vllm_adapter.build_start_script(params)
 
         self.assertIn(
@@ -264,11 +266,13 @@ class TestVllmKvSparse(unittest.TestCase):
             },
         }
 
+        # feature_allowed mock 为 True：本用例验证「spec+sparse+kv_offload 三者并存渲染」，
+        # 与白名单成员资格正交（§2.3 白名单门控由 GLM 用例 + 单测 smoke 覆盖）。
         with patch.object(
             vllm_adapter,
             "ModelIdentifier",
             return_value=_FakeModelInfo("DeepseekV32ForCausalLM"),
-        ):
+        ), patch.object(vllm_adapter, "feature_allowed", return_value=True):
             script = vllm_adapter.build_start_script(params)
 
         self.assertIn("--kv-transfer-config", script)

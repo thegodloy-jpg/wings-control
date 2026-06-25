@@ -41,8 +41,9 @@ from utils.file_utils import check_torch_dtype, get_directory_size, check_permis
 from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
                                is_deepseek_series_modelslim_quant, is_qwen3_series_fp8,
                                is_glm_moe_dsa_glm51, is_glm52_single_node_even, resolve_thinking_off_policy,
+                               resolve_feature_whitelist,
                                THINKING_ALWAYS_ON, THINKING_HYBRID, THINKING_NONE)
-from utils.device_utils import check_pcie_cards
+from utils.device_utils import check_pcie_cards, resolve_card_token
 
 logger = logging.getLogger(__name__)
 
@@ -355,9 +356,8 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
         5. _guard_pd_hybrid_kv_cache → PD 模式移除不兼容的 hybrid KV flag
         6. _ensure_pd_head_dim      → PD 模式补全 config.json 缺失的 head_dim
         7. _set_router_config       → Wings Router NATS 配置
-        8. _set_operator_acceleration → 昇腾算子加速
-        9. _set_soft_fp8            → Soft FP8 量化配置
-        10. _set_task               → embedding/rerank 任务类型
+        8. _set_soft_fp8            → Soft FP8 量化配置
+        9. _set_task               → embedding/rerank 任务类型
 
     Args:
         params:              当前引擎参数字典（会被原地修改）
@@ -385,7 +385,6 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _guard_pd_hybrid_kv_cache(params)
     _ensure_pd_head_dim(params, model_info)
     _set_router_config(params)
-    _set_operator_acceleration(params, ctx)
     if not _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info):
         _set_soft_fp8(params, ctx, model_info)
     _set_soft_fp4(params, ctx, model_info)
@@ -565,14 +564,6 @@ def _resolve_gpu_total_memory(ctx: Dict[str, Any]) -> float:
     return 12.0
 
 
-def _set_operator_acceleration(params, ctx):
-    """当昇腾算子加速（USE_KUNLUN_ATB）启用时，注入 use_kunlun_atb=True 到参数字典。"""
-    if get_operator_acceleration_env() and ctx["device"] == "ascend":
-        params['use_kunlun_atb'] = True
-    else:
-        return
-
-
 def _should_skip_soft_fp8_for_official_deepseek_v3(ctx, model_name: str, model_path: str) -> bool:
     """Return True for official DeepSeek V3-family Ascend quantized models."""
     return (
@@ -585,15 +576,6 @@ def _should_skip_soft_fp8_for_official_deepseek_v3(ctx, model_name: str, model_p
 def _is_soft_fp8_model(model_name: str, model_path: str) -> bool:
     """Detect whether the model should use Soft FP8 settings."""
     return is_qwen3_series_fp8(model_path, model_name) or is_deepseek_series_fp8(model_path)
-
-
-def _log_soft_fp8_switch_state(model_name: str) -> None:
-    """Log Soft FP8/FP4 switch state for an auto-detected FP8 model."""
-    if get_soft_fp4_env():
-        logger.warning("Model %s is detected as FP8 model, but Soft FP4 switch is enabled. "
-                       "Automatically correcting to use Soft FP8 configuration.", model_name)
-    if not get_soft_fp8_env():
-        logger.info("Model %s is detected as FP8 model, automatically enabling Soft FP8 configuration", model_name)
 
 
 def _apply_qwen3_soft_fp8(params, model_architecture: str, explicit_keys: set) -> None:
@@ -662,8 +644,6 @@ def _set_soft_fp8(params, ctx, model_info):
     # 如果模型不是 FP8，则跳过此函数，让 FP4 函数处理
     if not _is_soft_fp8_model(model_name, model_path):
         return
-
-    _log_soft_fp8_switch_state(model_name)
 
     if ctx['device'] != "ascend":
         logger.warning("Soft FP8 is only supported on Ascend devices")
@@ -1989,6 +1969,61 @@ def _apply_engine_runtime_flags(cmd_known_params: Dict[str, Any]) -> None:
     _set_rag_acc_config(cmd_known_params)
 
 
+def apply_effective_feature_enablement(p: Dict[str, Any], hardware_env: Dict[str, Any]) -> None:
+    """Smart 三特性「使能收口」：单一真相源，先于一切消费者（需求一 §2.0 C14）。
+
+    把「页面请求开关」收敛成「有效开关」，回写 params + os.environ，使下游全部消费者
+    （advanced_features.json / IndexCache 补丁聚合 / LMCache env 导出 / 崩溃回退命令）
+    自动一致，无需逐点再判白名单。须在 ``_auto_select_engine`` 之后、
+    ``_get_model_specific_config`` / ``_merge_vllm_params``→``_set_kv_cache_config`` 之前调用，
+    否则卸载/稀疏收不掉。
+
+    口径（§0 裁定1：只开关不强制，无 forced）：
+        有效使能 = 页面开关 on AND 特性 ∈ 白名单。白名单只收窄、永不强开。
+        唯一反向操作是 C6 PD 一票否决（force-OFF，仍属收窄）。
+
+    Args:
+        p:            cmd_known_params（就地修改）。
+        hardware_env: 硬件环境（取 details[0].name 解析卡型，收口点最准）。
+    """
+    engine = p.get("engine", "")
+    card = resolve_card_token(hardware_env)
+    name, path = p.get("model_name"), p.get("model_path")
+
+    # C6 PD 一票否决：三特性全关，仅留 PD connector（US646 暂不支持 PD×高级特性共存）
+    if get_pd_role_env():
+        p["enable_sparse"] = False
+        p["enable_speculative_decode"] = False
+        p["_smart_feats"] = []
+        for env_name in ("ENABLE_SPARSE", "SPARSE_ENABLE",
+                         "ENABLE_SPECULATIVE_DECODE", "SD_ENABLE", "LMCACHE_OFFLOAD"):
+            os.environ[env_name] = "false"
+        logger.info("[SmartFeature] PD role detected -> veto: spec/sparse/offload all disabled")
+        return
+
+    feats = resolve_feature_whitelist(engine, name, path, card)
+    # stash 供产出口（§2.3 resolve_speculative_strategy）复用：收口点用 hardware_env 解析卡型最准，
+    # 而 adapter 内产出口拿不到 hardware_env、env 兜底可能解析不到卡型（尤其 Ascend）→ 误判 suffix。
+    # 让产出口直接复用收口结论，消除「收口点 vs 产出口」双入口卡型不一致（需求一 §5）。
+    p["_smart_feats"] = sorted(feats)
+
+    # 稀疏：有效 = 开关 on AND 命中白名单（无 forced）
+    sparse_eff = bool(p.get("enable_sparse")) and "sparse" in feats
+    p["enable_sparse"] = sparse_eff
+    os.environ["ENABLE_SPARSE"] = os.environ["SPARSE_ENABLE"] = "true" if sparse_eff else "false"
+
+    # 卸载：白名单外收口为关（容量 auto/custom 仍由产出口 _build_cache_env_commands 处理）
+    if get_lmcache_env() and "offload" not in feats:
+        os.environ["LMCACHE_OFFLOAD"] = "false"
+        logger.info("[SmartFeature] offload not in whitelist (engine=%s card=%s) -> LMCACHE_OFFLOAD=false",
+                    engine, card)
+
+    # 投机：suffix 地板恒产 → 开关不收口（保持 true 是诚实的）；
+    #   MTP-vs-suffix 由 §2.3 在 resolve_speculative_strategy 内按白名单 gate。
+    logger.info("[SmartFeature] effective enablement: engine=%s card=%s feats=%s sparse_eff=%s",
+                engine, card, sorted(feats), sparse_eff)
+
+
 def _record_selected_engine(engine: str) -> None:
     """Persist the selected engine for sidecar coordination and diagnostics."""
     _write_engine_second_line(os.getenv("BACKEND_PID_FILE", "/var/log/wings/wings.txt"), engine)
@@ -2728,6 +2763,11 @@ def load_and_merge_configs(
     cmd_known_params = _auto_select_engine(hardware_env, cmd_known_params, model_info)
     if cmd_known_params.get("distributed"):
         _handle_distributed(cmd_known_params.get("engine"), cmd_known_params, model_info)
+
+    # 2.5 Smart 三特性使能收口（单一真相源，需求一 §2.0 C14）。
+    #     ★位置关键★：必须早于 _get_model_specific_config 与
+    #     _merge_vllm_params→_set_kv_cache_config，否则卸载/稀疏收不掉。
+    apply_effective_feature_enablement(cmd_known_params, hardware_env)
 
     # 3. 加载用户配置
     config = known_args.config_file

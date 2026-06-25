@@ -283,6 +283,61 @@ def is_h20_gpu(total_memory: float, tolerance_gb: float = 10.0) -> str:
     return ""
 
 
+def resolve_card_token(hardware_env: Dict[str, Any] = None) -> str:
+    """返回小写卡型标识，用于 Smart 三特性白名单匹配。
+
+    来源优先级：
+        1. hardware_env.details[0].name（如 "Ascend910B3" → 含 "910b"）
+        2. WINGS_DEVICE_NAME 环境变量
+        3. engine-version 后缀（Ascend：a3→910C / a2→910B；ENGINE_VERSION 实部署必设、可靠）
+        4. 显存推断（NV 无 device name 时，用 WINGS_DEVICE_MEMORY 回退 H20 型号）
+
+    解析失败返回空串。此时 Ascend 白名单各行的 910b/910c **永不匹配 → 整条
+    Ascend 白名单 miss**（见需求一 §0.1#2：MaaS 须保证 Ascend 部署的
+    hardware_info.json 填 details[0].name，或设置 ENGINE_VERSION 后缀）。
+
+    Args:
+        hardware_env: 硬件环境字典（device/count/details）；收口点直接传入最准，
+                      产出口拿不到时省略，走 WINGS_DEVICE_NAME / 显存 env 兜底。
+
+    Returns:
+        str: 小写卡型标识子串，未知返回 ""。
+    """
+    name = ""
+    if hardware_env:
+        details = hardware_env.get("details") or []
+        if details and isinstance(details[0], dict):
+            name = str(details[0].get("name", ""))
+    name = (name or os.getenv("WINGS_DEVICE_NAME", "")).strip().lower()
+    if name:
+        return name
+    # Ascend 兜底：无 device name 时按「平台信号」识别芯片（a3/910C、a2/910B）。
+    #   信号源与 vllm_adapter._get_engine_config_platform 同源同序：显式声明
+    #   （WINGS_ASCEND_PLATFORM / ASCEND_PLATFORM / ENGINE_IMAGE_FLAVOR）→ ENGINE_VERSION 后缀。
+    #   保证白名单卡型口径与引擎平台判定一致（卡型保持现状走 engine-version/平台，需求一 §1.2）。
+    platform = (
+        os.getenv("WINGS_ASCEND_PLATFORM")
+        or os.getenv("ASCEND_PLATFORM")
+        or os.getenv("ENGINE_IMAGE_FLAVOR")
+        or ""
+    ).strip().lower()
+    if not platform:
+        from core.version_util import engine_version_platform  # 局部导入避免底层 util 循环依赖
+        platform = (engine_version_platform() or "")
+    if "a3" in platform or "910c" in platform:
+        return "ascend910c"
+    if "a2" in platform or "910b" in platform:
+        return "ascend910b"
+    # NV 无 device name 时用显存兜底（H20-96G/141G）
+    mem_raw = os.getenv("WINGS_DEVICE_MEMORY", "").strip()
+    if mem_raw:
+        try:
+            return is_h20_gpu(float(mem_raw)).lower()
+        except (TypeError, ValueError):
+            return ""
+    return ""
+
+
 # ── PCIe 设备检测（lspci，不依赖 torch） ─────────────────────────────────────
 
 
