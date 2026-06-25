@@ -1056,7 +1056,12 @@ def _build_pd_external_lb_kv(entry, ext):
         "kv_port": "__PD_KVPORT__",
         "kv_connector_extra_config": extra,
     }
-    if entry["connector"] in ("MooncakeConnectorV1", "MooncakeHybridConnector"):
+    # 连接器实现模块路径：注册表声明 connector_module_path 则透传（如官方 GLM5.2 PD 用
+    # MooncakeConnector + vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector 显式加载）。
+    module_path = entry.get("connector_module_path")
+    if module_path:
+        cfg["kv_connector_module_path"] = module_path
+    if entry["connector"] in ("MooncakeConnector", "MooncakeConnectorV1", "MooncakeHybridConnector"):
         cfg["engine_id"] = "__PD_RANK__"  # fork 脚本按 dp_rank 替换
     return cfg
 

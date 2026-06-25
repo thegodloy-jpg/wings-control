@@ -321,9 +321,14 @@ def layer_f():
     seg = glm_p.split("for i in")[0]  # 首个 exec path 的 env 段
     check("L3 common_env: HCCL_BUFFSIZE=256 生效", "export HCCL_BUFFSIZE=256" in seg)
     check("L3 dedupe: 无残留 HCCL_BUFFSIZE=1024", "export HCCL_BUFFSIZE=1024" not in seg)
-    check("L3 common_env: Mooncake 共用 env 注入",
-          "export VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT=480" in seg
+    check("L3 common_env: 官方 GLM5.2 对齐 env 注入(AIV/NIXL/VERSION/AGGREGATE)",
+          "export HCCL_OP_EXPANSION_MODE=AIV" in seg
+          and "export VLLM_NIXL_ABORT_REQUEST_TIMEOUT=300000" in seg
+          and "export VLLM_VERSION=0.21.0" in seg
           and "export ASCEND_AGGREGATE_ENABLE=1" in seg)
+    check("L3 common_env: 已剔除旧 Mooncake abort 与 FUSED_MC2",
+          "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT" not in seg
+          and "VLLM_ASCEND_ENABLE_FUSED_MC2" not in seg)
 
     # ── L2：Qwen3.5 角色级 extra_config（D 有 kv_buffer_device，P 无）──
     q_d = _gen("Qwen3_5MoeForConditionalGeneration", "D", 16, 2, 8, "5.0.1.1", "5.0.1.1", "Q5D")

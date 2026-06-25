@@ -789,15 +789,13 @@ def _build_pd_role_env_commands(engine: str, current_ip: str, network_interface:
             # CANN 环境初始化已由 _build_base_env_commands() 完成，此处不再重复
             env_commands.extend([
                 f"export HCCL_IF_IP={shlex.quote(current_ip)}",
+                f"export VLLM_HOST_IP={shlex.quote(current_ip)}",
                 f"export GLOO_SOCKET_IFNAME={shlex.quote(network_interface)}",
                 f"export TP_SOCKET_IFNAME={shlex.quote(network_interface)}",
                 f"export HCCL_SOCKET_IFNAME={shlex.quote(network_interface)}",
                 "export OMP_PROC_BIND=false",
                 f"export OMP_NUM_THREADS={os.getenv('OMP_NUM_THREADS', '100')}",
                 "export VLLM_USE_V1=1",
-                "export LCCL_DETERMINISTIC=1",
-                "export HCCL_DETERMINISTIC=true",
-                "export CLOSE_MATMUL_K_SHIFT=1",
                 f"export VLLM_LLMDD_RPC_PORT={rpc_port}",
                 f"export VLLM_MOONCAKE_BOOTSTRAP_PORT={mooncake_bootstrap_port}",
                 # mooncake/ADXL KV 传输的连接与传输超时（ms）。PD 跨 pod 拉 KV 在慢链路/冷启动时，
