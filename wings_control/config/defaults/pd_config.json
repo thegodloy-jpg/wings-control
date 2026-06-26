@@ -113,36 +113,26 @@
       }
     },
     "GlmMoeDsaForCausalLM": {
-      "_source": "手工 GLM-5.1 P/D 启动命令注册表化复现（见 docs/reference/deploy-glm5.1-pd-vllm-serve-manual.md）。connector 用手工的 MooncakeConnectorV1（非官方 GLM5.2 的 kv_p2p MooncakeConnector）；无 platform_overrides，基条目即手工 910b 口径，两端 max_model_len=135168 同值。",
-      "_caveats": "无法由 json 复现、由 .py/部署期 env 接管的项：engine_id 恒按 dp_rank（py 注入 __PD_RANK__→$RANK）；prefill/decode 的 dp·tp 来自部署期 env PD_PREFILL_DP_SIZE=4/PD_PREFILL_TP_SIZE=8/PD_DECODE_DP_SIZE=8/PD_DECODE_TP_SIZE=4；VLLM_ASCEND_BALANCE_SCHEDULING 被 _filter_pd_incompatible_env 无条件剔除（故刻意不写）；--data-parallel-rpc-port 角色硬编码 P=12890/D=12777；kv_port 在多 service/pod 时按 base+i 偏移。",
-      "connector": "MooncakeConnectorV1",
-      "connector_module_path": "vllm_ascend.distributed.mooncake_connector",
+      "_source": "https://docs.vllm.ai/projects/ascend/zh-cn/latest/tutorials/models/GLM5.2.html (A2 4P4D) + GLM5.html",
+      "_fix": "2026-06-13 对齐官方 GLM5 PD：max_model_len 拆角色级(P=131072/D=200000)；P 关 prefix/compilation 加 enforce_eager；D 关 prefix/chunked 补 capture_sizes；补 tool/reasoning parser；additional_config 补 recompute/enable_dsa_cp。compilation_config=null 表示该角色应删除 base 注入的图捕获。2026-06-16 fresh 核对当前线上官方 P 命令已无 layer_sharding，故移除（仅 GLM5 P；V3.2 不受影响）。2026-06-25 严格对齐官方 GLM5.2 A2 4P4D：connector 换 MooncakeConnector(kv_p2p)+connector_module_path；两端 additional_config 补 enable_sparse_c8=false；common 补 async_scheduling；decode 改 164/48、删 cudagraph_capture_sizes；两端 env 删 VLLM_ASCEND_ENABLE_FUSED_MC2；common_env 补 HCCL_OP_EXPANSION_MODE=AIV/VLLM_VERSION=0.21.0/ASCEND_TRANSPORT_PRINT=1、删 VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT；P.env 补 HCCL_BUFFSIZE=256/VLLM_NIXL_ABORT_REQUEST_TIMEOUT=300000，D.env 补 HCCL_BUFFSIZE=500。engine_id/kv_port 偏移/block_size/rpc-port/--host 维持现状(与官方功能等价)。2026-06-25 strip_env(A2)：剔除官方不设的 6 个多余 env(VLLM_USE_V1/VLLM_LLMDD_RPC_PORT/VLLM_MOONCAKE_BOOTSTRAP_PORT/ASCEND_CONNECT_TIMEOUT/ASCEND_TRANSFER_TIMEOUT/ASCEND_A3_ENABLE)，P 另剔 TASK_QUEUE_ENABLE(官方 P 不设/D 保留)，VLLM_MOONCAKE_BOOTSTRAP_PORT 连 fork 内联一并省去。",
+      "connector": "MooncakeConnector",
+      "connector_module_path": "vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector",
       "kv_port": { "P": "30000", "D": "30100" },
+      "default_platform": "a2",
       "extra_config": { "use_ascend_direct": true },
       "common_env": {
-        "HCCL_OP_EXPANSION_MODE": "AIV",
-        "OMP_PROC_BIND": "false",
-        "OMP_NUM_THREADS": "10",
-        "VLLM_ASCEND_ENABLE_MLAPO": "1",
-        "VLLM_ASCEND_ENABLE_NZ": "1",
-        "HCCL_BUFFSIZE": "256",
-        "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
-        "TASK_QUEUE_ENABLE": "1",
-        "CPU_AFFINITY_CONF": "1",
         "ASCEND_AGGREGATE_ENABLE": "1",
-        "ASCEND_TRANSPORT_PRINT": "1",
         "ACL_OP_INIT_MODE": "1",
-        "VLLM_NIXL_ABORT_REQUEST_TIMEOUT": "30000000",
-        "HCCL_INTRA_ROCE_ENABLE": "1"
+        "ASCEND_A3_ENABLE": "1",
+        "ASCEND_TRANSPORT_PRINT": "1",
+        "HCCL_OP_EXPANSION_MODE": "AIV",
+        "VLLM_VERSION": "0.21.0"
       },
       "common": {
         "enable_expert_parallel": true,
         "quantization": "ascend",
         "seed": 1024,
-        "max_model_len": 135168,
         "async_scheduling": true,
-        "enable_chunked_prefill": true,
-        "enable_prefix_caching": true,
         "enable_auto_tool_choice": true,
         "tool_call_parser": "glm47",
         "reasoning_parser": "glm45",
@@ -150,39 +140,54 @@
       },
       "prefill": {
         "engine": {
+          "max_model_len": 115168,
           "max_num_batched_tokens": 4096,
-          "max_num_seqs": 256,
+          "max_num_seqs": 64,
           "gpu_memory_utilization": 0.95,
           "enforce_eager": true,
+          "enable_prefix_caching": false,
+          "enable_chunked_prefill": true,
           "compilation_config": null,
           "additional_config": {
-            "recompute_scheduler_enable": true,
-            "multistream_overlap_shared_expert": true,
-            "fuse_qknorm_rope": true,
+            "enable_sparse_c8": false,
             "fuse_muls_add": true,
-            "enable_npugraph_ex": true
+            "multistream_overlap_shared_expert": true,
+            "recompute_scheduler_enable": true,
+            "ascend_compilation_config": { "enable_npugraph_ex": true },
+            "enable_dsa_cp": true
           }
         },
-        "env": { "VLLM_ASCEND_ENABLE_FLASHCOMM1": "1" }
+        "env": { "VLLM_ASCEND_ENABLE_FLASHCOMM1": "1", "HCCL_BUFFSIZE": "256", "VLLM_NIXL_ABORT_REQUEST_TIMEOUT": "300000" }
       },
       "decode": {
         "engine": {
-          "max_num_batched_tokens": 32,
-          "max_num_seqs": 8,
-          "gpu_memory_utilization": 0.95,
-          "compilation_config": {
-            "cudagraph_capture_sizes": [4, 8, 12, 16, 20, 24, 28, 32],
-            "cudagraph_mode": "FULL_DECODE_ONLY"
-          },
+          "max_model_len": 135168,
+          "max_num_batched_tokens": 164,
+          "max_num_seqs": 48,
+          "gpu_memory_utilization": 0.92,
+          "enable_prefix_caching": false,
+          "enable_chunked_prefill": false,
+          "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" },
           "additional_config": {
-            "recompute_scheduler_enable": true,
-            "multistream_overlap_shared_expert": true,
-            "fuse_qknorm_rope": true,
+            "enable_sparse_c8": false,
             "fuse_muls_add": true,
-            "enable_npugraph_ex": true
+            "multistream_overlap_shared_expert": true,
+            "recompute_scheduler_enable": true,
+            "ascend_compilation_config": { "enable_npugraph_ex": true }
           }
         },
-        "env": {}
+        "env": { "VLLM_ASCEND_ENABLE_MLAPO": "1", "TASK_QUEUE_ENABLE": "1", "HCCL_BUFFSIZE": "500" }
+      },
+      "platform_overrides": {
+        "_comment": "基条目为 GLM-5.1 / A3 口径。A2(910b) overlay：①前缀缓存两端开(GLM-5.2 口径，覆盖基条目 false)；②decode 开 DYNAMIC_EPLB；③strip_env 剔除官方 A2 不设的多余 env(VLLM_USE_V1/VLLM_LLMDD_RPC_PORT/VLLM_MOONCAKE_BOOTSTRAP_PORT/ASCEND_CONNECT_TIMEOUT/ASCEND_TRANSFER_TIMEOUT/ASCEND_A3_ENABLE；prefill 另剔 TASK_QUEUE_ENABLE——官方 P 不设、D 保留)，VLLM_MOONCAKE_BOOTSTRAP_PORT 连 fork 内联前缀一并省去。HCCL_BUFFSIZE 已角色化到 prefill/decode.env(P=256/D=500)，不在此 overlay 设。⚠️ 刻意【不】设 VLLM_ASCEND_BALANCE_SCHEDULING：PD 分离下 vLLM-Ascend≥0.20.2 会 ValidationError(presence-based，0 也崩)，vllm_adapter._filter_pd_incompatible_env 会统一剔除——若在此 overlay 重新注入会经 _pd_env 绕过该过滤器、复活已被 b21bf74 修掉的崩溃。仅当 _resolve_ascend_platform() 解析为 'a2'(WINGS_ASCEND_PLATFORM=a2 等)时经 _merge_configs 深合并生效；a3/无信号不应用→基条目 A3 行为字节级不变。⚠️ overlay 按架构命中，GLM-5.1 on A2 也会被套用(前缀缓存被开)，若 5.1/5.2 需在 A2 共存须在 _apply_pd_external_lb 加 is_glm52 门控。",
+        "a2": {
+          "strip_env": ["VLLM_USE_V1", "VLLM_LLMDD_RPC_PORT", "VLLM_MOONCAKE_BOOTSTRAP_PORT", "ASCEND_CONNECT_TIMEOUT", "ASCEND_TRANSFER_TIMEOUT", "ASCEND_A3_ENABLE"],
+          "prefill": { "engine": { "enable_prefix_caching": true }, "strip_env": ["TASK_QUEUE_ENABLE"] },
+          "decode": {
+            "engine": { "enable_prefix_caching": true },
+            "env": { "DYNAMIC_EPLB": "1" }
+          }
+        }
       }
     },
     "Qwen3_5MoeForConditionalGeneration": {

@@ -341,6 +341,12 @@ def layer_f():
     check("L5 GLM5-P: prefix 关（无 --enable-prefix-caching）", "--enable-prefix-caching" not in glm_p)
     check("L5 GLM5-P: compilation 删（无 --compilation-config）", "--compilation-config" not in glm_p)
     check("L5 GLM5-P: max-model-len 131072 存活", "--max-model-len 131072" in glm_p)
+    # ── engine_id：官方 kv_p2p MooncakeConnector 用 role 级 0/1（非 per-rank），对齐官方、防 P/D 撞号高并发崩溃 ──
+    glm_d = _gen("GlmMoeDsaForCausalLM", "D", 8, 4, 1, "7.0.1.1", "7.0.1.1", "GD")
+    check("GLM5(MooncakeConnector) P: engine_id role 级 = \"0\"", '"engine_id":"0"' in glm_p)
+    check("GLM5(MooncakeConnector) D: engine_id role 级 = \"1\"", '"engine_id":"1"' in glm_d)
+    check("GLM5: engine_id 非 per-rank 占位($RANK)",
+          '"engine_id":"\'"$RANK"\'"' not in glm_p and '"engine_id":"\'"$RANK"\'"' not in glm_d)
     check("L5 V4-P(a3): async 关 + compilation 删",
           "--async-scheduling" not in v4_a3_p and "--compilation-config" not in v4_a3_p)
     check("L5 V4-P(a3): --no-enable-prefix-caching 存活", "--no-enable-prefix-caching" in v4_a3_p)

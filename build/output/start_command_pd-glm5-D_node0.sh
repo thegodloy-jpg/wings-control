@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 16, "model_name": "glm-5.1-chat", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_1iqix4h_", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 16, "model_name": "glm-5.1-chat", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_nytmc1n1", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -206,6 +206,8 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
 fi
 export HCCL_IF_IP=7.0.1.1
 echo "[wings-env] export HCCL_IF_IP=${HCCL_IF_IP:-}"
+export VLLM_HOST_IP=7.0.1.1
+echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
 export GLOO_SOCKET_IFNAME=eth0
 echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
 export TP_SOCKET_IFNAME=eth0
@@ -214,51 +216,47 @@ export HCCL_SOCKET_IFNAME=eth0
 echo "[wings-env] export HCCL_SOCKET_IFNAME=${HCCL_SOCKET_IFNAME:-}"
 export VLLM_USE_V1=1
 echo "[wings-env] export VLLM_USE_V1=${VLLM_USE_V1:-}"
-export LCCL_DETERMINISTIC=1
-echo "[wings-env] export LCCL_DETERMINISTIC=${LCCL_DETERMINISTIC:-}"
-export HCCL_DETERMINISTIC=true
-echo "[wings-env] export HCCL_DETERMINISTIC=${HCCL_DETERMINISTIC:-}"
-export CLOSE_MATMUL_K_SHIFT=1
-echo "[wings-env] export CLOSE_MATMUL_K_SHIFT=${CLOSE_MATMUL_K_SHIFT:-}"
 export VLLM_LLMDD_RPC_PORT=10523
 echo "[wings-env] export VLLM_LLMDD_RPC_PORT=${VLLM_LLMDD_RPC_PORT:-}"
 export VLLM_MOONCAKE_BOOTSTRAP_PORT=23000
 echo "[wings-env] export VLLM_MOONCAKE_BOOTSTRAP_PORT=${VLLM_MOONCAKE_BOOTSTRAP_PORT:-}"
+export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-120000}
+echo "[wings-env] export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-}"
+export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-120000}
+echo "[wings-env] export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-}"
 export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
 echo "[wings-env] export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
-export HCCL_OP_EXPANSION_MODE=AIV
-echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
 export OMP_PROC_BIND=false
 echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
 export OMP_NUM_THREADS=1
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-export VLLM_ASCEND_BALANCE_SCHEDULING=1
-echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
-export HCCL_BUFFSIZE=256
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export ASCEND_AGGREGATE_ENABLE=1
 echo "[wings-env] export ASCEND_AGGREGATE_ENABLE=${ASCEND_AGGREGATE_ENABLE:-}"
 export ACL_OP_INIT_MODE=1
 echo "[wings-env] export ACL_OP_INIT_MODE=${ACL_OP_INIT_MODE:-}"
 export ASCEND_A3_ENABLE=1
 echo "[wings-env] export ASCEND_A3_ENABLE=${ASCEND_A3_ENABLE:-}"
-export VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT=480
-echo "[wings-env] export VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT=${VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT:-}"
+export ASCEND_TRANSPORT_PRINT=1
+echo "[wings-env] export ASCEND_TRANSPORT_PRINT=${ASCEND_TRANSPORT_PRINT:-}"
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export VLLM_VERSION=0.21.0
+echo "[wings-env] export VLLM_VERSION=${VLLM_VERSION:-}"
 export VLLM_ASCEND_ENABLE_MLAPO=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_MLAPO=${VLLM_ASCEND_ENABLE_MLAPO:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export VLLM_ASCEND_ENABLE_FUSED_MC2=1
-echo "[wings-env] export VLLM_ASCEND_ENABLE_FUSED_MC2=${VLLM_ASCEND_ENABLE_FUSED_MC2:-}"
+export HCCL_BUFFSIZE=500
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 (
   pids=()
   for i in $(seq 0 3); do
     RANK=$((0 + i)); PORT=$((17000 + i))
     KVPORT=$((30100 + i)); BOOTSTRAP=$((23100 + i))
     LO=$((i * 4)); HI=$((LO + 4 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 200000 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 32 --gpu-memory-utilization 0.92 --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[4,8,12,16,20,24,28,32]}' --host 7.0.1.1 --served-model-name glm-5.1-chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_1iqix4h_ --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":16},"decode":{"dp_size":16,"tp_size":4},"use_ascend_direct":true},"engine_id":"'"$RANK"'"}' --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --speculative-config '{"num_speculative_tokens":3,"method":"deepseek_mtp"}' --port $PORT --tensor-parallel-size 4 --data-parallel-size 16 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 7.0.1.1 --data-parallel-rpc-port 10523 --data-parallel-external-lb &
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 200000 --quantization ascend --seed 1024 --max-num-seqs 48 --max-num-batched-tokens 164 --gpu-memory-utilization 0.92 --additional-config '{"enable_sparse_c8":false,"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 7.0.1.1 --served-model-name glm-5.1-chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_nytmc1n1 --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnector","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":16},"decode":{"dp_size":16,"tp_size":4},"use_ascend_direct":true},"kv_connector_module_path":"vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector","engine_id":"1"}' --async-scheduling --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --speculative-config '{"num_speculative_tokens":3,"method":"deepseek_mtp"}' --port $PORT --tensor-parallel-size 4 --data-parallel-size 16 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 7.0.1.1 --data-parallel-rpc-port 12777 --data-parallel-external-lb &
     pids+=($!)
   done
   wait -n || true
@@ -353,6 +351,8 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
 fi
 export HCCL_IF_IP=7.0.1.1
 echo "[wings-env] export HCCL_IF_IP=${HCCL_IF_IP:-}"
+export VLLM_HOST_IP=7.0.1.1
+echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
 export GLOO_SOCKET_IFNAME=eth0
 echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
 export TP_SOCKET_IFNAME=eth0
@@ -361,51 +361,47 @@ export HCCL_SOCKET_IFNAME=eth0
 echo "[wings-env] export HCCL_SOCKET_IFNAME=${HCCL_SOCKET_IFNAME:-}"
 export VLLM_USE_V1=1
 echo "[wings-env] export VLLM_USE_V1=${VLLM_USE_V1:-}"
-export LCCL_DETERMINISTIC=1
-echo "[wings-env] export LCCL_DETERMINISTIC=${LCCL_DETERMINISTIC:-}"
-export HCCL_DETERMINISTIC=true
-echo "[wings-env] export HCCL_DETERMINISTIC=${HCCL_DETERMINISTIC:-}"
-export CLOSE_MATMUL_K_SHIFT=1
-echo "[wings-env] export CLOSE_MATMUL_K_SHIFT=${CLOSE_MATMUL_K_SHIFT:-}"
 export VLLM_LLMDD_RPC_PORT=10523
 echo "[wings-env] export VLLM_LLMDD_RPC_PORT=${VLLM_LLMDD_RPC_PORT:-}"
 export VLLM_MOONCAKE_BOOTSTRAP_PORT=23000
 echo "[wings-env] export VLLM_MOONCAKE_BOOTSTRAP_PORT=${VLLM_MOONCAKE_BOOTSTRAP_PORT:-}"
+export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-120000}
+echo "[wings-env] export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-}"
+export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-120000}
+echo "[wings-env] export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-}"
 export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
 echo "[wings-env] export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
-export HCCL_OP_EXPANSION_MODE=AIV
-echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
 export OMP_PROC_BIND=false
 echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
 export OMP_NUM_THREADS=1
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-export VLLM_ASCEND_BALANCE_SCHEDULING=1
-echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
-export HCCL_BUFFSIZE=256
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export ASCEND_AGGREGATE_ENABLE=1
 echo "[wings-env] export ASCEND_AGGREGATE_ENABLE=${ASCEND_AGGREGATE_ENABLE:-}"
 export ACL_OP_INIT_MODE=1
 echo "[wings-env] export ACL_OP_INIT_MODE=${ACL_OP_INIT_MODE:-}"
 export ASCEND_A3_ENABLE=1
 echo "[wings-env] export ASCEND_A3_ENABLE=${ASCEND_A3_ENABLE:-}"
-export VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT=480
-echo "[wings-env] export VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT=${VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT:-}"
+export ASCEND_TRANSPORT_PRINT=1
+echo "[wings-env] export ASCEND_TRANSPORT_PRINT=${ASCEND_TRANSPORT_PRINT:-}"
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export VLLM_VERSION=0.21.0
+echo "[wings-env] export VLLM_VERSION=${VLLM_VERSION:-}"
 export VLLM_ASCEND_ENABLE_MLAPO=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_MLAPO=${VLLM_ASCEND_ENABLE_MLAPO:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export VLLM_ASCEND_ENABLE_FUSED_MC2=1
-echo "[wings-env] export VLLM_ASCEND_ENABLE_FUSED_MC2=${VLLM_ASCEND_ENABLE_FUSED_MC2:-}"
+export HCCL_BUFFSIZE=500
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 (
   pids=()
   for i in $(seq 0 3); do
     RANK=$((0 + i)); PORT=$((17000 + i))
     KVPORT=$((30100 + i)); BOOTSTRAP=$((23100 + i))
     LO=$((i * 4)); HI=$((LO + 4 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 200000 --quantization ascend --seed 1024 --max-num-seqs 8 --max-num-batched-tokens 32 --gpu-memory-utilization 0.92 --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[4,8,12,16,20,24,28,32]}' --host 7.0.1.1 --served-model-name glm-5.1-chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_1iqix4h_ --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":16},"decode":{"dp_size":16,"tp_size":4},"use_ascend_direct":true},"engine_id":"'"$RANK"'"}' --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --speculative-config '{"num_speculative_tokens":3,"method":"deepseek_mtp"}' --port $PORT --tensor-parallel-size 4 --data-parallel-size 16 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 7.0.1.1 --data-parallel-rpc-port 10523 --data-parallel-external-lb &
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 200000 --quantization ascend --seed 1024 --max-num-seqs 48 --max-num-batched-tokens 164 --gpu-memory-utilization 0.92 --additional-config '{"enable_sparse_c8":false,"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 7.0.1.1 --served-model-name glm-5.1-chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_nytmc1n1 --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnector","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":16},"decode":{"dp_size":16,"tp_size":4},"use_ascend_direct":true},"kv_connector_module_path":"vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector","engine_id":"1"}' --async-scheduling --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --speculative-config '{"num_speculative_tokens":3,"method":"deepseek_mtp"}' --port $PORT --tensor-parallel-size 4 --data-parallel-size 16 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 7.0.1.1 --data-parallel-rpc-port 12777 --data-parallel-external-lb &
     pids+=($!)
   done
   wait -n || true

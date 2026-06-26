@@ -1000,8 +1000,10 @@ def _build_pd_external_lb_kv(entry, ext):
     连接器/kv_port/extra_config 取自注册表。``kv_connector_extra_config`` 的
     prefill/decode 全局拓扑：本角色取上层下发的 DP_SIZE/TP_SIZE（权威），对端角色
     取 PD_PREFILL_*/PD_DECODE_*（缺失则回退本角色并告警，KV 映射可能不准）。
-    MooncakeConnectorV1 需要按 rank 唯一的 engine_id，此处放占位符 ``__PD_RANK__``，
-    由 fork 脚本（vllm_adapter）按实际 dp_rank 替换。
+    engine_id 按连接器策略区分：官方 kv_p2p ``MooncakeConnector`` 用 **role 级常量**
+    （producer=0 / consumer=1；节点物理唯一性来自 IP:kv_port，连接器仅校验 local≠remote）。
+    ``MooncakeConnectorV1`` / ``MooncakeHybridConnector`` 要求**每节点唯一** engine_id，放
+    占位符 ``__PD_RANK__`` 由 fork 脚本（vllm_adapter）按实际 dp_rank 替换。
     """
     role = ext["role"]
     kv_role = "kv_producer" if role == "P" else "kv_consumer"
@@ -1061,8 +1063,16 @@ def _build_pd_external_lb_kv(entry, ext):
     module_path = entry.get("connector_module_path")
     if module_path:
         cfg["kv_connector_module_path"] = module_path
-    if entry["connector"] in ("MooncakeConnector", "MooncakeConnectorV1", "MooncakeHybridConnector"):
-        cfg["engine_id"] = "__PD_RANK__"  # fork 脚本按 dp_rank 替换
+    # engine_id 按连接器策略区分（见 docstring 与
+    # docs/reference/pd-glm5-runtime-log-vs-official-glm52-report.md §4.9）：
+    if entry["connector"] == "MooncakeConnector":
+        # 官方 kv_p2p：engine_id 是 P/D 角色标签（producer=0 / consumer=1），与官方样例一致；
+        # 节点唯一性来自 IP:kv_port。per-rank 会让 P-rank-k 与 D-rank-k engine_id 撞号，
+        # 高并发下 _get_remote_rank 越界崩溃；改 role 级后真机验证可正常拉起且不崩。
+        cfg["engine_id"] = "0" if role == "P" else "1"
+    elif entry["connector"] in ("MooncakeConnectorV1", "MooncakeHybridConnector"):
+        # 这两种要求每节点唯一 engine_id：放占位符，fork 脚本（vllm_adapter）按 dp_rank 替换。
+        cfg["engine_id"] = "__PD_RANK__"
     return cfg
 
 

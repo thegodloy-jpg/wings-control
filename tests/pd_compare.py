@@ -43,6 +43,34 @@ OFFICIAL = {
                      "decode": {"dp_size": 16, "tp_size": 4}},
         "env": ["VLLM_ASCEND_ENABLE_FUSED_MC2", "VLLM_ASCEND_ENABLE_MLAPO"],
     },
+    # 官方 GLM-5.2 A2 4P4D（用户提供的手工 P/D 脚本，kv_p2p MooncakeConnector + role 级 engine_id 0/1）。
+    # max-model-len 故意不校验：官方 P=115168/D=135168 vs wings 131072/200000 是用户可控长度（刻意 delta，见报告 §2）。
+    ("glm52-a2", "P"): {
+        "flags": {"tensor-parallel-size": "8", "data-parallel-size": "4",
+                  "max-num-batched-tokens": "4096", "max-num-seqs": "64",
+                  "gpu-memory-utilization": "0.95", "quantization": "ascend",
+                  "enable-expert-parallel": True, "enable-chunked-prefill": True,
+                  "enforce-eager": True, "data-parallel-external-lb": True},
+        "spec": {"num_speculative_tokens": 3, "method": "deepseek_mtp"},
+        "kv": {"kv_connector": "MooncakeConnector", "kv_role": "kv_producer", "kv_port": "30000"},
+        "kv_extra": {"use_ascend_direct": True, "prefill": {"dp_size": 4, "tp_size": 8},
+                     "decode": {"dp_size": 8, "tp_size": 4}},
+        "engine_id_role": "0",
+        "env": ["VLLM_ASCEND_ENABLE_FLASHCOMM1", "VLLM_NIXL_ABORT_REQUEST_TIMEOUT"],
+    },
+    ("glm52-a2", "D"): {
+        "flags": {"tensor-parallel-size": "4", "data-parallel-size": "8",
+                  "max-num-batched-tokens": "164", "max-num-seqs": "48",
+                  "gpu-memory-utilization": "0.92", "quantization": "ascend",
+                  "enable-expert-parallel": True, "data-parallel-external-lb": True},
+        "compilation": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+        "spec": {"num_speculative_tokens": 3, "method": "deepseek_mtp"},
+        "kv": {"kv_connector": "MooncakeConnector", "kv_role": "kv_consumer", "kv_port": "30100"},
+        "kv_extra": {"use_ascend_direct": True, "prefill": {"dp_size": 4, "tp_size": 8},
+                     "decode": {"dp_size": 8, "tp_size": 4}},
+        "engine_id_role": "1",
+        "env": ["VLLM_ASCEND_ENABLE_MLAPO", "DYNAMIC_EPLB", "TASK_QUEUE_ENABLE"],
+    },
     ("v4flash", "P"): {
         "flags": {"tensor-parallel-size": "4", "data-parallel-size": "4",
                   "max-num-batched-tokens": "4096", "max-num-seqs": "64",
@@ -161,6 +189,10 @@ def compare(scenario, role):
         _r(f"kv_extra {k}", extra.get(k) == v, f"got={extra.get(k)}")
     if spec.get("engine_id_per_rank"):
         _r("kv engine_id 按rank占位", kv.get("engine_id") == "PERRANK", f"got={kv.get('engine_id')}")
+    if "engine_id_role" in spec:
+        # 官方 kv_p2p MooncakeConnector：engine_id 是 role 级常量（P=0 / D=1），非 per-rank
+        _r(f"kv engine_id role 级={spec['engine_id_role']}",
+           kv.get("engine_id") == spec["engine_id_role"], f"got={kv.get('engine_id')}")
 
     # 5) 角色 env（全脚本搜 export）
     for e in spec["env"]:
@@ -168,7 +200,7 @@ def compare(scenario, role):
 
 
 def main():
-    for scenario in ("glm5", "v4flash"):
+    for scenario in ("glm5", "glm52-a2", "v4flash"):
         for role in ("P", "D"):
             compare(scenario, role)
     print(f"\n==== 对比结果: {OK} OK / {NG} FAIL ====")
