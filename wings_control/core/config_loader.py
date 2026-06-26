@@ -33,10 +33,10 @@ from pathlib import Path
 import yaml
 
 from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd_role_env, \
-    get_config_force_env, get_soft_fp8_env, get_speculative_decoding_env, \
+    get_config_force_env, get_speculative_decoding_env, \
     get_vllm_distributed_port, get_sglang_distributed_port, get_router_env, \
     get_router_instance_group_name_env, get_router_instance_name_env, get_router_nats_path_env, \
-    get_operator_acceleration_env, get_local_ip
+    get_local_ip
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
 from utils.model_utils import (ModelIdentifier,
                                is_glm_moe_dsa_glm51, is_glm52_single_node_even, resolve_thinking_off_policy,
@@ -622,18 +622,16 @@ def _set_sequence_length(params, engine_cmd_parameter, model_type: str = "llm"):
 def _set_task(params, ctx):
     """根据模型类型（embedding/rerank）设置 vllm task 参数。
 
-    昇腾设备上 embedding/rerank 模型需要强制启用 eager 模式并关闭 ATB 算子加速。
+    昇腾设备上 embedding/rerank 模型需要强制启用 eager 模式。
     """
     if ctx["model_type"] == "embedding":
         params["task"] = "embedding"
         if ctx["device"] == "ascend":
             params["enforce_eager"] = True
-            params["use_kunlun_atb"] = False
     elif ctx["model_type"] == "rerank":
         params["task"] = "score"
         if ctx["device"] == "ascend":
             params["enforce_eager"] = True
-            params["use_kunlun_atb"] = False
     else:
         return
 
@@ -1837,27 +1835,51 @@ def apply_effective_feature_enablement(p: Dict[str, Any], hardware_env: Dict[str
         logger.info("[SmartFeature] PD role detected -> veto: spec/sparse/offload all disabled")
         return
 
+    # 🔴 Ascend 卡型解析失败 → 整条 910b/910c 白名单必 miss（需求一 §0.1#2 / §C.5 最硬的静默失败点）。
+    #    NV 用 "*" 卡型不受影响，故仅对 vllm_ascend 告警，避免噪音。
+    if engine == "vllm_ascend" and not card:
+        logger.warning(
+            "[SmartFeature] card_token unresolved on Ascend; Smart whitelist (910b/910c rows) "
+            "will all miss -> spec/sparse/offload suppressed. Set hardware_info.json "
+            "details[0].name or ENGINE_VERSION platform suffix (需求一 §0.1#2 / §C.5)."
+        )
+
     feats = resolve_feature_whitelist(engine, name, path, card)
     # stash 供产出口（§2.3 resolve_speculative_strategy）复用：收口点用 hardware_env 解析卡型最准，
     # 而 adapter 内产出口拿不到 hardware_env、env 兜底可能解析不到卡型（尤其 Ascend）→ 误判 suffix。
     # 让产出口直接复用收口结论，消除「收口点 vs 产出口」双入口卡型不一致（需求一 §5）。
     p["_smart_feats"] = sorted(feats)
 
+    # 记录「请求开关」原值，供收口 req->eff 对照日志（排障白名单收窄结果，需求一 §4 状态监控）。
+    sparse_req = bool(p.get("enable_sparse"))
+    spec_req = bool(p.get("enable_speculative_decode"))
+    offload_req = get_lmcache_env()
+
     # 稀疏：有效 = 开关 on AND 命中白名单（无 forced）
-    sparse_eff = bool(p.get("enable_sparse")) and "sparse" in feats
+    sparse_eff = sparse_req and "sparse" in feats
     p["enable_sparse"] = sparse_eff
     os.environ["ENABLE_SPARSE"] = os.environ["SPARSE_ENABLE"] = "true" if sparse_eff else "false"
+    if sparse_req and not sparse_eff:
+        logger.info("[SmartFeature] sparse requested but not in whitelist (engine=%s card=%s) "
+                    "-> suppressed (ENABLE_SPARSE=false)", engine, card or "(empty)")
 
     # 卸载：白名单外收口为关（容量 auto/custom 仍由产出口 _build_cache_env_commands 处理）
-    if get_lmcache_env() and "offload" not in feats:
+    offload_eff = offload_req and "offload" in feats
+    if offload_req and "offload" not in feats:
         os.environ["LMCACHE_OFFLOAD"] = "false"
-        logger.info("[SmartFeature] offload not in whitelist (engine=%s card=%s) -> LMCACHE_OFFLOAD=false",
-                    engine, card)
+        logger.info("[SmartFeature] offload requested but not in whitelist (engine=%s card=%s) "
+                    "-> suppressed (LMCACHE_OFFLOAD=false)", engine, card or "(empty)")
 
     # 投机：suffix 地板恒产 → 开关不收口（保持 true 是诚实的）；
     #   MTP-vs-suffix 由 §2.3 在 resolve_speculative_strategy 内按白名单 gate。
-    logger.info("[SmartFeature] effective enablement: engine=%s card=%s feats=%s sparse_eff=%s",
-                engine, card, sorted(feats), sparse_eff)
+    # 收口摘要：一行打全三特性 req->eff（spec 不收口，附白名单 gate 结果，suffix 地板恒产）。
+    logger.info(
+        "[SmartFeature] effective enablement: engine=%s card=%s feats=%s | "
+        "sparse %s->%s, offload %s->%s, spec req=%s (whitelist_spec=%s, suffix floor 恒产)",
+        engine, card or "(empty)", sorted(feats),
+        sparse_req, sparse_eff, offload_req, offload_eff,
+        spec_req, "spec" in feats,
+    )
 
 
 def _record_selected_engine(engine: str) -> None:
@@ -1974,11 +1996,9 @@ def _select_ascend_engine(device_name: str, model_info) -> str:
     优先级（由高到低）：
     1. Ascend310 → 强制 mindie（vllm_ascend 不支持 310 系列）
     2. embedding / rerank 模型 → vllm_ascend
-    3. 算子加速（USE_KUNLUN_ATB）启用 → vllm_ascend
-    4. Wings Router 启用 → vllm_ascend
-    5. Soft FP8 量化启用 → vllm_ascend
-    6. Wings 已验证模型 → mindie（Ascend 上的推荐引擎）
-    7. 未验证架构 → vllm_ascend（兜底）
+    3. Wings Router 启用 → vllm_ascend
+    4. Wings 已验证模型 → mindie（Ascend 上的推荐引擎）
+    5. 未验证架构 → vllm_ascend（兜底）
 
     Args:
         device_name: 设备型号名称，含 '310' 表示昇腾 310 系列
@@ -2001,16 +2021,8 @@ def _select_ascend_engine(device_name: str, model_info) -> str:
     elif model_type in ["embedding", "rerank"]:
         logger.info("model type is %s, automatically switched to VLLM engine", model_type)
         return "vllm_ascend"
-    elif get_operator_acceleration_env():
-        logger.warning("operator_acceleration is enabled, "
-                       "automatically switched to VLLM_Ascend engine")
-        return "vllm_ascend"
     elif get_router_env():
         logger.info("Wings router enabled, automatically switched to VLLM engine")
-        return "vllm_ascend"
-    elif get_soft_fp8_env():
-        logger.warning("soft fp8 is enabled, "
-                       "automatically switched to VLLM_Ascend engine")
         return "vllm_ascend"
     elif model_architecture in ["DeepseekV32ForCausalLM", "Qwen3NextForCausalLM",
                                   "DeepseekV4ForCausalLM",

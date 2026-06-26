@@ -32,7 +32,8 @@ from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft,
 from utils.device_utils import resolve_card_token
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
-    get_pd_role_env, get_qat_env, get_cold_start_env
+    get_pd_role_env, get_qat_env, get_cold_start_env, \
+    get_sparse_level_env, SPARSE_LEVEL_ACCURACY_FIRST, SPARSE_LEVEL_PERFORMANCE_FIRST
 from utils.shell_env_utils import dedupe_env_exports
 from utils.file_utils import safe_write_file, WriteOptions
 from utils.vllm_helpers import (
@@ -380,22 +381,6 @@ def _build_ascend_fallback_env(engine: str) -> List[str]:
     ]
 
 
-def _build_vllm_ascend_extensions(params) -> List[str]:
-    """生成 vllm_ascend 扩展环境命令（昆仑 ATB、Qwen3Next 支持）。
-
-    Args:
-        params: 参数字典
-
-    Returns:
-        List[str]: 扩展环境命令列表
-    """
-    commands = []
-    if params.get("engine_config", {}).get("use_kunlun_atb"):
-        commands.append("export USE_KUNLUN_ATB=1")
-        logger.info("kunlun atb is used")
-    return commands
-
-
 def _is_vllm_ascend_ray_distributed(params: Dict[str, Any], engine: str) -> bool:
     """判断当前是否为 vllm_ascend Ray 分布式执行场景。"""
     if engine != "vllm_ascend":
@@ -459,8 +444,6 @@ def _build_base_env_commands(params, engine: str, root: str) -> List[str]:
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config"
     )
     env_commands = _inline_ascend_env_script(config_dir, engine)
-    if engine == "vllm_ascend":
-        env_commands.extend(_build_vllm_ascend_extensions(params))
     return env_commands
 
 
@@ -1769,7 +1752,7 @@ def _strip_internal_engine_config_keys(params: Dict[str, Any], engine_config: Di
     """清理 adapter 内部字段，并应用必须在 CLI 渲染前完成的硬约束。
 
     这里处理的是“不应该出现在 vLLM CLI 中”的字段：
-    - use_kunlun_atb / enable_sparse 等由 adapter 自己消费；
+    - enable_sparse 等由 adapter 自己消费；
     - ascend_platform / hardware_platform 只用于平台判断；
     - GLM-5.1 NVIDIA/vLLM 不允许 KV offload，即使上游合并了 kv_transfer_config
       也要在脚本生成前删除，避免运行时加载不兼容 connector。
@@ -1782,7 +1765,6 @@ def _strip_internal_engine_config_keys(params: Dict[str, Any], engine_config: Di
                 "removed upstream kv_transfer_config=%s",
                 removed,
             )
-    engine_config.pop("use_kunlun_atb", None)
     engine_config.pop("enable_sparse", None)
     engine_config.pop("ascend_platform", None)
     engine_config.pop("hardware_platform", None)
@@ -2945,6 +2927,28 @@ def should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
 #   - 其他架构 → FP8 KV CACHE 量化
 
 
+def _resolve_sparse_level() -> str:
+    """解析 SmartKVSparse 有效精度/性能档位（需求一 §2.4）。
+
+    读取请求档位 ``SPARSE_LEVEL``：
+      - ``accuracy_first``（精度优先）：本次落地档位，原样生效；
+      - ``performance_first``（性能优先）：**暂未实现** → 告警并回落 accuracy_first。
+    因此当前有效档位恒为 ``accuracy_first``；待 performance_first 落地后，
+    在本函数放开分支即可，``_build_kv_sparse_cmd`` 据返回值切换稀疏策略。
+
+    Returns:
+        str: 有效档位（当前恒 ``accuracy_first``）。
+    """
+    requested = get_sparse_level_env()
+    if requested == SPARSE_LEVEL_PERFORMANCE_FIRST:
+        logger.warning(
+            "[KV Sparse] SPARSE_LEVEL=performance_first not implemented yet; "
+            "falling back to accuracy_first."
+        )
+        return SPARSE_LEVEL_ACCURACY_FIRST
+    return requested
+
+
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     """构建 KV 稀疏特性的启动命令参数。
 
@@ -2967,6 +2971,11 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     """
     if engine not in ("vllm", "vllm_ascend"):
         return ""
+
+    # 需求一 §2.4：稀疏精度/性能档位。performance_first 暂未实现，由 _resolve_sparse_level
+    # 告警回落 accuracy_first；本次各分支均为 accuracy_first 现状，档位仅作观测与回落锚点。
+    sparse_level = _resolve_sparse_level()
+    logger.info("[KV Sparse] effective SPARSE_LEVEL=%s (engine=%s)", sparse_level, engine)
 
     model_info = ModelIdentifier(
         params.get("model_name"),

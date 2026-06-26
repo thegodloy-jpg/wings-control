@@ -3,7 +3,7 @@
 
 覆盖 TEST_PLAN.md GAP-4：
   - _select_nvidia_engine：5 条优先级分支
-  - _select_ascend_engine：7 条优先级分支（含 Ascend310 强制 mindie）
+  - _select_ascend_engine：5 条优先级分支（含 Ascend310 强制 mindie）
   - _resolve_engine_choice：用户明确指定引擎 vs 自动选择
 
 运行：
@@ -52,13 +52,10 @@ def _nvidia(gpu_usage_mode="full", wings_supported=True, model_type="llm",
 
 
 def _ascend(device_name="Ascend910B", wings_supported=True, model_type="llm",
-            arch="Qwen3ForCausalLM",
-            op_accel=False, router=False, soft_fp8=False):
+            arch="Qwen3ForCausalLM", router=False):
     m = _make_model(wings_supported=wings_supported, model_type=model_type, arch=arch)
-    with patch(f"{MOD}.get_operator_acceleration_env", return_value=op_accel):
-        with patch(f"{MOD}.get_router_env", return_value=router):
-            with patch(f"{MOD}.get_soft_fp8_env", return_value=soft_fp8):
-                return _select_ascend_engine(device_name, m)
+    with patch(f"{MOD}.get_router_env", return_value=router):
+        return _select_ascend_engine(device_name, m)
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +99,7 @@ class TestSelectNvidiaEngine(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestSelectAscendEngine(unittest.TestCase):
-    """Ascend NPU 引擎自动选择逻辑（7 条优先级分支）。"""
+    """Ascend NPU 引擎自动选择逻辑（5 条优先级分支）。"""
 
     # 优先级1：Ascend310 → mindie（强制）
     def test_ascend310_forces_mindie(self):
@@ -112,10 +109,8 @@ class TestSelectAscendEngine(unittest.TestCase):
     def test_ascend310_embedding_raises_value_error(self):
         m = _make_model(model_type="embedding")
         with self.assertRaises(ValueError):
-            with patch(f"{MOD}.get_operator_acceleration_env", return_value=False):
-                with patch(f"{MOD}.get_router_env", return_value=False):
-                    with patch(f"{MOD}.get_soft_fp8_env", return_value=False):
-                        _select_ascend_engine("Ascend310P", m)
+            with patch(f"{MOD}.get_router_env", return_value=False):
+                _select_ascend_engine("Ascend310P", m)
 
     # 优先级2：embedding → vllm_ascend
     def test_embedding_model_returns_vllm_ascend(self):
@@ -125,19 +120,11 @@ class TestSelectAscendEngine(unittest.TestCase):
     def test_rerank_model_returns_vllm_ascend(self):
         self.assertEqual(_ascend(model_type="rerank"), "vllm_ascend")
 
-    # 优先级3：operator_acceleration 开启 → vllm_ascend
-    def test_operator_acceleration_returns_vllm_ascend(self):
-        self.assertEqual(_ascend(op_accel=True), "vllm_ascend")
-
-    # 优先级4：Wings Router 开启 → vllm_ascend
+    # 优先级3：Wings Router 开启 → vllm_ascend
     def test_router_env_returns_vllm_ascend(self):
         self.assertEqual(_ascend(router=True), "vllm_ascend")
 
-    # 优先级5：soft FP8 开启 → vllm_ascend
-    def test_soft_fp8_returns_vllm_ascend(self):
-        self.assertEqual(_ascend(soft_fp8=True), "vllm_ascend")
-
-    # 优先级6a：特殊架构列表成员 → vllm_ascend
+    # 优先级4a：特殊架构列表成员 → vllm_ascend
     def test_qwen3next_in_special_arch_list_returns_vllm_ascend(self):
         self.assertEqual(_ascend(arch="Qwen3NextForCausalLM"), "vllm_ascend")
 
@@ -183,11 +170,9 @@ class TestResolveEngineChoice(unittest.TestCase):
             cmd_params["engine"] = engine_in_params
         with patch(f"{MOD}.get_pd_role_env", return_value=""):
             with patch(f"{MOD}.get_router_env", return_value=False):
-                with patch(f"{MOD}.get_operator_acceleration_env", return_value=False):
-                    with patch(f"{MOD}.get_soft_fp8_env", return_value=False):
-                        return _resolve_engine_choice(
-                            device_type, device_name, gpu_usage_mode, cmd_params, m
-                        )
+                return _resolve_engine_choice(
+                    device_type, device_name, gpu_usage_mode, cmd_params, m
+                )
 
     def test_user_specified_vllm_is_honored(self):
         """用户明确指定 vllm → 直接返回 vllm（最高优先级）。"""

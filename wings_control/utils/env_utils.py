@@ -294,34 +294,6 @@ def get_router_nats_path_env():
     return router_nats_path
 
 
-def get_operator_acceleration_env():
-    """检查算子级加速（Operator Acceleration）是否启用。
-
-    从 ENABLE_OPERATOR_ACCELERATION 环境变量读取，判断是否启用
-    算子级别的推理加速优化（例如自定义 CUDA 算子内核等）。
-
-    Returns:
-        bool: 启用返回 True，未设置或为 'false' 时返回 False
-    """
-    operator_acceleration = os.getenv('ENABLE_OPERATOR_ACCELERATION', 'false')
-    operator_acceleration = operator_acceleration.lower() == 'true'
-    return operator_acceleration
-
-
-def get_soft_fp8_env():
-    """检查软件 FP8 量化是否启用。
-
-    从 ENABLE_SOFT_FP8 环境变量读取，判断是否启用软件模拟的
-    FP8（8-bit 浮点）量化，以降低显存占用并提升推理吞吐量。
-
-    Returns:
-        bool: 启用返回 True，未设置或为 'false' 时返回 False
-    """
-    soft_fp8 = os.getenv('ENABLE_SOFT_FP8', 'false')
-    soft_fp8 = soft_fp8.lower() == 'true'
-    return soft_fp8
-
-
 def get_config_force_env():
     """检查是否强制使用用户提供的配置覆盖所有默认值。
 
@@ -356,6 +328,29 @@ def get_sparse_env():
     sparse_enable = os.getenv('SPARSE_ENABLE', 'false')
     sparse_enable = sparse_enable.lower() == 'true'
     return sparse_enable
+
+
+# SmartKVSparse 精度/性能档位取值（需求一 §2.4）
+SPARSE_LEVEL_ACCURACY_FIRST = 'accuracy_first'      # 精度优先（本次落地）
+SPARSE_LEVEL_PERFORMANCE_FIRST = 'performance_first'  # 性能优先（暂未实现，调用方告警回落）
+
+
+def get_sparse_level_env():
+    """读取 SmartKVSparse 请求档位（accuracy_first / performance_first）。需求一 §2.4。
+
+    取值语义：
+        - ``accuracy_first``（精度优先）：本次落地档位；
+        - ``performance_first``（性能优先）：暂未实现，由调用方告警回落 accuracy_first。
+    缺省（未下发）或非法取值一律回落 ``accuracy_first``。
+    本函数只返回「请求档位」（已小写规整），是否实现/回落由调用方决定。
+
+    Returns:
+        str: ``accuracy_first`` 或 ``performance_first``
+    """
+    raw = os.getenv('SPARSE_LEVEL', '').strip().lower()
+    if raw in (SPARSE_LEVEL_ACCURACY_FIRST, SPARSE_LEVEL_PERFORMANCE_FIRST):
+        return raw
+    return SPARSE_LEVEL_ACCURACY_FIRST
 
 
 def log_kvcache_offload_config(lmcache_offload_enabled, qat_enabled):
