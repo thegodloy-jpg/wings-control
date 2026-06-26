@@ -110,7 +110,7 @@
 | `LMCACHE_OFFLOAD` | 页面 | `false` |
 | `ENABLE_RAG_ACC` / `RAG_ACC_ENABLED` | 页面 | `false` |
 | `ENABLE_OPERATOR_ACCELERATION` | 页面 | `false` |
-| `ENABLE_SOFT_FP8` / `ENABLE_SOFT_FP4` | 页面 | `false` |
+| `ENABLE_SOFT_FP8` | 页面 | `false` |
 | `CONFIG_FORCE` | 页面 | `false` |
 
 ### 5. LMCache（KV 卸载）细化

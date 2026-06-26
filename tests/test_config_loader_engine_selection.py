@@ -22,9 +22,7 @@ from wings_control.core.config_loader import (  # noqa: E402
     _detect_mtp_moe_features,
     load_and_merge_configs,
     _resolve_engine_choice,
-    _set_deepseek_v3_family_ascend_quant_params,
     _set_sequence_length,
-    _set_soft_fp8,
     _guard_pd_hybrid_kv_cache,
     _set_mindie_common_params,
     _select_ascend_engine,
@@ -32,7 +30,6 @@ from wings_control.core.config_loader import (  # noqa: E402
     _validate_user_engine,
     _validate_embedding_rerank_params,
 )
-from utils.model_utils import is_deepseek_series_fp8, is_deepseek_series_modelslim_quant  # noqa: E402
 
 
 class _FakeModelInfo:
@@ -946,50 +943,6 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertNotIn("sp", params)
         self.assertNotIn("cp", params)
 
-    def test_deepseek_v3_family_w8a8_uses_official_quant_path_not_soft_fp8(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model_dir = Path(tmpdir)
-            (model_dir / "config.json").write_text(
-                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
-                encoding="utf-8",
-            )
-            (model_dir / "quant_model_description.json").write_text("{}", encoding="utf-8")
-            model_info = _FakeModelInfo(
-                architecture="DeepseekV3ForCausalLM",
-                model_name="DeepSeek-V3.1-w8a8",
-                model_path=str(model_dir),
-            )
-            params = {"device_count": 8}
-
-            handled = _set_deepseek_v3_family_ascend_quant_params(params, {"device": "ascend"}, model_info)
-
-        self.assertTrue(handled)
-        self.assertEqual(params["quantization"], "ascend")
-
-    def test_deepseek_v3_family_modelslim_does_not_enter_soft_fp8_branch(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model_dir = Path(tmpdir)
-            (model_dir / "config.json").write_text(
-                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
-                encoding="utf-8",
-            )
-            (model_dir / "quant_model_description.json").write_text(
-                json.dumps({"quant_type": "w8a8"}),
-                encoding="utf-8",
-            )
-            model_info = _FakeModelInfo(
-                architecture="DeepseekV32ForCausalLM",
-                model_name="DeepSeek-V3.2-w8a8",
-                model_path=str(model_dir),
-            )
-            params = {"device_count": 8}
-
-            self.assertTrue(is_deepseek_series_modelslim_quant(str(model_dir)))
-            self.assertFalse(is_deepseek_series_fp8(str(model_dir)))
-            _set_soft_fp8(params, {"device": "ascend"}, model_info)
-
-        self.assertEqual(params, {"device_count": 8})
-
     def test_distributed_raw_engine_config_is_preserved_as_explicit(self):
         known_args = SimpleNamespace()
         known_args.config_file = ""
@@ -1058,58 +1011,6 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("seed", merged["_explicit_cli_keys"])
         self.assertIn("max_num_seqs", merged["_explicit_cli_keys"])
         self.assertNotIn("enable_prefix_caching", merged["_explicit_cli_keys"])
-
-    def test_generic_deepseek_fp8_still_forces_enforce_eager(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model_dir = Path(tmpdir)
-            (model_dir / "config.json").write_text(
-                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
-                encoding="utf-8",
-            )
-            (model_dir / "quant_model_description.json").write_text(
-                json.dumps({"quant_type": "fp8"}),
-                encoding="utf-8",
-            )
-            model_info = _FakeModelInfo(
-                architecture="DeepseekV3ForCausalLM",
-                model_name="DeepSeek-R1-w8a8",
-                model_path=str(model_dir),
-            )
-            params = {"device_count": 8}
-
-            _set_soft_fp8(params, {"device": "ascend"}, model_info)
-
-        self.assertEqual(params["quantization"], "ascend")
-        self.assertIs(params["enforce_eager"], True)
-
-    def test_generic_deepseek_fp8_preserves_explicit_upper_overrides(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            model_dir = Path(tmpdir)
-            (model_dir / "config.json").write_text(
-                json.dumps({"architectures": ["DeepseekV3ForCausalLM"]}),
-                encoding="utf-8",
-            )
-            (model_dir / "quant_model_description.json").write_text(
-                json.dumps({"quant_type": "fp8"}),
-                encoding="utf-8",
-            )
-            model_info = _FakeModelInfo(
-                architecture="DeepseekV3ForCausalLM",
-                model_name="DeepSeek-R1-w8a8",
-                model_path=str(model_dir),
-            )
-            params = {
-                "device_count": 8,
-                "enforce_eager": False,
-                "tensor_parallel_size": 8,
-            }
-
-            with patch.object(sys, "argv", ["prog", "--enforce-eager", "false", "--tensor-parallel-size", "8"]):
-                _set_soft_fp8(params, {"device": "ascend"}, model_info)
-
-        self.assertIs(params["enforce_eager"], False)
-        self.assertEqual(params["tensor_parallel_size"], 8)
-        self.assertEqual(params["data_parallel_size"], 2)
 
     def test_sequence_length_does_not_override_without_explicit_input_or_output(self):
         params = {"max_model_len": 9999}

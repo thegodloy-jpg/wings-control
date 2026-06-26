@@ -33,13 +33,12 @@ from pathlib import Path
 import yaml
 
 from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd_role_env, \
-    get_config_force_env, get_soft_fp8_env, get_soft_fp4_env, get_speculative_decoding_env, \
+    get_config_force_env, get_soft_fp8_env, get_speculative_decoding_env, \
     get_vllm_distributed_port, get_sglang_distributed_port, get_router_env, \
     get_router_instance_group_name_env, get_router_instance_name_env, get_router_nats_path_env, \
     get_operator_acceleration_env, get_local_ip
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
-from utils.model_utils import (ModelIdentifier, is_qwen3_32b_nvfp4, is_deepseek_series_fp8,
-                               is_deepseek_series_modelslim_quant, is_qwen3_series_fp8,
+from utils.model_utils import (ModelIdentifier,
                                is_glm_moe_dsa_glm51, is_glm52_single_node_even, resolve_thinking_off_policy,
                                resolve_feature_whitelist,
                                THINKING_ALWAYS_ON, THINKING_HYBRID, THINKING_NONE)
@@ -356,8 +355,7 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
         5. _guard_pd_hybrid_kv_cache → PD 模式移除不兼容的 hybrid KV flag
         6. _ensure_pd_head_dim      → PD 模式补全 config.json 缺失的 head_dim
         7. _set_router_config       → Wings Router NATS 配置
-        8. _set_soft_fp8            → Soft FP8 量化配置
-        9. _set_task               → embedding/rerank 任务类型
+        8. _set_task               → embedding/rerank 任务类型
 
     Args:
         params:              当前引擎参数字典（会被原地修改）
@@ -385,40 +383,12 @@ def _merge_vllm_params(params, ctx, engine_cmd_parameter, model_info):
     _guard_pd_hybrid_kv_cache(params)
     _ensure_pd_head_dim(params, model_info)
     _set_router_config(params)
-    if not _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info):
-        _set_soft_fp8(params, ctx, model_info)
-    _set_soft_fp4(params, ctx, model_info)
     _set_task(params, ctx)
 
     # 对于 embedding 和 rerank 模型，强制禁用 enable_chunked_prefill 和 enable_prefix_caching
     _validate_embedding_rerank_params(params, ctx)
 
     return params
-
-
-def _set_deepseek_v3_family_ascend_quant_params(params, ctx, model_info) -> bool:
-    """识别 DeepSeek V3-family Ascend W8A8/ModelSlim 官方量化路径。
-
-    DeepSeek V3/V3.1/V3.2 W8A8/ModelSlim 属于官方 Ascend 量化路径，
-    不是通用 Soft FP8 fallback。这里仅标记量化方式并阻断 Soft FP8
-    误判，不再按官方示例逐项注入 vLLM 启动字段。
-    """
-    model_path = model_info.model_path
-    model_name = model_info.model_name
-
-    if ctx.get('device') != "ascend":
-        return False
-    if not _is_deepseek_v3_family_model(model_name, model_path):
-        return False
-    if not is_deepseek_series_modelslim_quant(model_path):
-        return False
-
-    explicit_keys = _detect_explicit_cli_keys()
-
-    if 'quantization' not in explicit_keys:
-        params['quantization'] = 'ascend'
-    logger.info("DeepSeek V3-family Ascend W8A8/ModelSlim quantization path detected")
-    return True
 
 
 def _set_function_call(params, engine_cmd_parameter):
@@ -562,140 +532,6 @@ def _resolve_gpu_total_memory(ctx: Dict[str, Any]) -> float:
     else:
         logger.warning("Can't get device details and WINGS_DEVICE_MEMORY not set, fallback to 12GB")
     return 12.0
-
-
-def _should_skip_soft_fp8_for_official_deepseek_v3(ctx, model_name: str, model_path: str) -> bool:
-    """Return True for official DeepSeek V3-family Ascend quantized models."""
-    return (
-        ctx.get('device') == "ascend"
-        and _is_deepseek_v3_family_model(model_name, model_path)
-        and is_deepseek_series_modelslim_quant(model_path)
-    )
-
-
-def _is_soft_fp8_model(model_name: str, model_path: str) -> bool:
-    """Detect whether the model should use Soft FP8 settings."""
-    return is_qwen3_series_fp8(model_path, model_name) or is_deepseek_series_fp8(model_path)
-
-
-def _apply_qwen3_soft_fp8(params, model_architecture: str, explicit_keys: set) -> None:
-    """Apply Qwen3 Soft FP8 parameters while preserving explicit user values."""
-    if 'quantization' not in explicit_keys:
-        params['quantization'] = 'ascend'
-    if model_architecture == "Qwen3MoeForCausalLM" and 'enable_expert_parallel' not in explicit_keys:
-        params['enable_expert_parallel'] = False
-        logger.info("Soft FP8 configured for Qwen3 MOE Series models")
-    else:
-        logger.info("Soft FP8 configured for Qwen3 Series models")
-
-
-def _resolve_deepseek_soft_fp8_parallel(params) -> Tuple[int, int]:
-    """Resolve recommended DeepSeek FP8 TP/DP values from device_count."""
-    try:
-        device_count_val = int(params.get('device_count', 0))
-    except (ValueError, TypeError):
-        logger.warning("Invalid device_count value, defaulting to 0")
-        device_count_val = 0
-    recommended_tp = min(4, device_count_val) if device_count_val > 0 else 4
-    recommended_dp = min(4, device_count_val // recommended_tp) if device_count_val > 0 else 4
-    return recommended_tp, recommended_dp
-
-
-def _apply_deepseek_soft_fp8(params, explicit_keys: set) -> None:
-    """Apply DeepSeek Soft FP8 parameters while preserving explicit user values."""
-    if 'quantization' not in explicit_keys:
-        params['quantization'] = 'ascend'
-    if 'enforce_eager' not in explicit_keys:
-        params["enforce_eager"] = True
-    if 'no_enable_prefix_caching' not in explicit_keys and 'enable_prefix_caching' not in explicit_keys:
-        params['no_enable_prefix_caching'] = True
-    if 'enable_expert_parallel' not in explicit_keys:
-        params['enable_expert_parallel'] = True
-    if 'async_scheduling' not in explicit_keys:
-        params['async_scheduling'] = True
-
-    recommended_tp, recommended_dp = _resolve_deepseek_soft_fp8_parallel(params)
-    if 'data_parallel_size' not in explicit_keys:
-        params['data_parallel_size'] = recommended_dp
-    if 'tensor_parallel_size' not in explicit_keys:
-        params['tensor_parallel_size'] = recommended_tp
-    params['use_kunlun_atb'] = False
-    logger.info("Soft FP8 configured for Deekseek Series models")
-
-
-def _set_soft_fp8(params, ctx, model_info):
-    """FP8 特性的参数配置（支持 DeepSeek / Qwen3 系列 FP8 模型）。
-
-    自动检测模型是否为 FP8 模型，并根据模型系列设置对应的量化参数：
-      - Qwen3 系列：设置 quantization='ascend'，MOE 模型禁用专家并行
-            - DeepSeek 系列：设置 quantization='ascend'，禁用 prefix caching，启用 EP/async，固定 TP=4/DP=4
-
-    如果模型不是 FP8 模型，则跳过此函数，交由 _set_soft_fp4 处理。
-    """
-    model_architecture = model_info.model_architecture
-    model_name = model_info.model_name
-    model_path = model_info.model_path
-    explicit_keys = _detect_explicit_cli_keys()
-
-    if _should_skip_soft_fp8_for_official_deepseek_v3(ctx, model_name, model_path):
-        logger.info("DeepSeek V3-family official Ascend quantized path, skip Soft FP8")
-        return
-
-    # 如果模型不是 FP8，则跳过此函数，让 FP4 函数处理
-    if not _is_soft_fp8_model(model_name, model_path):
-        return
-
-    if ctx['device'] != "ascend":
-        logger.warning("Soft FP8 is only supported on Ascend devices")
-        return
-    if is_qwen3_series_fp8(model_path, model_name):
-        _apply_qwen3_soft_fp8(params, model_architecture, explicit_keys)
-    elif is_deepseek_series_fp8(model_path):
-        _apply_deepseek_soft_fp8(params, explicit_keys)
-
-
-def _is_deepseek_v3_family_model(model_name: str, model_path: str) -> bool:
-    """Return True for DeepSeek V3-family identifiers, excluding R1/R2 names."""
-    candidates = [str(item) for item in (model_name, model_path) if item]
-    for item in candidates:
-        normalized = item.lower().replace("_", "-")
-        if "deepseek" in normalized and "v3" in normalized:
-            return True
-    return False
-
-
-def _set_soft_fp4(params, ctx, model_info):
-    """FP4 特性的参数配置（仅支持昇腾设备上的 Qwen3-32B NVFP4 模型）。
-
-    检查模型是否为 FP4 模型，如果是则设置 quantization='ascend'。
-    如果同时启用了 FP8 开关，会给出警告但继续使用 FP4 配置。
-    """
-    model_path = model_info.model_path
-    model_name = model_info.model_name
-
-    # 检查模型是否为 FP4 模型
-    is_fp4_model = is_qwen3_32b_nvfp4(model_path)
-
-    # 如果模型不是 FP4，则跳过此函数
-    if not is_fp4_model:
-        return
-
-    # 检查是否启用了 FP8 开关，如果是则给出警告但继续使用 FP4 配置
-    if get_soft_fp8_env():
-        logger.warning("Model %s is detected as FP4 model, but Soft FP8 switch is enabled. "
-                       "Automatically correcting to use Soft FP4 configuration.", model_name)
-
-    # 检查是否启用了 FP4 开关，如果没有启用则给出提示但继续配置
-    if not get_soft_fp4_env():
-        logger.info("Model %s is detected as FP4 model, automatically enabling Soft FP4 configuration", model_name)
-
-    if ctx['device'] != "ascend":
-        logger.warning("Soft FP4 is only supported on Ascend (NPU) devices and will be ignored on current device")
-        return
-
-    logger.info("Will use Soft FP4 configuration")
-    if 'quantization' not in _detect_explicit_cli_keys():
-        params['quantization'] = 'ascend'
 
 
 def _validate_embedding_rerank_params(params, ctx):

@@ -336,19 +336,6 @@ def get_config_force_env():
     return config_force
 
 
-def get_soft_fp4_env():
-    """检查软件 FP4 量化是否启用。
-
-    从 ENABLE_SOFT_FP4 环境变量读取，判断是否启用 FP4 量化。
-
-    Returns:
-        bool: 启用返回 True，未设置或为 'false' 时返回 False
-    """
-    soft_fp4 = os.getenv('ENABLE_SOFT_FP4', 'false')
-    soft_fp4 = soft_fp4.lower() == 'true'
-    return soft_fp4
-
-
 def get_speculative_decoding_env():
     """获取推测解码是否开启环境变量。
 

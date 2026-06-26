@@ -25,13 +25,13 @@
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │ 第 1 层  平台环境变量注入 (K8s Deployment / ConfigMap)              │
-│   SD_ENABLE, LMCACHE_OFFLOAD, ENABLE_SOFT_FP8, PD_ROLE, ...        │
+│   SD_ENABLE, LMCACHE_OFFLOAD, ENABLE_SPARSE, PD_ROLE, ...          │
 └────────────────────────────┬─────────────────────────────────────────┘
                              │
 ┌────────────────────────────▼─────────────────────────────────────────┐
 │ 第 2 层  config_loader 配置合并                                      │
 │   load_and_merge_configs() → _merge_vllm_params()                   │
-│   → _set_kv_cache_config(), _set_soft_fp8(), _set_spec_decoding_config() │
+│   → _set_kv_cache_config(), _set_spec_decoding_config()                  │
 └────────────────────────────┬─────────────────────────────────────────┘
                              │
 ┌────────────────────────────▼─────────────────────────────────────────┐
@@ -325,49 +325,15 @@ capacity = localstore_avail_gb / per_block_gb
 
 ## 5. Soft FP8 / Soft FP4 量化
 
-### 5.1 环境变量
-
-| 环境变量 | 来源 | 读取位置 | 说明 |
-|----------|------|----------|------|
-| `ENABLE_SOFT_FP8` | K8s ConfigMap | `env_utils.get_soft_fp8_env()` | FP8 量化开关 |
-| `ENABLE_SOFT_FP4` | K8s ConfigMap | `env_utils.get_soft_fp4_env()` | FP4 量化开关 |
-
-### 5.2 Soft FP8 配置逻辑
-
-`_set_soft_fp8(params, ctx, model_info)` — `config_loader.py L455`
-
-**前提条件：**
-- 模型必须是 FP8 模型（通过 `is_qwen3_series_fp8()` 或 `is_deepseek_series_fp8()` 检测）
-- 设备必须是 Ascend
-
-**对不同模型系列的参数修改：**
-
-| 模型系列 | 修改的参数 |
-|----------|-----------|
-| Qwen3 系列 FP8 | `quantization='ascend'`；MOE 模型禁用 `enable_expert_parallel` |
-| DeepSeek 系列 FP8 | `quantization='ascend'`, `enforce_eager=True`, `no_enable_prefix_caching=True`, `enable_expert_parallel=False`, `data_parallel_size=4`, `tensor_parallel_size=4`, `use_kunlun_atb=False` |
-
-**特殊逻辑：**
-- FP8 模型即使未开 `ENABLE_SOFT_FP8`，也会自动启用配置（自动检测）
-- 同时开了 FP4 开关 → 警告但仍用 FP8 配置（FP8 优先）
-
-### 5.3 Soft FP4 配置逻辑
-
-`_set_soft_fp4(params, ctx, model_info)` — `config_loader.py L516`
-
-**前提条件：**
-- 模型必须是 Qwen3-32B-NVFP4（通过 `is_qwen3_32b_nvfp4()` 检测：architecture 为 Qwen3ForCausalLM + 无 quantization_config + 有 quant_model_description.json）
-- 设备必须是 Ascend
-
-**参数修改：**
-- `quantization='ascend'`
-
-### 5.4 wings-accel 补丁名称
-
-| 特性 | accel feature name |
-|------|-------------------|
-| Soft FP8 | `soft_fp8` |
-| Soft FP4 | `soft_fp4` |
+> **已移除**：Soft FP8 / Soft FP4 自动量化整体删除——含 `_set_soft_fp8` / `_set_soft_fp4`
+> 及其 helper、检测函数（`is_qwen3_series_fp8` / `is_deepseek_series_fp8` /
+> `is_qwen3_32b_nvfp4` / `is_deepseek_series_modelslim_quant` / `_is_deepseek_v3_modelslim_layout`）、
+> 开关 `ENABLE_SOFT_FP4`、运行时 env `_build_deepseek_fp8_env_commands`、以及官方 W8A8 路径
+> `_set_deepseek_v3_family_ascend_quant_params`。
+>
+> 现状：wings 不再为「config.json 不带 `quantization_config`」的裸布局权重自动注入
+> `quantization='ascend'`。此类 Ascend 量化权重需用户**显式传 `--quantization`**，或改用
+> 自带量化声明的权重。`ENABLE_SOFT_FP8` 仅余引擎自动选择中的路由作用。
 
 ---
 
@@ -382,13 +348,9 @@ wings-accel 在引擎启动前注入 Python monkey-patch，修改 vLLM 运行时
 `_FEATURE_SWITCH_MAP` — `wings_entry.py L59`
 
 ```python
-_FEATURE_SWITCH_MAP = {
-    "ENABLE_SPECULATIVE_DECODE": "adaptive_draft_model",
-    "ENABLE_SPARSE":             "sparse_kv",
-    "LMCACHE_OFFLOAD":           "lmcache_offload",
-    "ENABLE_SOFT_FP8":           "soft_fp8",
-    "ENABLE_SOFT_FP4":           "soft_fp4",
-}
+# 现已为空：投机推理改走 --install-runtime-deps；IndexCache(sparse) 通过动态 feature 聚合安装；
+# LMCache 走 --lmcache-target；Soft FP8/FP4 已整体移除。
+_FEATURE_SWITCH_MAP: dict[str, str] = {}
 ```
 
 ### 6.3 引擎到补丁 key 的映射
@@ -428,7 +390,7 @@ _ENGINE_PATCH_KEY_MAP = {
 
 ```
 1. patch_key = _ENGINE_PATCH_KEY_MAP[engine]        (e.g. "vllm")
-2. features = _collect_enabled_features()            (e.g. ["adaptive_draft_model", "soft_fp8"])
+2. features = _collect_enabled_features()            (e.g. ["adaptive_draft_model"])
 3. engine_version = normalize_engine_version()       (e.g. "0.17.0")
 4. WINGS_ENGINE_PATCH_OPTIONS = JSON 序列化
 ```
@@ -438,7 +400,7 @@ _ENGINE_PATCH_KEY_MAP = {
 {
     "vllm": {
         "version": "0.17.0",
-        "features": ["adaptive_draft_model", "soft_fp8"]
+        "features": ["adaptive_draft_model"]
     }
 }
 ```
@@ -489,9 +451,6 @@ install.py 内部有 `future_fallback` 逻辑，未知版本号会自动回退�
 1. `merged.get("enable_speculative_decode")` → True
 2. `merged.get("enable_sparse")` → True
 3. `os.getenv("LMCACHE_OFFLOAD") == "true"`
-
-> **注意：** Soft FP8/FP4 不属于高级特性回退范围（它们通过 `quantization` 参数注入，
-> 不生成额外 `--speculative-config` / `--kv-transfer-config` 等命令行参数）。
 
 ### 7.2 回退 vs 重试的选择
 
@@ -654,8 +613,8 @@ exec > >(tee -a /var/log/wings/engine-full.log | grep ... | tee -a engine.log) 2
      ┌────────────────────────┼─────────────────────────┐
      │                        │                         │
      ▼                        ▼                         ▼
-  SD_ENABLE=true        LMCACHE_OFFLOAD=true      ENABLE_SOFT_FP8=true
-  SPEC_MODEL_PATH=...   PD_ROLE=P                  ENABLE_SPARSE=true
+  SD_ENABLE=true        LMCACHE_OFFLOAD=true      ENABLE_SPARSE=true
+  SPEC_MODEL_PATH=...   PD_ROLE=P
      │                        │                         │
      ▼                        ▼                         ▼
   ┌──────────── config_loader._merge_vllm_params() ──────────────┐
@@ -663,8 +622,6 @@ exec > >(tee -a /var/log/wings/engine-full.log | grep ... | tee -a engine.log) 2
   │  _set_spec_decoding_config()  → SD_ENABLE env                │
   │  _set_sparse_config()         → SPARSE_ENABLE env            │
   │  _set_kv_cache_config()       → params['kv_transfer_config'] │
-  │  _set_soft_fp8()              → params['quantization']       │
-  │  _set_soft_fp4()              → params['quantization']       │
   │                                                               │
   └──────────────────────┬────────────────────────────────────────┘
                          │ merged dict

@@ -25,7 +25,7 @@ from typing import Dict, Any, List, Optional
 
 import yaml
 
-from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft, is_deepseek_series_fp8,
+from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft,
                                INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51,
                                is_glm51_ascend_kvsparse_tmp_scope, is_glm52_model,
                                is_glm52_single_node_even, feature_allowed)
@@ -982,36 +982,6 @@ def _build_ascend_dp_network_env_commands(
     return commands
 
 
-def _build_deepseek_fp8_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
-    """构建 DeepSeek FP8 模型所需的环境变量命令。
-
-    仅在满足以下条件时设置 DeepSeek FP8 专属环境变量：
-    1. 引擎类型为 vllm_ascend
-    2. 模型路径存在
-    3. 模型是 DeepSeek 系列 FP8 模型
-
-    Args:
-        params: 参数字典，包含 model_path 等信息
-        engine: 引擎类型
-
-    Returns:
-        List[str]: 环境变量导出命令列表
-    """
-    env_commands = []
-    model_path = params.get("model_path")
-
-    if engine == "vllm_ascend" and model_path and is_deepseek_series_fp8(model_path):
-        env_commands.extend([
-            "export VLLM_ASCEND_ENABLE_NZ=0",
-            "export HCCL_OP_EXPANSION_MODE=AIV",
-            "export VLLM_ASCEND_ENABLE_MLAPO=1",
-            "export VLLM_ASCEND_BALANCE_SCHEDULING=1"
-        ])
-        logger.info("[DeepSeek FP8] Set environment variables for DeepSeek FP8 model")
-
-    return env_commands
-
-
 def _build_ascend910_9362_env_commands(params: Dict[str, Any], engine: str) -> List[str]:
     """构建 Ascend910_9362 设备特定环境变量命令。
 
@@ -1174,7 +1144,7 @@ def _build_minimaxm2_ascend_env(arch: str) -> List[str]:
 def _build_deepseekv32_ascend_env(arch: str) -> List[str]:
     """构建 DeepSeek V3.2 (DeepseekV32ForCausalLM) Ascend 环境变量命令。"""
     logger.info("[DeepSeek V3.2] Set Ascend environment variables for %s", arch)
-    # DeepSeek V3.2 独有变量（不与 _build_deepseek_fp8_env_commands 重叠）
+    # DeepSeek V3.2 独有变量
     return [
         "export HCCL_OP_EXPANSION_MODE=AIV",
         "export OMP_PROC_BIND=false",
@@ -1779,7 +1749,6 @@ def _build_env_commands(params: Dict[str, Any], current_ip: str, network_interfa
     env_commands.extend(_build_qat_env_commands(engine))
     env_commands.extend(_build_pd_role_env_commands(engine, current_ip, network_interface))
     env_commands.extend(_build_distributed_env_commands(params, current_ip, network_interface, engine))
-    env_commands.extend(_build_deepseek_fp8_env_commands(params, engine))
     env_commands.extend(_build_ascend910_9362_env_commands(params, engine))
     env_commands.extend(_build_model_env_commands(params, engine))
     env_commands = _filter_vllm_ascend_ray_incompatible_env(env_commands, params, engine)
@@ -3157,8 +3126,7 @@ def _build_vllm_common_env_cmds(params: Dict[str, Any], engine: str) -> List[str
     # 架构专用环境变量（GLM-4.7 / Qwen3 / Qwen3.5 / MiniMax-M2.5 / DeepSeek V3.2 / LLaMA 等）
     # 之前只在未被引用的 _build_env_commands 里调用，导致架构专用 env 一行都没进 start_command.sh
     cmds.extend(_build_model_env_commands(params, engine))
-    # DeepSeek FP8 / Ascend910_9362 专用 env 也一并挂上，保持与 _build_env_commands 等价
-    cmds.extend(_build_deepseek_fp8_env_commands(params, engine))
+    # Ascend910_9362 专用 env 也一并挂上
     cmds.extend(_build_ascend910_9362_env_commands(params, engine))
     cmds = _filter_vllm_ascend_ray_incompatible_env(cmds, params, engine)
     cmds.extend(_build_vllm_ascend_forced_env_commands(params, engine))
