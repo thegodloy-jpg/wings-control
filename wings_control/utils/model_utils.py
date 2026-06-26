@@ -53,6 +53,7 @@ INDEXCACHE_ARCHS: frozenset[str] = frozenset({
 SMART_FEATURE_WHITELIST: tuple = (
     # ── NVIDIA (vllm) ──  卡：NRP0500(72G) / NH02(141G)；NV 卡码是否进 key 待定，现用 "*"
     ("vllm",        ("qwen3.5-397b", "qwen3_5-397b"),   ("*",),           frozenset({"spec", "sparse"})),
+    ("vllm",        ("qwen3.6", "qwen3_6"),             ("*",),           frozenset({"spec", "sparse"})),  # Qwen3.6 系列（与 3.5 同 qwen3_5_mtp）
     ("vllm",        ("glm-4.7",),                       ("*",),           frozenset({"spec", "sparse", "offload"})),
     ("vllm",        ("glm-5.1", "glm5.1"),              ("*",),           frozenset({"spec", "sparse"})),
     ("vllm",        ("glm-5", "glm5"),                  ("*",),           frozenset({"spec", "sparse", "offload"})),  # GLM-5 基座（5.1 已在上、先匹配）
@@ -67,6 +68,8 @@ SMART_FEATURE_WHITELIST: tuple = (
     # DeepSeek-V3/V3.1/R1（DeepseekV3ForCausalLM）；token 不含裸 "deepseek-v3" 以免误伤 v3.2
     ("vllm_ascend", ("deepseek-v3.1", "deepseek_v3.1",
                      "deepseek-r1", "deepseek_r1"),     ("910b", "910c"), frozenset({"spec", "offload"})),
+    ("vllm_ascend", ("glm-5.2", "glm5.2"),              ("910b", "910c"), frozenset({"spec", "offload"})),  # GLM-5.2（同 GlmMoeDsa，deepseek_mtp num=3）
+    ("vllm_ascend", ("qwen3.6", "qwen3_6"),             ("910b", "910c"), frozenset({"spec", "offload"})),  # Qwen3.6 系列
     # 曾 forced，已降为普通开关门控（§0 裁定1）
     ("vllm_ascend", ("glm-5.1", "glm5.1"),              ("910b", "910c"), frozenset({"sparse"})),
 )
