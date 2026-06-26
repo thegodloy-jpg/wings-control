@@ -16,7 +16,6 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any
-from dataclasses import dataclass
 
 # 设置日志
 logging.basicConfig(
@@ -27,30 +26,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class AccelFeatureData:
-    """加速特性数据封装。"""
-    feature: str
-    status: str
-    progress: int
-    message: str
-    error_type: str = ""
-    error_msg: str = ""
-
-
 class StageProgress:
     """阶段进度管理器 - 负责写入和更新进度信息。"""
 
-    def __init__(self, progress_file: str, accel_file: str, start_time: datetime):
+    def __init__(self, progress_file: str, start_time: datetime):
         """初始化进度管理器。
 
         Args:
             progress_file: 进度文件路径
-            accel_file: 加速特性文件路径
             start_time: 启动时间
         """
         self.progress_file = progress_file
-        self.accel_file = accel_file
         self.start_time = start_time
         self._ensure_files_exist()
 
@@ -88,33 +74,9 @@ class StageProgress:
         except OSError as e:
             logger.error("Failed to write progress file: %s", e)
 
-    def write_accel_feature(self, data: AccelFeatureData):
-        """写入加速特性状态到JSONL文件。
-
-        Args:
-            data: 加速特性数据对象
-        """
-        data_dict = {
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-            "feature": data.feature,
-            "status": data.status,
-            "progress": data.progress,
-            "message": data.message,
-            "error_type": data.error_type,
-            "error_msg": data.error_msg
-        }
-
-        try:
-            with open(self.accel_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(data_dict, ensure_ascii=False) + '\n')
-            logger.info("[AccelFeature] %s - %s - %s", data.feature, data.status, data.message)
-        except OSError as e:
-            logger.error("Failed to write accel feature file: %s", e)
-
     def _ensure_files_exist(self):
-        """确保文件目录存在。"""
-        for file_path in [self.progress_file, self.accel_file]:
-            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        """确保进度文件目录存在。"""
+        Path(self.progress_file).parent.mkdir(parents=True, exist_ok=True)
 
 
 class BaseLogPatternPlugin:
@@ -301,21 +263,20 @@ class LogAnalyzer:
     """日志分析器主类 - 负责实时解析日志并更新进度。"""
 
     def __init__(self, config: Dict[str, Any], log_file: str,
-                 progress_file: str, accel_file: str):
+                 progress_file: str):
         """初始化日志分析器。
 
         Args:
             config: 配置字典
             log_file: 日志文件路径
             progress_file: 进度文件路径
-            accel_file: 加速特性文件路径
         """
         self.config = config
         self.log_file = log_file
         self.start_time = datetime.now(tz=timezone.utc)
 
         # 初始化进度管理器
-        self.stage_progress = StageProgress(progress_file, accel_file, self.start_time)
+        self.stage_progress = StageProgress(progress_file, self.start_time)
 
         # 加载插件
         self.plugin_manager = PatternPluginManager(config)
@@ -327,7 +288,6 @@ class LogAnalyzer:
         # 获取日志模式
         self.log_patterns = self.plugin.get_log_patterns()
         self.error_patterns = self.plugin.get_error_patterns()
-        self.accel_patterns = self.plugin.get_accel_patterns()
 
         # 添加通用阶段的日志模式（与加速引擎无关）
         self._add_common_patterns()
@@ -593,9 +553,6 @@ class LogAnalyzer:
         for pattern_info in self.error_patterns:
             pattern_info['compiled'] = re.compile(pattern_info['pattern'])
 
-        for pattern_info in self.accel_patterns:
-            pattern_info['compiled'] = re.compile(pattern_info['pattern'])
-    
     def _get_accel_enabling_patterns(self) -> List[Dict]:
         """返回 accel_enabling 阶段（加速特性注入）的日志模式列表。"""
         return self._get_accel_injection_patterns() + self._get_accel_status_patterns()
@@ -645,47 +602,12 @@ class LogAnalyzer:
             return True
         return False
 
-    def _parse_accel_log(self, line: str):
-        """解析加速特性日志。
-
-        同时支持从正则命名组和 pattern_info 字典中读取字段值。
-        优先使用正则命名组的匹配结果，若未匹配到则回退到 pattern_info
-        中的静态值。这使得模式定义可以灵活地混用动态捕获与静态声明。
-
-        Args:
-            line: 日志行
-        """
-        for pattern_info in self.accel_patterns:
-            match = pattern_info['compiled'].search(line)
-            if match:
-                groups = match.groupdict()
-                # 优先使用正则命名组，回退到 pattern_info 静态值
-                feature = groups.get('feature') or pattern_info.get('feature', 'unknown')
-                status = groups.get('status') or pattern_info.get('status', 'unknown')
-                progress = int(groups.get('progress') or pattern_info.get('progress', 0))
-                message = groups.get('message') or pattern_info.get('message', '')
-                error_type = groups.get('error_type') or pattern_info.get('error_type', '')
-                error_msg = groups.get('error_msg') or pattern_info.get('error_msg', '')
-
-                self.stage_progress.write_accel_feature(
-                    AccelFeatureData(
-                        feature=feature,
-                        status=status,
-                        progress=progress,
-                        message=message,
-                        error_type=error_type,
-                        error_msg=error_msg
-                    )
-                )
-
     def _parse_log_line(self, line: str):
         """解析单行日志。
 
         Args:
             line: 日志行
         """
-        self._parse_accel_log(line)
-
         if not self._catching_up and self._check_error_patterns(line):
             return
 
@@ -786,8 +708,6 @@ def parse_args():
                        help='Log file path')
     parser.add_argument('--progress-file', type=str, required=True,
                        help='Progress file path')
-    parser.add_argument('--accel-file', type=str, required=True,
-                       help='Accel feature file path')
     return parser.parse_args()
 
 
@@ -806,8 +726,7 @@ def main():
     analyzer = LogAnalyzer(
         config=config,
         log_file=args.log_file,
-        progress_file=args.progress_file,
-        accel_file=args.accel_file
+        progress_file=args.progress_file
     )
 
     analyzer.run()

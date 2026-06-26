@@ -55,8 +55,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -104,7 +103,7 @@ if [ -f "/accel-volume/install.py" ]; then
     set -e
     if [ $SPEC_RC -ne 0 ]; then
         echo "[wings-accel] WARNING: Speculative decoding runtime deps install failed (exit=$SPEC_RC), skipping. Service will continue without patches."
-        python3 -c "import json, os; p='/shared-volume\advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
+        python3 -c "import json, os; p='/shared-volume/advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
     else
         echo '[wings-accel] Speculative decoding runtime deps installed successfully.'
     fi
@@ -138,7 +137,7 @@ else
   echo "[AdvFeature] └── Fallback command about to execute..."
   echo "[Engine] Falling back to basic mode (disabled: speculative_decode)..."
   # 更新 advanced_features.json：引擎级特性全部置 false，RAG 保持不变
-  cat > "/shared-volume\advanced_features.json" <<'FEATURES_EOF'
+  cat > "/shared-volume/advanced_features.json" <<'FEATURES_EOF'
 {
     "engine": "vllm",
     "features": {

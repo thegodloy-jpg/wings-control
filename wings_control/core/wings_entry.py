@@ -846,8 +846,7 @@ find {settings.SHARED_VOLUME_PATH}/log_analyzer -name '__pycache__' -type d -exe
 cd {settings.SHARED_VOLUME_PATH} && python3 -B -m log_analyzer.log_analyzer \\
     --config "$ANALYZER_CONFIG" \\
     --log-file /var/log/wings/engine.log \\
-    --progress-file {settings.PROGRESS_FILE} \\
-    --accel-file {settings.SHARED_VOLUME_PATH}/advanced_features.json &
+    --progress-file {settings.PROGRESS_FILE} &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -947,11 +946,12 @@ wings_source_env_with_diff() {
 
 
 # ── 高级特性状态 JSON ──
-# 在 /shared-volume/advanced_features.json 中记录 4 个高级特性的使能状态，
-# 供 health 接口和外部监控查询。初始值在 Python 层写入（build_launcher_plan），
-# 补丁安装失败时在 shell 层通过 python3 -c 单行脚本更新对应字段为 false。
+# 在 advanced_features.json 中记录 4 个高级特性的使能状态 + 变体，
+# 供 health 接口（/v1/startup/accel）和外部监控查询。初始值在 Python 层写入
+# （build_launcher_plan），补丁安装失败时在 shell 层通过 python3 -c 单行脚本更新对应字段为 false。
+# 它是加速特性使能状态的单一真相源（/v1/startup/accel 仅读此文件）。
 
-_ADVANCED_FEATURES_FILE = os.path.join(settings.SHARED_VOLUME_PATH, "advanced_features.json")
+_ADVANCED_FEATURES_FILE = settings.ADVANCED_FEATURES_FILE
 
 
 def _write_advanced_features_json(engine: str, merged: dict) -> None:
@@ -967,7 +967,8 @@ def _write_advanced_features_json(engine: str, merged: dict) -> None:
     features[x]=true 有意义，false 给 null。变体由产出口同源纯函数推导
     （resolve_speculative_strategy / resolve_sparse_variant / resolve_offload_variant）；
     因本写入早于产出口在脚本生成阶段运行，故独立按 merged/env 推导，不依赖产出口先跑。
-    下游消费者＝log_analyzer（经 --accel-file 读取），加段前须与其字段对齐。
+    下游消费者＝health 接口 /v1/startup/accel（读 settings.ADVANCED_FEATURES_FILE 并透出
+    features + variants 给页面，见 proxy/health_service.py）；改字段须同步该端点。
     """
     features = {
         "speculative_decode": bool(merged.get("enable_speculative_decode")),

@@ -55,8 +55,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 

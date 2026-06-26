@@ -54,7 +54,7 @@ Engine 容器
 |------|--------|--------|------|
 | `/shared-volume/start_command.sh` | `wings-control` | Engine 容器 | 最终引擎启动脚本 |
 | `/shared-volume/progress.jsonl` | Engine / log analyzer | `wings-control` / 运维侧 | 启动进度记录 |
-| `/shared-volume/accel_features.jsonl` | Engine / log analyzer | `wings-control` / 运维侧 | 加速特性记录 |
+| `/shared-volume/advanced_features.json` | `wings-control` | `wings-control` / 运维侧 | 加速特性使能状态（使能 + 变体），`/v1/startup/accel` 数据源 |
 | `/accel-volume` | `wings-accel` | `wings-control` / Engine 容器 | 可选加速包目录 |
 
 ## 端口
