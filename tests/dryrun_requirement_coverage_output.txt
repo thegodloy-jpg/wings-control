@@ -1,88 +1,382 @@
-============================================================================================
- 需求一 · 三特性使能 —— 八点 dry-run 覆盖验证（真实下发）
-============================================================================================
+================================================================================================
+ 需求一 · 三特性使能 —— 八需求点 dry-run 覆盖验证（三特性仅经 env 下发 · 入参/出参逐项）
+================================================================================================
 
-## P1 · 删 fp4/fp8 + 引擎路由删除（ENABLE_OPERATOR_ACCELERATION / ENABLE_SOFT_FP8 旁路）
-  [✓ PASS] P1 · ENABLE_OPERATOR_ACCELERATION/ENABLE_SOFT_FP8 对启动产物完全无效（旁路已删）
-        · engine 不受影响 (on=vllm_ascend, off=vllm_ascend)
-        · 设/不设这两个 env，start_command 归一化后字节一致
-  [✓ PASS] P1 · use_kunlun_atb 死代码已删：命令不导出 USE_KUNLUN_ATB
-        · 命令中不出现 USE_KUNLUN_ATB（即便设了算子加速 env）
+############ P0 · 下发通道验证：三特性仅经环境变量下发（非 wings_start.sh CLI）############
 
-## P2 · 对外特性状态接口 advanced_features.json（features + variants）
-  [✓ PASS] P2 · GLM-5.2·Ascend spec：features+variants 如实透出 deepseek_mtp
-        · features 含四特性 bool
-        · features.speculative_decode == true
-        · variants.speculative_decode == deepseek_mtp
-        · sparse_kv / kv_offload == false（GLM-5.2 仅投机）
-  [✓ PASS] P2 · GLM-5.1·Ascend sparse：variants 透出 indexcache_topk8
-        · features.sparse_kv == true
-        · variants.sparse_kv == indexcache_topk8
+[TC-P0-01] P0 · ENABLE_SPARSE env（user_cli 无 --enable-sparse）→ 稀疏生效  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 user_cli 含 --enable-sparse 标志
+        期望 = 否（特性不走 CLI）
+        实际 = False    [PASS]
+  出参 features.sparse_kv（仅由 ENABLE_SPARSE env 驱动）
+        期望 = True
+        实际 = True    [PASS]
+  出参 variants.sparse_kv
+        期望 = indexcache_topk4
+        实际 = indexcache_topk4    [PASS]
 
-## P3 · 对内特性日志（卡型 miss 告警 / 收口 req→eff 摘要 / sparse 抑制对称日志）
-  [✓ PASS] P3 · Ascend 卡型解析失败 → WARNING（白名单将全 miss）
-        · 命中 [SmartFeature] card_token unresolved 告警
-        · 收口摘要行存在
-  [✓ PASS] P3 · 非白名单 + enable-sparse → sparse 抑制对称日志 + req→eff 摘要
-        · 命中 sparse 抑制日志
-        · 摘要含 sparse True->False（请求→有效）
-  [✓ PASS] P3 · 非白名单 + LMCACHE_OFFLOAD → offload 抑制对称日志
-        · 命中 offload 抑制日志
+[TC-P0-02] P0 · ENABLE_SPECULATIVE_DECODE env（user_cli 无 CLI 标志）→ 投机生效  ==> PASS
+  入参 user_cli          : {'model-name': 'GLM-5.2-w8a8', 'engine': 'vllm_ascend', 'device-count': 16}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'dp_deployment', 'ENGINE_VERSION': '0.21.0-a3', 'ENABLE_SPECULATIVE_DECODE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true'})  user_cli含特性CLI标志=False
+  出参 user_cli 含 --enable-speculative-decode
+        期望 = 否
+        实际 = False    [PASS]
+  出参 variants.speculative_decode（仅由 env 驱动）
+        期望 = deepseek_mtp
+        实际 = deepseek_mtp    [PASS]
 
-## P4 · 三特性依赖白名单门控
-  [✓ PASS] P4 · 命中白名单 spec → deepseek_mtp（GLM-5.2·Ascend）
-        · spec method == deepseek_mtp (实际 deepseek_mtp)
-  [✓ PASS] P4 · 白名单 sparse-only → spec 地板 suffix（GLM-5.1·Ascend，B.4 bug 修复）
-        · spec method == suffix (实际 suffix)
-        · sparse 仍产 indexcache_topk8
-  [✓ PASS] P4 · offload 不在白名单 → 收口关（Qwen3.5-397B·NV：spec,sparse 无 offload）
-        · features.kv_offload == false
-        · 不导出 LMCACHE_OFFLOAD=true
-  [✓ PASS] P4 · PD 一票否决 → 三特性全关
-        · 命中 PD veto 日志
-        · advanced_features 三特性全 false
-        · 无 mtp 投机（PD 下不产 mtp）
+[TC-P0-03] P0 · LMCACHE_OFFLOAD env → 卸载生效（卸载本就纯 env，无 CLI）  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512'}
+  入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
+  下发通道 三特性=env下发({'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 features.kv_offload（仅由 LMCACHE_OFFLOAD env 驱动）
+        期望 = True
+        实际 = True    [PASS]
+  出参 variants.kv_offload
+        期望 = lmcache_cpu+auto
+        实际 = lmcache_cpu+auto    [PASS]
 
-## P5 · KV 卸载 auto 容量反向预算（C4）
-  [✓ PASS] P5 · auto LMCache：写回 per-card 容量 + 强制 swap_space=0（glm-4.7·NV, POD=512/8卡）
-        · LMCACHE_MAX_LOCAL_CPU_SIZE == 50 = M_offload(401)//8 (实际 50)
-        · 强制 --swap-space 0
-  [✓ PASS] P5 · auto native：整节点 M_offload 不除卡数（V4-Flash·Ascend cpu_swap_space_gb）
-        · cpu_swap_space_gb == 401 = 整节点 M_offload（不除卡数）(实际 401)
-  [✓ PASS] P5 · custom：给 LMCACHE_MAX_LOCAL_CPU_SIZE 数值 → 透传不计算
-        · LMCACHE_MAX_LOCAL_CPU_SIZE == 200（透传）(实际 200)
-  [✓ PASS] P5 · 熔断：可用容量 < 下限(100G) → 不建 CPU 卸载池
-        · 无 auto 写回的 CPU 容量（熔断）(实际 None)
-        · 命中熔断告警日志
+############ P1 · 删 fp4/fp8 + 引擎路由删除 ############
 
-## P6 · 稀疏精度/性能档位 SPARSE_LEVEL
-  [✓ PASS] P6 · 缺省 → accuracy_first（无告警）
-        · 日志 effective SPARSE_LEVEL=accuracy_first
-        · 无 performance_first 告警
-  [✓ PASS] P6 · performance_first → 告警回落 accuracy_first，命令不变
-        · 命中 performance_first 告警
-        · 有效档位回落 accuracy_first
-        · 命令与 accuracy_first 一致
-  [✓ PASS] P6 · 非法值 turbo → 回落 accuracy_first（无 performance 告警）
-        · 回落 accuracy_first
-        · 非法值不触发 performance 告警
+[TC-P1-01] P1 · ENABLE_OPERATOR_ACCELERATION/ENABLE_SOFT_FP8 旁路已删→对产物无效  ==> PASS
+  入参 user_cli          : {'model-name': 'Qwen3.5-397B-A17B', 'engine': 'vllm_ascend', 'device-count': 16}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'WINGS_ASCEND_PLATFORM': 'a3', 'ENABLE_OPERATOR_ACCELERATION': 'true', 'ENABLE_SOFT_FP8': 'true'}
+  入参 model_config      : {'architecture': 'Qwen3_5MoeForConditionalGeneration', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({})  user_cli含特性CLI标志=False
+  出参 engine（设两个开关 env 后）
+        期望 = vllm_ascend（与不设时一致）
+        实际 = vllm_ascend    [PASS]
+  出参 start_command 归一化
+        期望 = 与不设这两个 env 时字节一致
+        实际 = 一致    [PASS]
+  出参 命令导出 USE_KUNLUN_ATB（死代码已删）
+        期望 = 不出现
+        实际 = 不出现    [PASS]
 
-## P7 · 卡型解析（保留老逻辑 + 依赖 ENGINE-VERSION）
-  [✓ PASS] P7 · ENGINE_VERSION 后缀定卡型：-a3→910c 命中 vs -a2→910b 不命中（DeepSeek-V3.2 仅910c）
-        · a3 → 910c 命中 → spec mtp 族（variant=mtp）
-        · a2 → 910b 不命中 → spec 地板 suffix（variant=suffix）
-        · a2/a3 卡型差异确实改变了 spec 决策
-  [✓ PASS] P7 · WINGS_DEVICE_NAME=ascend910b3 → 卡型 910b 命中 GLM-5.1 sparse 白名单
-        · features.sparse_kv == true（卡型解析成功）
+############ P2 · 对外特性状态接口 advanced_features.json（features + variants）############
 
-## P8 · 打补丁逻辑保持现状
-  [✓ PASS] P8 · NV vllm + IndexCache 架构 + enable-sparse → install.py 装 indexcache 补丁
-        · 命令含 install.py --features {...indexcache...}
-  [✓ PASS] P8 · Ascend day0 GLM-5.1 + enable-sparse → 不装补丁，仅 --hf-overrides
-        · 命令不含 install.py indexcache（ascend 门控）
-        · 仍通过 --hf-overrides 启用 IndexCache
+[TC-P2-01] P2 · GLM-5.2·Ascend spec → features+variants 如实透出  ==> PASS
+  入参 user_cli          : {'model-name': 'GLM-5.2-w8a8', 'engine': 'vllm_ascend', 'device-count': 16}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'dp_deployment', 'ENGINE_VERSION': '0.21.0-a3', 'ENABLE_SPECULATIVE_DECODE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true'})  user_cli含特性CLI标志=False
+  出参 features 键集合
+        期望 = {speculative_decode,sparse_kv,kv_offload,rag_acc}
+        实际 = ['kv_offload', 'rag_acc', 'sparse_kv', 'speculative_decode']    [PASS]
+  出参 features.speculative_decode
+        期望 = True
+        实际 = True    [PASS]
+  出参 variants.speculative_decode
+        期望 = deepseek_mtp
+        实际 = deepseek_mtp    [PASS]
+  出参 features.sparse_kv / kv_offload
+        期望 = False / False（仅投机）
+        实际 = False / False    [PASS]
 
-============================================================================================
- 总计：22 PASS / 0 FAIL
+[TC-P2-02] P2 · GLM-5.1·Ascend sparse → variants 透出 indexcache_topk8  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm_ascend', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'ray', 'WINGS_ASCEND_PLATFORM': 'a2', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 features.sparse_kv
+        期望 = True
+        实际 = True    [PASS]
+  出参 variants.sparse_kv
+        期望 = indexcache_topk8
+        实际 = indexcache_topk8    [PASS]
+
+############ P3 · 对内特性日志（本轮新增）############
+
+[TC-P3-01] P3 · Ascend 卡型解析失败 → WARNING（白名单将全 miss）  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm_ascend', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'ray', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 日志 card_token unresolved on Ascend
+        期望 = 出现（WARNING）
+        实际 = 出现    [PASS]
+  出参 日志 [SmartFeature] effective enablement 摘要
+        期望 = 出现
+        实际 = 出现    [PASS]
+
+[TC-P3-02] P3 · 非白名单 + ENABLE_SPARSE → sparse 抑制对称日志 + req→eff 摘要  ==> PASS
+  入参 user_cli          : {'model-name': 'Llama-3-70B', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'ENABLE_SPECULATIVE_DECODE': 'true'}
+  入参 model_config      : {'architecture': 'LlamaForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 日志 sparse requested but not in whitelist
+        期望 = 出现
+        实际 = 出现    [PASS]
+  出参 摘要含 sparse True->False（请求→有效）
+        期望 = 出现
+        实际 = 出现    [PASS]
+
+[TC-P3-03] P3 · 非白名单 + LMCACHE_OFFLOAD → offload 抑制对称日志  ==> PASS
+  入参 user_cli          : {'model-name': 'Llama-3-70B', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'LMCACHE_OFFLOAD': 'true'}
+  入参 model_config      : {'architecture': 'LlamaForCausalLM'}
+  下发通道 三特性=env下发({'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 日志 offload requested but not in whitelist
+        期望 = 出现
+        实际 = 出现    [PASS]
+
+############ P4 · 三特性依赖白名单门控（含 PD 一票否决 + 开关基线）############
+
+[TC-P4-01] P4 · 命中白名单 spec → deepseek_mtp（GLM-5.2·Ascend）  ==> PASS
+  入参 user_cli          : {'model-name': 'GLM-5.2-w8a8', 'engine': 'vllm_ascend', 'device-count': 16}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'dp_deployment', 'ENGINE_VERSION': '0.21.0-a3', 'ENABLE_SPECULATIVE_DECODE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true'})  user_cli含特性CLI标志=False
+  出参 variants.speculative_decode
+        期望 = deepseek_mtp
+        实际 = deepseek_mtp    [PASS]
+
+[TC-P4-02] P4 · 白名单 sparse-only → spec 地板 suffix（GLM-5.1·Ascend, B.4 bug 修复）  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm_ascend', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'ray', 'WINGS_ASCEND_PLATFORM': 'a2', 'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 variants.speculative_decode
+        期望 = suffix（清单 sparse-only → 地板）
+        实际 = suffix    [PASS]
+  出参 variants.sparse_kv
+        期望 = indexcache_topk8（sparse 仍产）
+        实际 = indexcache_topk8    [PASS]
+
+[TC-P4-03] P4 · offload 不在白名单 → 收口关（Qwen3.5-397B·NV：spec,sparse 无 offload）  ==> PASS
+  入参 user_cli          : {'model-name': 'qwen3.5-397b', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512'}
+  入参 model_config      : {'architecture': 'Qwen3_5MoeForConditionalGeneration'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 features.kv_offload
+        期望 = False
+        实际 = False    [PASS]
+  出参 命令 export LMCACHE_OFFLOAD=true
+        期望 = 不出现
+        实际 = 不出现    [PASS]
+
+[TC-P4-04] P4 · PD 一票否决 → 三特性全关  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512', 'PD_ROLE': 'P'}
+  入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'PD_ROLE': 'P'})  user_cli含特性CLI标志=False
+  出参 日志 PD role detected -> veto
+        期望 = 出现
+        实际 = 出现    [PASS]
+  出参 features（spec/sparse/offload）
+        期望 = 全 False
+        实际 = False/False/False    [PASS]
+
+---- P4 开关基线（env 不设 → 不产；与白名单收口正交）----
+
+[TC-P4-05] P4 · spec 开关 OFF（不设 ENABLE_SPECULATIVE_DECODE）→ 不产投机  ==> PASS
+  入参 user_cli          : {'model-name': 'GLM-5.2-w8a8', 'engine': 'vllm_ascend', 'device-count': 16}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'dp_deployment', 'ENGINE_VERSION': '0.21.0-a3'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({})  user_cli含特性CLI标志=False
+  出参 命令 --speculative-config
+        期望 = 不出现
+        实际 = 不出现    [PASS]
+  出参 features.speculative_decode
+        期望 = False
+        实际 = False    [PASS]
+
+[TC-P4-06] P4 · offload 开关 OFF（不设 LMCACHE_OFFLOAD）→ 不产卸载  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp'}
+  入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
+  下发通道 三特性=env下发({})  user_cli含特性CLI标志=False
+  出参 命令 export LMCACHE_OFFLOAD=true
+        期望 = 不出现
+        实际 = 不出现    [PASS]
+  出参 features.kv_offload
+        期望 = False
+        实际 = False    [PASS]
+
+############ P5 · KV 卸载 auto 容量反向预算（C4）  M_offload=POD-(7*TP*DP+3)-10% ############
+
+[TC-P5-01] P5 · auto LMCache：写回 per-card 容量 + 强制 swap_space=0（POD=512, 8卡, TP8/DP1）  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512'}
+  入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 LMCACHE_MAX_LOCAL_CPU_SIZE
+        期望 = 50 = M_offload(512-59-51=401) ÷ 8卡
+        实际 = 50    [PASS]
+  出参 命令 --swap-space 0
+        期望 = 出现（auto 原子绑定）
+        实际 = 出现    [PASS]
+
+[TC-P5-02] P5 · auto native：整节点 M_offload 不除卡数（V4-Flash·Ascend cpu_swap_space_gb）  ==> PASS
+  入参 user_cli          : {'model-name': 'DeepSeek-V4-Flash', 'engine': 'vllm_ascend', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'dp_deployment', 'WINGS_ASCEND_PLATFORM': 'a2', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512'}
+  入参 model_config      : {'architecture': 'DeepseekV4ForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 cpu_swap_space_gb
+        期望 = 401 = 整节点 M_offload（不除卡数）
+        实际 = 401    [PASS]
+
+[TC-P5-03] P5 · custom：给 LMCACHE_MAX_LOCAL_CPU_SIZE 数值 → 透传不计算  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_MAX_LOCAL_CPU_SIZE': '200'}
+  入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 LMCACHE_MAX_LOCAL_CPU_SIZE
+        期望 = 200（原样透传，不计算）
+        实际 = 200    [PASS]
+
+[TC-P5-04] P5 · 熔断：可用容量 < 下限(100G) → 不建 CPU 卸载池（POD=100→31）  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '100'}
+  入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 LMCACHE_MAX_LOCAL_CPU_SIZE（auto 写回）
+        期望 = 无（熔断）
+        实际 = None    [PASS]
+  出参 日志 熔断告警（below floor / skip CPU offload）
+        期望 = 出现
+        实际 = 出现    [PASS]
+
+############ P6 · 稀疏使能三层门控：开关(env) → 白名单(whitelist) → 档位(SPARSE_LEVEL) ############
+
+[TC-P6-01] P6 · 层1 开关 OFF（不设 ENABLE_SPARSE）→ 不产稀疏、不评估档位  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({})  user_cli含特性CLI标志=False
+  出参 命令 --hf-overrides（稀疏）
+        期望 = 不出现
+        实际 = 不出现    [PASS]
+  出参 features.sparse_kv / variants.sparse_kv
+        期望 = False / None
+        实际 = False / None    [PASS]
+  出参 日志 effective SPARSE_LEVEL
+        期望 = 不出现（产出口未运行）
+        实际 = 不出现    [PASS]
+
+[TC-P6-02] P6 · 层1 优先于层3：开关 OFF 时 SPARSE_LEVEL=performance_first 不触发告警  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'SPARSE_LEVEL': 'performance_first'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({'SPARSE_LEVEL': 'performance_first'})  user_cli含特性CLI标志=False
+  出参 features.sparse_kv
+        期望 = False
+        实际 = False    [PASS]
+  出参 日志 performance_first 告警
+        期望 = 不出现（开关 OFF 门控档位）
+        实际 = 不出现    [PASS]
+
+[TC-P6-03] P6 · 层2 白名单：开关 ON 但模型不在 sparse 白名单 → 收口抑制（glm-4.7·Ascend）  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm_ascend', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'WINGS_ASCEND_PLATFORM': 'a3', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'Glm4MoeForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 features.sparse_kv
+        期望 = False（glm-4.7·Ascend 白名单为 spec,offload）
+        实际 = False    [PASS]
+  出参 日志 sparse requested but not in whitelist
+        期望 = 出现
+        实际 = 出现    [PASS]
+
+[TC-P6-04] P6 · 层3 档位：开关 ON + 白名单命中 + 缺省 SPARSE_LEVEL → accuracy_first  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 variants.sparse_kv
+        期望 = indexcache_topk4（NV GlmMoeDsa）
+        实际 = indexcache_topk4    [PASS]
+  出参 日志 effective SPARSE_LEVEL
+        期望 = accuracy_first
+        实际 = accuracy_first    [PASS]
+  出参 日志 performance_first 告警
+        期望 = 不出现
+        实际 = 不出现    [PASS]
+
+[TC-P6-05] P6 · 层3 档位：SPARSE_LEVEL=performance_first → 告警回落 accuracy_first，命令与缺省一致  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'SPARSE_LEVEL': 'performance_first'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'SPARSE_LEVEL': 'performance_first'})  user_cli含特性CLI标志=False
+  出参 日志 performance_first not implemented
+        期望 = 出现（WARNING）
+        实际 = 出现    [PASS]
+  出参 有效档位日志
+        期望 = accuracy_first（回落）
+        实际 = accuracy_first    [PASS]
+  出参 start_command 与缺省(TC-P6-04)归一化
+        期望 = 一致
+        实际 = 一致    [PASS]
+
+[TC-P6-06] P6 · 层3 档位：SPARSE_LEVEL=turbo（非法）→ 回落 accuracy_first，不触发 performance 告警  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'SPARSE_LEVEL': 'turbo'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'SPARSE_LEVEL': 'turbo'})  user_cli含特性CLI标志=False
+  出参 有效档位日志
+        期望 = accuracy_first
+        实际 = accuracy_first    [PASS]
+  出参 日志 performance_first 告警
+        期望 = 不出现（非法值非 performance_first）
+        实际 = 不出现    [PASS]
+
+############ P7 · 卡型解析（保留老逻辑 + 依赖 ENGINE-VERSION）############
+
+[TC-P7-01] P7 · ENGINE_VERSION 后缀定卡型：-a3→910c 命中 vs -a2→910b 不命中（DeepSeek-V3.2 仅910c）  ==> PASS
+  入参 user_cli          : {'model-name': 'DeepSeek-V3.2', 'engine': 'vllm_ascend', 'device-count': 16}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'dp_deployment', 'ENGINE_VERSION': '0.21.0-a2', 'ENABLE_SPECULATIVE_DECODE': 'true'}
+  入参 model_config      : {'architecture': 'DeepseekV32ForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true'})  user_cli含特性CLI标志=False
+  出参 ENGINE_VERSION=…-a3 → variants.speculative_decode
+        期望 = mtp 族（910c 命中）
+        实际 = mtp    [PASS]
+  出参 ENGINE_VERSION=…-a2 → variants.speculative_decode
+        期望 = suffix（910b 不命中→地板）
+        实际 = suffix    [PASS]
+  出参 a2 vs a3 决策差异
+        期望 = 不同（卡型确实改变决策）
+        实际 = a3=mtp / a2=suffix    [PASS]
+
+[TC-P7-02] P7 · WINGS_DEVICE_NAME=ascend910b3 → 卡型 910b 命中 GLM-5.1 sparse 白名单  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm_ascend', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'ray', 'WINGS_DEVICE_NAME': 'ascend910b3', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 features.sparse_kv
+        期望 = True（卡型解析成功 → 白名单命中）
+        实际 = True    [PASS]
+
+############ P8 · 打补丁逻辑保持现状 ############
+
+[TC-P8-01] P8 · NV vllm + IndexCache 架构 + ENABLE_SPARSE → install.py 装 indexcache 补丁  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 命令 install.py --features {...indexcache...}
+        期望 = 出现
+        实际 = 出现    [PASS]
+
+[TC-P8-02] P8 · Ascend day0 GLM-5.1 + ENABLE_SPARSE → 不装补丁，仅 --hf-overrides  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm_ascend', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'ray', 'WINGS_ASCEND_PLATFORM': 'a2', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 命令 install.py indexcache
+        期望 = 不出现（ascend 门控）
+        实际 = 不出现    [PASS]
+  出参 命令 --hf-overrides index_topk_freq:8
+        期望 = 出现（引擎内置启用 IndexCache）
+        实际 = 出现    [PASS]
+
+================================================================================================
+ 用例：29 个（29 PASS / 0 FAIL）  ·  断言：60 PASS / 0 FAIL
  输出：D:\project\inference\wings-control\wings-control-0730\wings-control\tests\dryrun_requirement_coverage_output.txt
-============================================================================================
+================================================================================================

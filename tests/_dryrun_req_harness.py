@@ -81,6 +81,14 @@ def run_case(user_cli: dict, orchestration_env: dict | None, model_config: dict)
         dr.apply_orchestration_env(scenario, model_dir)
         # ③ wings_start.sh 双路下发 → APP_ARGS
         app_args = dr.simulate_wings_start(user_cli)
+        # ③' 复刻 wings_start.sh(299-300/345-348)：三特性经 **MaaS 注入的环境变量** 下发，
+        #     而非用户 CLI。脚本读 ENABLE_*/RAG env（编排注入）后再补进 APP_ARGS。
+        #     卸载 LMCACHE_OFFLOAD 为纯 env（无 APP_ARGS），由 config_loader 直接读，无需在此桥接。
+        for env_name, flag in (("ENABLE_SPECULATIVE_DECODE", "--enable-speculative-decode"),
+                               ("ENABLE_SPARSE", "--enable-sparse"),
+                               ("ENABLE_RAG_ACC", "--enable-rag-acc")):
+            if os.environ.get(env_name, "").lower() == "true" and flag not in app_args:
+                app_args.append(flag)
 
         # 捕获生产代码日志
         handler = _ListHandler()
