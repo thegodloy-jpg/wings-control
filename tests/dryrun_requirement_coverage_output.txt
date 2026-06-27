@@ -1,0 +1,88 @@
+============================================================================================
+ 需求一 · 三特性使能 —— 八点 dry-run 覆盖验证（真实下发）
+============================================================================================
+
+## P1 · 删 fp4/fp8 + 引擎路由删除（ENABLE_OPERATOR_ACCELERATION / ENABLE_SOFT_FP8 旁路）
+  [✓ PASS] P1 · ENABLE_OPERATOR_ACCELERATION/ENABLE_SOFT_FP8 对启动产物完全无效（旁路已删）
+        · engine 不受影响 (on=vllm_ascend, off=vllm_ascend)
+        · 设/不设这两个 env，start_command 归一化后字节一致
+  [✓ PASS] P1 · use_kunlun_atb 死代码已删：命令不导出 USE_KUNLUN_ATB
+        · 命令中不出现 USE_KUNLUN_ATB（即便设了算子加速 env）
+
+## P2 · 对外特性状态接口 advanced_features.json（features + variants）
+  [✓ PASS] P2 · GLM-5.2·Ascend spec：features+variants 如实透出 deepseek_mtp
+        · features 含四特性 bool
+        · features.speculative_decode == true
+        · variants.speculative_decode == deepseek_mtp
+        · sparse_kv / kv_offload == false（GLM-5.2 仅投机）
+  [✓ PASS] P2 · GLM-5.1·Ascend sparse：variants 透出 indexcache_topk8
+        · features.sparse_kv == true
+        · variants.sparse_kv == indexcache_topk8
+
+## P3 · 对内特性日志（卡型 miss 告警 / 收口 req→eff 摘要 / sparse 抑制对称日志）
+  [✓ PASS] P3 · Ascend 卡型解析失败 → WARNING（白名单将全 miss）
+        · 命中 [SmartFeature] card_token unresolved 告警
+        · 收口摘要行存在
+  [✓ PASS] P3 · 非白名单 + enable-sparse → sparse 抑制对称日志 + req→eff 摘要
+        · 命中 sparse 抑制日志
+        · 摘要含 sparse True->False（请求→有效）
+  [✓ PASS] P3 · 非白名单 + LMCACHE_OFFLOAD → offload 抑制对称日志
+        · 命中 offload 抑制日志
+
+## P4 · 三特性依赖白名单门控
+  [✓ PASS] P4 · 命中白名单 spec → deepseek_mtp（GLM-5.2·Ascend）
+        · spec method == deepseek_mtp (实际 deepseek_mtp)
+  [✓ PASS] P4 · 白名单 sparse-only → spec 地板 suffix（GLM-5.1·Ascend，B.4 bug 修复）
+        · spec method == suffix (实际 suffix)
+        · sparse 仍产 indexcache_topk8
+  [✓ PASS] P4 · offload 不在白名单 → 收口关（Qwen3.5-397B·NV：spec,sparse 无 offload）
+        · features.kv_offload == false
+        · 不导出 LMCACHE_OFFLOAD=true
+  [✓ PASS] P4 · PD 一票否决 → 三特性全关
+        · 命中 PD veto 日志
+        · advanced_features 三特性全 false
+        · 无 mtp 投机（PD 下不产 mtp）
+
+## P5 · KV 卸载 auto 容量反向预算（C4）
+  [✓ PASS] P5 · auto LMCache：写回 per-card 容量 + 强制 swap_space=0（glm-4.7·NV, POD=512/8卡）
+        · LMCACHE_MAX_LOCAL_CPU_SIZE == 50 = M_offload(401)//8 (实际 50)
+        · 强制 --swap-space 0
+  [✓ PASS] P5 · auto native：整节点 M_offload 不除卡数（V4-Flash·Ascend cpu_swap_space_gb）
+        · cpu_swap_space_gb == 401 = 整节点 M_offload（不除卡数）(实际 401)
+  [✓ PASS] P5 · custom：给 LMCACHE_MAX_LOCAL_CPU_SIZE 数值 → 透传不计算
+        · LMCACHE_MAX_LOCAL_CPU_SIZE == 200（透传）(实际 200)
+  [✓ PASS] P5 · 熔断：可用容量 < 下限(100G) → 不建 CPU 卸载池
+        · 无 auto 写回的 CPU 容量（熔断）(实际 None)
+        · 命中熔断告警日志
+
+## P6 · 稀疏精度/性能档位 SPARSE_LEVEL
+  [✓ PASS] P6 · 缺省 → accuracy_first（无告警）
+        · 日志 effective SPARSE_LEVEL=accuracy_first
+        · 无 performance_first 告警
+  [✓ PASS] P6 · performance_first → 告警回落 accuracy_first，命令不变
+        · 命中 performance_first 告警
+        · 有效档位回落 accuracy_first
+        · 命令与 accuracy_first 一致
+  [✓ PASS] P6 · 非法值 turbo → 回落 accuracy_first（无 performance 告警）
+        · 回落 accuracy_first
+        · 非法值不触发 performance 告警
+
+## P7 · 卡型解析（保留老逻辑 + 依赖 ENGINE-VERSION）
+  [✓ PASS] P7 · ENGINE_VERSION 后缀定卡型：-a3→910c 命中 vs -a2→910b 不命中（DeepSeek-V3.2 仅910c）
+        · a3 → 910c 命中 → spec mtp 族（variant=mtp）
+        · a2 → 910b 不命中 → spec 地板 suffix（variant=suffix）
+        · a2/a3 卡型差异确实改变了 spec 决策
+  [✓ PASS] P7 · WINGS_DEVICE_NAME=ascend910b3 → 卡型 910b 命中 GLM-5.1 sparse 白名单
+        · features.sparse_kv == true（卡型解析成功）
+
+## P8 · 打补丁逻辑保持现状
+  [✓ PASS] P8 · NV vllm + IndexCache 架构 + enable-sparse → install.py 装 indexcache 补丁
+        · 命令含 install.py --features {...indexcache...}
+  [✓ PASS] P8 · Ascend day0 GLM-5.1 + enable-sparse → 不装补丁，仅 --hf-overrides
+        · 命令不含 install.py indexcache（ascend 门控）
+        · 仍通过 --hf-overrides 启用 IndexCache
+
+============================================================================================
+ 总计：22 PASS / 0 FAIL
+ 输出：D:\project\inference\wings-control\wings-control-0730\wings-control\tests\dryrun_requirement_coverage_output.txt
+============================================================================================
