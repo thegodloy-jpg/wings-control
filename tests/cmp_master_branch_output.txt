@@ -1,0 +1,47 @@
+================================================================================================
+ 与 master 功能对比（防回归）：40 场景  ·  master=wt-master  branch=工作树
+================================================================================================
+[OK] A:glm51-910b-dual  预期变更: D3 spec deepseek_mtp->suffix
+[OK] A:glm52-910c-single  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:v4flash-a3-16  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:glm51-910b-single  预期变更: D3 spec deepseek_mtp->suffix
+[OK] A:v4flash-a2-8  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:v4flash-nv-h20-8  预期变更: D4 forced IndexCache removed
+[OK] A:glm51-a3-dual  预期变更: D3 spec deepseek_mtp->suffix
+[OK] A:glm51-a3-16  预期变更: D3 spec deepseek_mtp->suffix
+[OK] A:glm52-a3-16  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:glm52-a3-dual  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:glm52-910b-single  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:glm52-910b-dual  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:v4pro-a3-dual  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:qwen36-35b-a3b  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:qwen35-397b-a17b  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:qwen36-27b  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:minimax-m3-nv-8  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:kimi-k27-ascend-16  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:sglang-think-on  （与 master 等价，仅 D1/D2 已中和）
+[OK] A:mindie-think-on  （与 master 等价，仅 D1/D2 已中和）
+[OK] B:glm47-nv:none  （与 master 等价，仅 D1/D2 已中和）
+[OK] B:glm47-nv:spec  （与 master 等价，仅 D1/D2 已中和）
+[OK] B:glm47-nv:sparse  （与 master 等价，仅 D1/D2 已中和）
+[OK] B:glm47-nv:offload-auto  预期变更: D6 C4 swap-space None->0; scaffold:echo "[wings-env] export LMCACHE_LOCAL_C; scaffold:echo "[wings-env] export LMCACHE_MAX_LOC; scaffold:export LMCACHE_LOCAL_CPU=true; scaffold:export LMCACHE_MAX_LOCAL_CPU_SIZE=50
+[OK] B:glm47-nv:offload-custom  （与 master 等价，仅 D1/D2 已中和）
+[OK] B:glm47-nv:all  预期变更: D6 C4 swap-space None->0; scaffold:echo "[wings-env] export LMCACHE_LOCAL_C; scaffold:echo "[wings-env] export LMCACHE_MAX_LOC; scaffold:export LMCACHE_LOCAL_CPU=true; scaffold:export LMCACHE_MAX_LOCAL_CPU_SIZE=50
+[OK] B:glm47-nv:all+perf  预期变更: D6 C4 swap-space None->0; scaffold:echo "[wings-env] export LMCACHE_LOCAL_C; scaffold:echo "[wings-env] export LMCACHE_MAX_LOC; scaffold:export LMCACHE_LOCAL_CPU=true; scaffold:export LMCACHE_MAX_LOCAL_CPU_SIZE=50
+[OK] B:glm52-a3:none  （与 master 等价，仅 D1/D2 已中和）
+[OK] B:glm52-a3:spec  （与 master 等价，仅 D1/D2 已中和）
+[OK] B:glm52-a3:sparse  （与 master 等价，仅 D1/D2 已中和）
+[OK] B:glm52-a3:offload-auto  预期变更: D7 offload --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both","engine_id":"lmca1","kv_buffer_device":"npu"}'->None; scaffold:# --- wings-accel: install LMCache patch; scaffold:LMCACHE_RC=$?; scaffold:echo "[wings-accel] WARNING: LMCache pat; scaffold:echo "[wings-env] export LMCACHE_OFFLOAD; scaffold:echo "[wings-env] export PYTHONHASHSEED=; scaffold:echo '[wings-accel] Installing LMCache p; scaffold:echo '[wings-accel] LMCache patches inst; scaffold:echo '[wings-accel] WARNING: /accel-volu; scaffold:else; scaffold:export LMCACHE_OFFLOAD=true; scaffold:export PYTHONHASHSEED=0; scaffold:fi; scaffold:if [ $LMCACHE_RC -ne 0 ]; then; scaffold:if [ -f "/accel-volume/install.py" ]; th; scaffold:python3 -c "import json, os; p='/shared-; scaffold:python3 /accel-volume/install.py --lmcac; scaffold:set +e; scaffold:set -e
+[OK] B:glm52-a3:offload-custom  预期变更: D7 offload --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both","engine_id":"lmca1","kv_buffer_device":"npu"}'->None; scaffold:# --- wings-accel: install LMCache patch; scaffold:LMCACHE_RC=$?; scaffold:echo "[wings-accel] WARNING: LMCache pat; scaffold:echo "[wings-env] export LMCACHE_CONFIG_; scaffold:echo "[wings-env] export LMCACHE_LOCAL_C; scaffold:echo "[wings-env] export LMCACHE_MAX_LOC; scaffold:echo "[wings-env] export LMCACHE_OFFLOAD; scaffold:echo "[wings-env] export PYTHONHASHSEED=; scaffold:echo '[wings-accel] Installing LMCache p; scaffold:echo '[wings-accel] LMCache patches inst; scaffold:echo '[wings-accel] WARNING: /accel-volu; scaffold:else; scaffold:export LMCACHE_CONFIG_FILE='/shared-volu; scaffold:export LMCACHE_LOCAL_CPU=true; scaffold:export LMCACHE_MAX_LOCAL_CPU_SIZE=200; scaffold:export LMCACHE_OFFLOAD=true; scaffold:export PYTHONHASHSEED=0; scaffold:fi; scaffold:if [ $LMCACHE_RC -ne 0 ]; then; scaffold:if [ -f "/accel-volume/install.py" ]; th; scaffold:python3 -c "import json, os; p='/shared-; scaffold:python3 /accel-volume/install.py --lmcac; scaffold:set +e; scaffold:set -e
+[OK] B:glm52-a3:all  预期变更: D3 spec suffix->deepseek_mtp; D7 offload --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both","engine_id":"lmca1","kv_buffer_device":"npu"}'->None; scaffold:# --- wings-accel: install LMCache patch; scaffold:LMCACHE_RC=$?; scaffold:echo "[wings-accel] WARNING: LMCache pat; scaffold:echo "[wings-env] export LMCACHE_OFFLOAD; scaffold:echo "[wings-env] export PYTHONHASHSEED=; scaffold:echo '[wings-accel] Installing LMCache p; scaffold:echo '[wings-accel] LMCache patches inst; scaffold:echo '[wings-accel] WARNING: /accel-volu; scaffold:else; scaffold:export LMCACHE_OFFLOAD=true; scaffold:export PYTHONHASHSEED=0; scaffold:fi; scaffold:if [ $LMCACHE_RC -ne 0 ]; then; scaffold:if [ -f "/accel-volume/install.py" ]; th; scaffold:python3 -c "import json, os; p='/shared-; scaffold:python3 /accel-volume/install.py --lmcac; scaffold:set +e; scaffold:set -e
+[OK] B:glm52-a3:all+perf  预期变更: D3 spec suffix->deepseek_mtp; D7 offload --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both","engine_id":"lmca1","kv_buffer_device":"npu"}'->None; scaffold:# --- wings-accel: install LMCache patch; scaffold:LMCACHE_RC=$?; scaffold:echo "[wings-accel] WARNING: LMCache pat; scaffold:echo "[wings-env] export LMCACHE_OFFLOAD; scaffold:echo "[wings-env] export PYTHONHASHSEED=; scaffold:echo '[wings-accel] Installing LMCache p; scaffold:echo '[wings-accel] LMCache patches inst; scaffold:echo '[wings-accel] WARNING: /accel-volu; scaffold:else; scaffold:export LMCACHE_OFFLOAD=true; scaffold:export PYTHONHASHSEED=0; scaffold:fi; scaffold:if [ $LMCACHE_RC -ne 0 ]; then; scaffold:if [ -f "/accel-volume/install.py" ]; th; scaffold:python3 -c "import json, os; p='/shared-; scaffold:python3 /accel-volume/install.py --lmcac; scaffold:set +e; scaffold:set -e
+[OK] C1:bare-nv  （与 master 等价，仅 D1/D2 已中和）
+[OK] C2:bare-ascend  （与 master 等价，仅 D1/D2 已中和）
+[OK] C3:embedding-ascend  （与 master 等价，仅 D1/D2 已中和）
+[OK] C5:op-accel  预期变更: scaffold:echo "[wings-env] export USE_KUNLUN_ATB=; scaffold:export USE_KUNLUN_ATB=1
+[OK] C6:soft-fp8  （与 master 等价，仅 D1/D2 已中和）
+[OK] C7:pd-role  预期变更: D3 spec suffix->None; D7 offload --calculate-kv-scales True->None; D7 offload --kv-transfer-config '{"kv_connector":"MultiConnector","kv_role":"kv_both","kv_connector_extra_config":{"connectors":[{"kv_connector":"NixlConnector","kv_role":"kv_both"},{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}]}}'->'{"kv_connector":"NixlConnector","kv_role":"kv_both"}'; D7 sparse kv-cache-dtype fp8->auto; scaffold:# --- wings-accel: install LMCache patch; scaffold:# --- wings-accel: install speculative d; scaffold:ACCEL_RC=$?; scaffold:FEAT_RC=$?; scaffold:LMCACHE_RC=$?; scaffold:SPEC_RC=$?; scaffold:echo "[wings-accel] Feature 'ears' insta; scaffold:echo "[wings-accel] Patch version: 0.17.; scaffold:echo "[wings-accel] Trying feature: ears; scaffold:echo "[wings-accel] WARNING: Batch insta; scaffold:echo "[wings-accel] WARNING: Feature 'ea; scaffold:echo "[wings-accel] WARNING: LMCache pat; scaffold:echo "[wings-accel] WARNING: Speculative; scaffold:echo "[wings-env] export LMCACHE_OFFLOAD; scaffold:echo "[wings-env] export PYTHONHASHSEED=; scaffold:echo "[wings-env] export VLLM_EARS_TOLER; scaffold:echo "[wings-env] export WINGS_ENGINE_PA; scaffold:echo '[wings-accel] All patches installe; scaffold:echo '[wings-accel] Installing LMCache p; scaffold:echo '[wings-accel] Installing all patch; scaffold:echo '[wings-accel] Installing speculati; scaffold:echo '[wings-accel] LMCache patches inst; scaffold:echo '[wings-accel] Speculative decoding; scaffold:echo '[wings-accel] WARNING: /accel-volu; scaffold:else; scaffold:export LMCACHE_OFFLOAD=true; scaffold:export PYTHONHASHSEED=0; scaffold:export VLLM_EARS_TOLERANCE=0.5; scaffold:export WINGS_ENGINE_PATCH_OPTIONS='{"vll; scaffold:fi; scaffold:if [ $ACCEL_RC -ne 0 ]; then; scaffold:if [ $FEAT_RC -ne 0 ]; then; scaffold:if [ $LMCACHE_RC -ne 0 ]; then; scaffold:if [ $SPEC_RC -ne 0 ]; then; scaffold:if [ -f "/accel-volume/install.py" ]; th; scaffold:python3 -c "import json, os; p='/shared-; scaffold:python3 /accel-volume/install.py --featu; scaffold:python3 /accel-volume/install.py --insta; scaffold:python3 /accel-volume/install.py --lmcac; scaffold:set +e; scaffold:set -e
+
+================================================================================================
+ 结果：40/40 场景无回归  ·  疑似回归项 = 0  ·  归类预期变更 = 184
+================================================================================================
