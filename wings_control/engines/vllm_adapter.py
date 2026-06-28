@@ -21,7 +21,7 @@ import json
 import os
 import shlex
 import stat
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 import yaml
 
@@ -621,6 +621,117 @@ def _is_glm51_nvidia_vllm_params(params: Optional[Dict[str, Any]], engine: str,
     )
 
 
+# ── Offload 特例/后端判定（_build_cache_env_commands 与 resolve_offload_variant 共用，
+#    使「守卫条件」成为单一真相源、二者天然同源同序）──
+_OFFLOAD_NATIVE_NONE = ""                            # 无特例 → 走 LMCache 通用路径
+_OFFLOAD_GLM51_NV_DISABLED = "glm51_nv_disabled"     # GLM-5.1·NV 强制关
+_OFFLOAD_V4_CPU_CONNECTOR = "v4_cpu_connector"       # V4 ascend CPUOffloadingConnector
+_OFFLOAD_V4_FLASH_NATIVE = "v4_flash_native"         # V4-Flash·NV native --kv_offloading_backend
+_OFFLOAD_VARIANT_BY_SPECIAL = {                      # 特例 → resolve_offload_variant 的 variant 串
+    _OFFLOAD_GLM51_NV_DISABLED: "disabled",
+    _OFFLOAD_V4_CPU_CONNECTOR: "native_cpu_connector",
+    _OFFLOAD_V4_FLASH_NATIVE: "native_kv_offloading_backend",
+}
+
+
+def _classify_offload_special_case(params: Optional[Dict[str, Any]], engine: str) -> str:
+    """归类 offload 特例守卫（条件与原 _build_cache_env_commands 守卫逐字同序）。
+
+    返回 ``_OFFLOAD_*`` 之一；``_OFFLOAD_NATIVE_NONE`` 表示无特例、应走 LMCache 通用路径。
+    三特例均与 LMCache 互斥（强制关 / V4 走 native 后端）。
+    """
+    if _is_glm51_nvidia_vllm_params(params, engine):
+        return _OFFLOAD_GLM51_NV_DISABLED
+    if params and _is_deepseek_v4_cpu_offload_params(params, engine=engine):
+        return _OFFLOAD_V4_CPU_CONNECTOR
+    if params and engine == "vllm" and _is_deepseek_v4_flash_params(params):
+        return _OFFLOAD_V4_FLASH_NATIVE
+    return _OFFLOAD_NATIVE_NONE
+
+
+def _lmcache_engine_env_skip(special: str) -> bool:
+    """三类 offload 特例下打印「跳过 LMCache engine 侧 env 导出」日志并返回 True。
+
+    三者均与 LMCache 互斥：GLM-5.1·NV 强制关 / V4 走 vllm-ascend CPUOffloadingConnector /
+    V4-Flash·NV 走 native ``--kv_offloading_backend``。非特例返回 False（继续走 LMCache 路径）。
+    """
+    if special == _OFFLOAD_GLM51_NV_DISABLED:
+        logger.warning(
+            "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
+            "skipping LMCache engine-side env exports despite LMCACHE_OFFLOAD=true."
+        )
+        return True
+    if special == _OFFLOAD_V4_CPU_CONNECTOR:
+        logger.info(
+            "[KVCache Offload] DeepSeek-V4 Flash/Pro uses vllm-ascend CPUOffloadingConnector "
+            "via --kv-transfer-config; skipping LMCache engine-side env exports."
+        )
+        return True
+    if special == _OFFLOAD_V4_FLASH_NATIVE:
+        # [V4-Flash-NV-Day0] NV V4-Flash 用 native --kv_offloading_backend（见 _build_kv_offload_cmd）。
+        logger.info(
+            "[KVCache Offload] DeepSeek-V4-Flash (NV) uses native --kv_offloading_backend; "
+            "skipping LMCache engine-side env exports."
+        )
+        return True
+    return False
+
+
+def _resolve_lmcache_cpu_env(params: Optional[Dict[str, Any]]) -> Tuple[str, str]:
+    """解析 LMCache CPU 池两 env 值 ``(LMCACHE_LOCAL_CPU, LMCACHE_MAX_LOCAL_CPU_SIZE)``。
+
+    auto 模式（``resolve_offload_cpu_capacity_gb`` 非 None）反向预算并写回「均卡」容量；
+    熔断(<=0)清空 CPU 池；非 auto 透传现有 env。需求一 §3.0。
+    """
+    local_cpu_value = os.getenv("LMCACHE_LOCAL_CPU", "").strip()
+    max_cpu_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
+    auto_total = resolve_offload_cpu_capacity_gb(params)
+    if auto_total is None:
+        return local_cpu_value, max_cpu_size
+    if auto_total <= 0:
+        # 熔断：容量低于下限 → 不建 CPU 卸载池（offload 退化为无 CPU 池）。
+        logger.warning(
+            "[KVCache Offload] auto CPU capacity below floor %dG -> skip CPU offload pool.",
+            _OFFLOAD_MIN_GB,
+        )
+        return "", ""
+    n_card = _safe_int(params.get("device_count")) or 1
+    per_card = max(1, auto_total // n_card)
+    local_cpu_value = local_cpu_value or "true"
+    logger.info(
+        "[KVCache Offload] auto CPU per-card = M_offload(%dG) / N_card(%d) = %dG "
+        "(LMCACHE_MAX_LOCAL_CPU_SIZE).",
+        auto_total, n_card, per_card,
+    )
+    return local_cpu_value, str(per_card)
+
+
+def _resolve_offload_backend(params: Optional[Dict[str, Any]]) -> Tuple[str, str]:
+    """LMCache 后端选择，返回 ``(backend, cpu_mode)``。
+
+    backend ∈ {lmcache_cpu_disk, lmcache_cpu, lmcache_disk, disabled}；
+    cpu_mode ∈ {auto, custom, ""}（auto 即反向预算容量模式）。
+    """
+    auto_total = resolve_offload_cpu_capacity_gb(params)
+    if auto_total is not None:
+        has_cpu = auto_total > 0          # 熔断(0) → 无 CPU 池
+        cpu_mode = "auto"
+    else:
+        has_cpu = bool(os.getenv("LMCACHE_LOCAL_CPU", "").strip()
+                       or os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip())
+        cpu_mode = "custom" if has_cpu else ""
+    has_disk = bool(os.getenv("LMCACHE_LOCAL_DISK", "").strip())
+    if has_cpu and has_disk:
+        backend = "lmcache_cpu_disk"
+    elif has_cpu:
+        backend = "lmcache_cpu"
+    elif has_disk:
+        backend = "lmcache_disk"
+    else:
+        backend = "disabled"
+    return backend, cpu_mode
+
+
 def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = None) -> List[str]:
     """构建 KVCache Offload 特性的环境变量设置命令。
 
@@ -646,28 +757,9 @@ def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = No
     if not get_lmcache_env():
         return env_commands
 
-    if _is_glm51_nvidia_vllm_params(params, engine):
-        logger.warning(
-            "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
-            "skipping LMCache engine-side env exports despite LMCACHE_OFFLOAD=true."
-        )
-        return env_commands
-
-    if params and _is_deepseek_v4_cpu_offload_params(params, engine=engine):
-        logger.info(
-            "[KVCache Offload] DeepSeek-V4 Flash/Pro uses vllm-ascend CPUOffloadingConnector "
-            "via --kv-transfer-config; skipping LMCache engine-side env exports."
-        )
-        return env_commands
-
-    # [V4-Flash-NV-Day0] NV V4-Flash 用 native --kv_offloading_backend（见 _build_kv_offload_cmd），
-    # 与 LMCache 互斥：此处已通过上方 get_lmcache_env 守卫，说明 LMCACHE_OFFLOAD=true，
-    # 故跳过 LMCache engine 侧 env 导出，避免两套卸载机制并存。
-    if params and engine == "vllm" and _is_deepseek_v4_flash_params(params):
-        logger.info(
-            "[KVCache Offload] DeepSeek-V4-Flash (NV) uses native --kv_offloading_backend; "
-            "skipping LMCache engine-side env exports."
-        )
+    # 守卫（条件由 _classify_offload_special_case 统一裁定；三特例均与 LMCache 互斥，跳过 env 导出）
+    special = _classify_offload_special_case(params, engine)
+    if _lmcache_engine_env_skip(special):
         return env_commands
 
     # 跨实例Hash一致
@@ -675,28 +767,8 @@ def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = No
     _append_lmcache_env_export(env_commands, "LMCACHE_OFFLOAD", "true")
     _append_lmcache_env_export(env_commands, "LMCACHE_CHUNK_SIZE")
 
-    local_cpu_value = os.getenv("LMCACHE_LOCAL_CPU", "").strip()
-    max_cpu_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
     # C4：auto 模式反向预算并写回「均卡」CPU 容量（LMCache 每 rank 一池，需 per-card）。需求一 §3.0。
-    auto_total = resolve_offload_cpu_capacity_gb(params)
-    if auto_total is not None:
-        if auto_total <= 0:
-            # 熔断：容量低于下限 → 不建 CPU 卸载池（offload 退化为无 CPU 池）。
-            logger.warning(
-                "[KVCache Offload] auto CPU capacity below floor %dG -> skip CPU offload pool.",
-                _OFFLOAD_MIN_GB,
-            )
-            local_cpu_value, max_cpu_size = "", ""
-        else:
-            n_card = _safe_int(params.get("device_count")) or 1
-            per_card = max(1, auto_total // n_card)
-            max_cpu_size = str(per_card)
-            local_cpu_value = local_cpu_value or "true"
-            logger.info(
-                "[KVCache Offload] auto CPU per-card = M_offload(%dG) / N_card(%d) = %dG "
-                "(LMCACHE_MAX_LOCAL_CPU_SIZE).",
-                auto_total, n_card, per_card,
-            )
+    local_cpu_value, max_cpu_size = _resolve_lmcache_cpu_env(params)
     if local_cpu_value or max_cpu_size:
         _append_lmcache_env_export(env_commands, "LMCACHE_LOCAL_CPU", local_cpu_value or "true")
         _append_lmcache_env_export(env_commands, "LMCACHE_MAX_LOCAL_CPU_SIZE", max_cpu_size)
@@ -724,7 +796,8 @@ def resolve_offload_variant(params: Optional[Dict[str, Any]], engine: str) -> st
     """纯函数：返回卸载 variant「后端[+模式][+修饰]」（advanced_features.json 监控用，无副作用）。
 
     镜像 ``_build_cache_env_commands`` 的后端选择 + C4 容量模式（需求一 §4.3）。
-    ⚠ 与 ``_build_cache_env_commands`` 同源同序，二者分支须同步修改。
+    ⚠ 与 ``_build_cache_env_commands`` 同源同序：守卫共用 ``_classify_offload_special_case``，
+    新增/调整特例守卫只需改该分类器一处即可两侧同步。
     监控在写 JSON 时（早于产出口在脚本生成阶段运行）调用，故此处独立按 merged/env 推导，
     不依赖产出口先跑，也绝不改 engine_config。
 
@@ -733,31 +806,15 @@ def resolve_offload_variant(params: Optional[Dict[str, Any]], engine: str) -> st
     """
     if not get_lmcache_env():
         return ""
-    # 守卫（与 _build_cache_env_commands 同序）：GLM-5.1·NV 强制关 → disabled；V4 → native
-    if _is_glm51_nvidia_vllm_params(params, engine):
+    # 守卫（与 _build_cache_env_commands 共用 _classify_offload_special_case，天然同序）：
+    # GLM-5.1·NV 强制关 → disabled；V4 → native 后端。
+    special = _classify_offload_special_case(params, engine)
+    if special:
+        return _OFFLOAD_VARIANT_BY_SPECIAL[special]
+    # LMCache 路径：CPU(auto/custom) / Disk / 分层（后端选择见 _resolve_offload_backend）
+    backend, cpu_mode = _resolve_offload_backend(params)
+    if backend == "disabled":            # offload on 但无任何容量段（含熔断）
         return "disabled"
-    if params and _is_deepseek_v4_cpu_offload_params(params, engine=engine):
-        return "native_cpu_connector"
-    if params and engine == "vllm" and _is_deepseek_v4_flash_params(params):
-        return "native_kv_offloading_backend"
-    # LMCache 路径：CPU(auto/custom) / Disk / 分层
-    auto_total = resolve_offload_cpu_capacity_gb(params)
-    if auto_total is not None:
-        has_cpu = auto_total > 0          # 熔断(0) → 无 CPU 池
-        cpu_mode = "auto"
-    else:
-        has_cpu = bool(os.getenv("LMCACHE_LOCAL_CPU", "").strip()
-                       or os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip())
-        cpu_mode = "custom" if has_cpu else ""
-    has_disk = bool(os.getenv("LMCACHE_LOCAL_DISK", "").strip())
-    if has_cpu and has_disk:
-        backend = "lmcache_cpu_disk"
-    elif has_cpu:
-        backend = "lmcache_cpu"
-    elif has_disk:
-        backend = "lmcache_disk"
-    else:
-        return "disabled"                # offload on 但无任何容量段（含熔断）
     variant = backend
     if cpu_mode and backend in ("lmcache_cpu", "lmcache_cpu_disk"):
         variant += "+" + cpu_mode
@@ -2243,10 +2300,12 @@ def _resolve_v4_flash_offload_gb(params: Dict[str, Any]) -> int:
       * V4-Pro / 其它：直接使用该值（维持原行为）。
     """
     # auto 命中且未熔断（>0）：native 复用整节点总额 M_offload，不除卡数。
+    # 各分支返回值统一显式收敛为 int（auto_total/per_card_gb 源函数标注 Optional[int]，
+    # 此处 int(...) 让所有 return 同型同数，满足 G.CTL.01）。
     auto_total = resolve_offload_cpu_capacity_gb(params)
     if auto_total:
         logger.info("[KVCache Offload] native auto size = M_offload(%dG) (整节点，不除卡数).", auto_total)
-        return auto_total
+        return int(auto_total)
     raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
     try:
         per_card_gb = int(raw_size) if raw_size else None
@@ -2260,8 +2319,8 @@ def _resolve_v4_flash_offload_gb(params: Dict[str, Any]) -> int:
         return 200
     if _is_deepseek_v4_flash_params(params):
         device_count = _safe_int(params.get("device_count")) or 1
-        return device_count * per_card_gb
-    return per_card_gb
+        return int(device_count * per_card_gb)
+    return int(per_card_gb)
 
 
 def _apply_deepseek_v4_cpu_offload(
