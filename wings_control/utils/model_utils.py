@@ -52,26 +52,31 @@ INDEXCACHE_ARCHS: frozenset[str] = frozenset({
 #     例：glm-5.1 行在 glm-5 基座行之前；deepseek-v3.2 行在 deepseek-v3.1 行之前。
 SMART_FEATURE_WHITELIST: tuple = (
     # ── NVIDIA (vllm) ──  卡：NRP0500(72G) / NH02(141G)；NV 卡码是否进 key 待定，现用 "*"
-    ("vllm",        ("qwen3.5-397b", "qwen3_5-397b"),   ("*",),           frozenset({"spec", "sparse"})),
-    ("vllm",        ("qwen3.6", "qwen3_6"),             ("*",),           frozenset({"spec", "sparse"})),  # Qwen3.6 系列（与 3.5 同 qwen3_5_mtp）
-    ("vllm",        ("glm-4.7",),                       ("*",),           frozenset({"spec", "sparse", "offload"})),
-    ("vllm",        ("glm-5.1", "glm5.1"),              ("*",),           frozenset({"spec", "sparse"})),
-    ("vllm",        ("glm-5", "glm5"),                  ("*",),           frozenset({"spec", "sparse", "offload"})),  # GLM-5 基座（5.1 已在上、先匹配）
-    ("vllm",        ("minimax-m2.7", "minimax-m27"),    ("*",),           frozenset({"spec", "sparse", "offload"})),
-    ("vllm",        ("deepseek-v4-flash", "v4-flash"),  ("*",),           frozenset({"spec", "sparse", "offload"})),  # V4-Flash·NV day0（原 §6-④）
+    ("vllm", ("qwen3.5-397b", "qwen3_5-397b"), ("*",), frozenset({"spec", "sparse"})),
+    # Qwen3.6 系列（与 3.5 同 qwen3_5_mtp）
+    ("vllm", ("qwen3.6", "qwen3_6"), ("*",), frozenset({"spec", "sparse"})),
+    ("vllm", ("glm-4.7",), ("*",), frozenset({"spec", "sparse", "offload"})),
+    ("vllm", ("glm-5.1", "glm5.1"), ("*",), frozenset({"spec", "sparse"})),
+    # GLM-5 基座（5.1 已在上、先匹配）
+    ("vllm", ("glm-5", "glm5"), ("*",), frozenset({"spec", "sparse", "offload"})),
+    ("vllm", ("minimax-m2.7", "minimax-m27"), ("*",), frozenset({"spec", "sparse", "offload"})),
+    # V4-Flash·NV day0（原 §6-④）
+    ("vllm", ("deepseek-v4-flash", "v4-flash"), ("*",), frozenset({"spec", "sparse", "offload"})),
     # ── Ascend (vllm_ascend) ──  卡：910B3(64G) / 910C(128G)
-    ("vllm_ascend", ("glm-4.7",),                       ("910b", "910c"), frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("minimax-m2.5", "minimax-m25"),    ("910b", "910c"), frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("deepseek-v3.2", "deepseek_v3.2"), ("910c",),        frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("deepseek-v4-flash", "v4-flash"),  ("910b", "910c"), frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("deepseek-v4-pro", "v4-pro"),      ("910b", "910c"), frozenset({"spec", "offload"})),
+    ("vllm_ascend", ("glm-4.7",), ("910b", "910c"), frozenset({"spec", "offload"})),
+    ("vllm_ascend", ("minimax-m2.5", "minimax-m25"), ("910b", "910c"), frozenset({"spec", "offload"})),
+    ("vllm_ascend", ("deepseek-v3.2", "deepseek_v3.2"), ("910c",), frozenset({"spec", "offload"})),
+    ("vllm_ascend", ("deepseek-v4-flash", "v4-flash"), ("910b", "910c"), frozenset({"spec", "offload"})),
+    ("vllm_ascend", ("deepseek-v4-pro", "v4-pro"), ("910b", "910c"), frozenset({"spec", "offload"})),
     # DeepSeek-V3/V3.1/R1（DeepseekV3ForCausalLM）；token 不含裸 "deepseek-v3" 以免误伤 v3.2
     ("vllm_ascend", ("deepseek-v3.1", "deepseek_v3.1",
-                     "deepseek-r1", "deepseek_r1"),     ("910b", "910c"), frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("glm-5.2", "glm5.2"),              ("910b", "910c"), frozenset({"spec"})),  # GLM-5.2（GlmMoeDsa，deepseek_mtp num=3）；day0 仅投机：稀疏原生、无卸载
-    ("vllm_ascend", ("qwen3.6", "qwen3_6"),             ("910b", "910c"), frozenset({"spec"})),  # Qwen3.6 系列：day0 官方 recipe 仅投机（无 sparse/offload）
+                     "deepseek-r1", "deepseek_r1"), ("910b", "910c"), frozenset({"spec", "offload"})),
+    # GLM-5.2（GlmMoeDsa，deepseek_mtp num=3）；day0 仅投机：稀疏原生、无卸载
+    ("vllm_ascend", ("glm-5.2", "glm5.2"), ("910b", "910c"), frozenset({"spec"})),
+    # Qwen3.6 系列：day0 官方 recipe 仅投机（无 sparse/offload）
+    ("vllm_ascend", ("qwen3.6", "qwen3_6"), ("910b", "910c"), frozenset({"spec"})),
     # 曾 forced，已降为普通开关门控（§0 裁定1）
-    ("vllm_ascend", ("glm-5.1", "glm5.1"),              ("910b", "910c"), frozenset({"sparse"})),
+    ("vllm_ascend", ("glm-5.1", "glm5.1"), ("910b", "910c"), frozenset({"sparse"})),
 )
 
 
