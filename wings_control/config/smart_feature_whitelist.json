@@ -1,0 +1,29 @@
+{
+  "_doc": "Smart 三特性白名单（投机 spec / 稀疏 sparse / 卸载 offload）。详解与全枚举矩阵见 xuqiu/smart/需求一-白名单详解.md。由 utils/model_utils.py 在模块加载时读入为 SMART_FEATURE_WHITELIST。",
+  "_schema": {
+    "engine": "精确匹配 vllm | vllm_ascend",
+    "name_tokens": "小写子串列表，对 (model_name+model_path) 任一命中即可",
+    "card_tokens": "小写子串列表或 [\"*\"]（任意卡）；Ascend 用 910b/910c",
+    "features": "允许特性子集 of [spec, sparse, offload]",
+    "arch / source": "仅文档用元信息，加载器忽略"
+  },
+  "_rules": [
+    "顺序即优先级：首个命中即返回；更具体型号须排在更泛型号之前。",
+    "无 forced：有效=开关 on AND 特性∈白名单；miss → 三特性一律不产。",
+    "改本表后须跑 dry_run.py 全场景与基线归一化比对（零附带回归）。"
+  ],
+  "whitelist": [
+    {"engine": "vllm", "name_tokens": ["qwen3.5-397b", "qwen3_5-397b"], "card_tokens": ["*"], "features": ["spec", "sparse"], "arch": "Qwen3_5MoeForConditionalGeneration", "source": "0430"},
+    {"engine": "vllm", "name_tokens": ["glm-4.7"], "card_tokens": ["*"], "features": ["spec", "sparse", "offload"], "arch": "Glm4MoeForCausalLM", "source": "0430"},
+    {"engine": "vllm", "name_tokens": ["glm-5.1", "glm5.1"], "card_tokens": ["*"], "features": ["sparse"], "arch": "GlmMoeDsaForCausalLM", "source": "0430"},
+    {"engine": "vllm", "name_tokens": ["minimax-m2.7", "minimax-m27"], "card_tokens": ["*"], "features": ["spec", "sparse", "offload"], "arch": "MiniMaxM2ForCausalLM", "source": "0430"},
+    {"engine": "vllm", "name_tokens": ["deepseek-v4-flash", "v4-flash"], "card_tokens": ["*"], "features": ["spec", "sparse", "offload"], "arch": "DeepseekV4ForCausalLM", "source": "day0"},
+    {"engine": "vllm_ascend", "name_tokens": ["glm-4.7"], "card_tokens": ["910b", "910c"], "features": ["spec", "offload"], "arch": "Glm4MoeForCausalLM", "source": "0430"},
+    {"engine": "vllm_ascend", "name_tokens": ["minimax-m2.5", "minimax-m25"], "card_tokens": ["910b", "910c"], "features": ["spec", "offload"], "arch": "MiniMaxM2ForCausalLM", "source": "0430"},
+    {"engine": "vllm_ascend", "name_tokens": ["deepseek-v3.2", "deepseek_v3.2"], "card_tokens": ["910c"], "features": ["spec", "offload"], "arch": "DeepseekV32ForCausalLM", "source": "0430"},
+    {"engine": "vllm_ascend", "name_tokens": ["qwen3.6", "qwen3_6"], "card_tokens": ["910c"], "features": ["spec"], "arch": "Qwen3_5MoeForConditionalGeneration", "source": "0430"},
+    {"engine": "vllm_ascend", "name_tokens": ["deepseek-v4-flash", "v4-flash"], "card_tokens": ["910b", "910c"], "features": ["spec", "sparse", "offload"], "arch": "DeepseekV4ForCausalLM", "source": "day0"},
+    {"engine": "vllm_ascend", "name_tokens": ["glm-5.1", "glm5.1"], "card_tokens": ["910b", "910c"], "features": ["sparse"], "arch": "GlmMoeDsaForCausalLM", "source": "day0"},
+    {"engine": "vllm_ascend", "name_tokens": ["glm-5.2", "glm5.2"], "card_tokens": ["910b", "910c"], "features": ["spec"], "arch": "GlmMoeDsaForCausalLM", "source": "day0"}
+  ]
+}

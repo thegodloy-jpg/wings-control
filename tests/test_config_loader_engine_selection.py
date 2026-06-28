@@ -159,7 +159,7 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertNotIn("kv_transfer_config", merged["engine_config"])
         self.assertIn("Forced disabled for GLM-5.1 on NVIDIA/vLLM", "\n".join(cm.output))
 
-    def test_glm5_nvidia_still_allows_lmcache_kv_offload(self):
+    def test_glm5_base_nvidia_not_whitelisted_suppresses_lmcache_offload(self):
         from core.start_args_compat import parse_launch_args  # noqa: E402
 
         with tempfile.TemporaryDirectory() as model_dir:
@@ -188,8 +188,9 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
                     launch_args,
                 )
 
-        self.assertIn("kv_transfer_config", merged["engine_config"])
-        self.assertIn("LMCacheConnectorV1", merged["engine_config"]["kv_transfer_config"])
+        # GLM-5 基座（非 5.1/5.2）不在白名单 → 即便 LMCACHE_OFFLOAD=true，C14 收口为 false →
+        # 不注入 LMCache 卸载 connector（仅 0430/day0 列出型号才授卸载）。
+        self.assertNotIn("kv_transfer_config", merged["engine_config"])
 
     def test_deepseek_v4_flash_a2_lmcache_switch_merges_cpu_offload_config(self):
         from core.start_args_compat import parse_launch_args  # noqa: E402
@@ -655,29 +656,16 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("--headless", exec_line)
         self.assertIn("--data-parallel-start-rank 1", exec_line)
 
-    def test_deepseek_v4_pro_kv_offload_injects_cpu_offloading_connector(self):
-        """V4-Pro KV 卸载走 vllm-ascend CPUOffloadingConnector，不走 LMCache。"""
+    def test_deepseek_v4_pro_not_whitelisted_suppresses_kv_offload(self):
+        """V4-Pro 已对齐 0430/day0 移出白名单 → 即便 LMCACHE_OFFLOAD=true，C14 收口为 false →
+        不注入 CPUOffloadingConnector、不导出 LMCache env（V4-Pro 部署不再产 KV 卸载）。"""
         script = self._build_deepseek_v4_pro_script(
             extra_env={"LMCACHE_OFFLOAD": "true", "LMCACHE_MAX_LOCAL_CPU_SIZE": "120"},
         )
-        exec_line = [line for line in script.splitlines() if line.startswith("exec ")][-1]
-
-        self.assertIn("--kv-transfer-config", exec_line)
-        self.assertIn("\"kv_connector\":\"CPUOffloadingConnector\"", exec_line)
-        self.assertIn(
-            "\"kv_connector_module_path\":\"vllm_ascend.distributed.kv_transfer"
-            ".kv_pool.cpu_offload.cpu_offload_connector\"",
-            exec_line,
-        )
-        self.assertIn("\"kv_role\":\"kv_both\"", exec_line)
-        self.assertIn("\"swap_in_threshold\":1", exec_line)
-        self.assertIn("\"cpu_swap_space_gb\":120", exec_line)
+        self.assertNotIn("--kv-transfer-config", script)
+        self.assertNotIn("CPUOffloadingConnector", script)
         self.assertNotIn("LMCacheConnectorV1", script)
-        self.assertNotIn("export LMCACHE_OFFLOAD=", script)
-        self.assertNotIn("export LMCACHE_CONFIG_FILE=", script)
-        self.assertNotIn("export PYTHONHASHSEED=0", script)
-        self.assertNotIn("--lmcache-target", script)
-        self.assertNotIn("Installing LMCache patches", script)
+        self.assertNotIn("export LMCACHE_OFFLOAD=true", script)
 
     def test_deepseek_v4_pro_user_explicit_tp_respected(self):
         """V4-Pro：用户显式 TP=8 应被尊重，不被强制覆盖到 16。"""

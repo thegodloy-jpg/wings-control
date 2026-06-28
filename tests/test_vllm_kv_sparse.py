@@ -201,7 +201,10 @@ class TestVllmKvSparse(unittest.TestCase):
         )
         self.assertNotIn('"method": "deepseek_mtp"', script)
 
-    def test_glm51_nvidia_speculative_ignores_lmcache_ban_and_uses_deepseek_mtp(self):
+    def test_glm51_nvidia_spec_not_whitelisted_falls_to_suffix_floor(self):
+        # GLM-5.1 白名单仅 sparse（NV/Ascend 一致，对齐 0430/各平台映射）：spec 未授 →
+        # resolve_speculative_strategy 命中白名单地板返回 suffix（投机能力以 suffix 保留，
+        # 不再产 deepseek_mtp）；即便 LMCACHE_OFFLOAD=true 也不改变此判定（spec gate 先失败）。
         params = {
             "model_name": "GLM-5.1",
             "model_path": "/models/glm5.1",
@@ -218,13 +221,13 @@ class TestVllmKvSparse(unittest.TestCase):
         ):
             script = vllm_adapter.build_start_script(params)
 
-        # GLM-5.1 官方推荐 num=1（与 is_glm_moe_dsa_glm51 分支一致）。
         self.assertIn(
-            "--speculative-config '{\"method\": \"deepseek_mtp\", "
-            "\"num_speculative_tokens\": 1}'",
+            "--speculative-config '{\"method\" : \"suffix\", "
+            "\"num_speculative_tokens\": 5, "
+            "\"suffix_decoding_max_cached_requests\": 1000}'",
             script,
         )
-        self.assertNotIn('"method" : "suffix"', script)
+        self.assertNotIn("deepseek_mtp", script)
 
     def test_sparse_control_flag_is_not_rendered_as_native_vllm_arg(self):
         params = {

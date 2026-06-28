@@ -43,41 +43,43 @@ INDEXCACHE_ARCHS: frozenset[str] = frozenset({
 })
 
 # ── Smart 三特性白名单（投机 spec / 稀疏 sparse / 卸载 offload）────────────────
-# 每条 4-tuple = (engine, (模型名标识...), (卡型标识...|"*"), 允许特性 frozenset)
-#   无 forced 列：只开关不强制（需求一 §0 裁定1，白名单只收窄、永不强开）。
-#   模型名/卡型 = 小写子串，任一命中即可；卡型 "*" = 任意卡。
-#   未命中（miss）→ 三特性一律不产（§0 裁定2：不管老模型）。
-# 来源：反串讲 0430 兼容性列表 + 0DAYS(26.0.3)。新增模型（含 0day 适配）按此 4-tuple 追加。
-#   ⚠ 版本子串重叠：更具体的型号行须排在更泛的型号行之前（首个命中即返回）。
-#     例：glm-5.1 行在 glm-5 基座行之前；deepseek-v3.2 行在 deepseek-v3.1 行之前。
-SMART_FEATURE_WHITELIST: tuple = (
-    # ── NVIDIA (vllm) ──  卡：NRP0500(72G) / NH02(141G)；NV 卡码是否进 key 待定，现用 "*"
-    ("vllm", ("qwen3.5-397b", "qwen3_5-397b"), ("*",), frozenset({"spec", "sparse"})),
-    # Qwen3.6 系列（与 3.5 同 qwen3_5_mtp）
-    ("vllm", ("qwen3.6", "qwen3_6"), ("*",), frozenset({"spec", "sparse"})),
-    ("vllm", ("glm-4.7",), ("*",), frozenset({"spec", "sparse", "offload"})),
-    ("vllm", ("glm-5.1", "glm5.1"), ("*",), frozenset({"spec", "sparse"})),
-    # GLM-5 基座（5.1 已在上、先匹配）
-    ("vllm", ("glm-5", "glm5"), ("*",), frozenset({"spec", "sparse", "offload"})),
-    ("vllm", ("minimax-m2.7", "minimax-m27"), ("*",), frozenset({"spec", "sparse", "offload"})),
-    # V4-Flash·NV day0（原 §6-④）
-    ("vllm", ("deepseek-v4-flash", "v4-flash"), ("*",), frozenset({"spec", "sparse", "offload"})),
-    # ── Ascend (vllm_ascend) ──  卡：910B3(64G) / 910C(128G)
-    ("vllm_ascend", ("glm-4.7",), ("910b", "910c"), frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("minimax-m2.5", "minimax-m25"), ("910b", "910c"), frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("deepseek-v3.2", "deepseek_v3.2"), ("910c",), frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("deepseek-v4-flash", "v4-flash"), ("910b", "910c"), frozenset({"spec", "offload"})),
-    ("vllm_ascend", ("deepseek-v4-pro", "v4-pro"), ("910b", "910c"), frozenset({"spec", "offload"})),
-    # DeepSeek-V3/V3.1/R1（DeepseekV3ForCausalLM）；token 不含裸 "deepseek-v3" 以免误伤 v3.2
-    ("vllm_ascend", ("deepseek-v3.1", "deepseek_v3.1",
-                     "deepseek-r1", "deepseek_r1"), ("910b", "910c"), frozenset({"spec", "offload"})),
-    # GLM-5.2（GlmMoeDsa，deepseek_mtp num=3）；day0 仅投机：稀疏原生、无卸载
-    ("vllm_ascend", ("glm-5.2", "glm5.2"), ("910b", "910c"), frozenset({"spec"})),
-    # Qwen3.6 系列：day0 官方 recipe 仅投机（无 sparse/offload）
-    ("vllm_ascend", ("qwen3.6", "qwen3_6"), ("910b", "910c"), frozenset({"spec"})),
-    # 曾 forced，已降为普通开关门控（§0 裁定1）
-    ("vllm_ascend", ("glm-5.1", "glm5.1"), ("910b", "910c"), frozenset({"sparse"})),
+# 数据外置于 config/smart_feature_whitelist.json（最终白名单 + 全枚举矩阵详解见
+# xuqiu/smart/需求一-白名单详解.md）。本模块加载时构造为 4-tuple 序列：
+#   每条 = (engine 精确, name_tokens 小写子串, card_tokens 子串|"*", features frozenset)。
+#   无 forced：有效=开关 on AND 特性∈白名单；miss → 三特性不产（§0 裁定1/2）。
+#   顺序即优先级（首命中即返回）；更具体型号须排在更泛型号之前。
+_SMART_WHITELIST_PATH = (
+    Path(__file__).resolve().parents[1] / "config" / "smart_feature_whitelist.json"
 )
+
+
+def _load_smart_feature_whitelist(path: Path = _SMART_WHITELIST_PATH) -> tuple:
+    """从 JSON 加载白名单，构造与原内联等价的 4-tuple 序列（保序）。
+
+    每条 JSON 记录取 engine / name_tokens / card_tokens / features 四键，其余键
+    （arch/source 等）为文档元信息、加载器忽略。文件缺失/解析失败 → 空 tuple
+    （miss 即不产，安全降级）并记 error。
+    """
+    data = load_json_config(str(path))
+    rows = data.get("whitelist", []) if isinstance(data, dict) else []
+    whitelist = tuple(
+        (
+            row["engine"],
+            tuple(row["name_tokens"]),
+            tuple(row["card_tokens"]),
+            frozenset(row["features"]),
+        )
+        for row in rows
+    )
+    if not whitelist:
+        logger.error(
+            "[SmartFeature] SMART_FEATURE_WHITELIST empty after load from %s "
+            "-> spec/sparse/offload will all miss.", path,
+        )
+    return whitelist
+
+
+SMART_FEATURE_WHITELIST: tuple = _load_smart_feature_whitelist()
 
 
 def resolve_feature_whitelist(engine, model_name, model_path, card_token):
