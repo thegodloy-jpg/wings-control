@@ -24,6 +24,7 @@ sys.path.insert(0, str(TESTS_DIR))
 
 from engines.vllm_adapter import _build_kv_sparse_cmd, _resolve_sparse_level  # noqa: E402
 from utils.env_utils import get_sparse_level_env  # noqa: E402
+from utils.model_utils import resolve_sparse_topk  # noqa: E402
 from snapshot_framework import FakeModelIdentifier  # noqa: E402
 
 
@@ -174,26 +175,41 @@ class TestSparseLevel(unittest.TestCase):
         with patch.dict("os.environ", {"SPARSE_LEVEL": "accuracy_first"}):
             self.assertEqual(_resolve_sparse_level(), "accuracy_first")
 
-    def test_performance_first_warns_and_falls_back(self):
-        """SPARSE_LEVEL=performance_first 暂未实现 → 告警并回落 accuracy_first。"""
+    def test_performance_first_passthrough(self):
+        """SPARSE_LEVEL=performance_first → 有效档位保持 performance_first。"""
         with patch.dict("os.environ", {"SPARSE_LEVEL": "PERFORMANCE_FIRST"}):
-            # 请求档位规整为小写
             self.assertEqual(get_sparse_level_env(), "performance_first")
-            with self.assertLogs("engines.vllm_adapter", level="WARNING") as cm:
-                effective = _resolve_sparse_level()
-        self.assertEqual(effective, "accuracy_first")
-        self.assertTrue(any("performance_first" in m for m in cm.output))
+            self.assertEqual(_resolve_sparse_level(), "performance_first")
 
-    def test_performance_first_does_not_change_sparse_cmd(self):
-        """performance_first 回落后稀疏命令与 accuracy_first 一致（本次仅实现 accuracy_first）。"""
-        params = _make_params("GlmMoeDsaForCausalLM")
+    def test_v4_flash_performance_first_uses_sparse_table_topk(self):
+        """V4-Flash performance_first 读取 sparse 表 per-row topk=8。"""
+        params = {
+            "model_name": "DeepSeek-V4-Flash",
+            "model_path": "/models/deepseek-v4-flash",
+            "model_type": "llm",
+        }
         with patch("engines.vllm_adapter.ModelIdentifier",
-                   side_effect=_fake_model("GlmMoeDsaForCausalLM")):
+                   side_effect=_fake_model("DeepseekV4ForCausalLM")):
             with patch.dict("os.environ", {"SPARSE_LEVEL": "performance_first"}):
                 perf = _build_kv_sparse_cmd(params, "vllm")
             with patch.dict("os.environ", {"SPARSE_LEVEL": "accuracy_first"}):
-                acc = _build_kv_sparse_cmd(_make_params("GlmMoeDsaForCausalLM"), "vllm")
-        self.assertEqual(perf, acc)
+                acc = _build_kv_sparse_cmd(dict(params), "vllm")
+        self.assertIn('"index_topk_freq": 8', perf)
+        self.assertIn('"index_topk_freq": 4', acc)
+
+    def test_resolve_sparse_topk_falls_back_to_accuracy_when_level_missing(self):
+        """表行未声明 performance topk 时，performance_first 回退该行 accuracy topk。"""
+        self.assertEqual(
+            resolve_sparse_topk(
+                "vllm_ascend",
+                "glm-5.1",
+                "/models/glm-5.1",
+                "910b",
+                "performance_first",
+                default=4,
+            ),
+            8,
+        )
 
 
 if __name__ == "__main__":

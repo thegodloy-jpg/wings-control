@@ -43,67 +43,106 @@ INDEXCACHE_ARCHS: frozenset[str] = frozenset({
 })
 
 # ── Smart 三特性白名单（投机 spec / 稀疏 sparse / 卸载 offload）────────────────
-# 数据外置于 config/smart_feature_whitelist.json（最终白名单 + 全枚举矩阵详解见
-# xuqiu/smart/需求一-白名单详解.md）。本模块加载时构造为 4-tuple 序列：
-#   每条 = (engine 精确, name_tokens 小写子串, card_tokens 子串|"*", features frozenset)。
-#   无 forced：有效=开关 on AND 特性∈白名单；miss → 三特性不产（§0 裁定1/2）。
-#   顺序即优先级（首命中即返回）；更具体型号须排在更泛型号之前。
+# 数据外置于 config/smart_feature_whitelist.json，按特性拆为**三独立表**（最终白名单
+# + 全枚举矩阵详解见 xuqiu/smart/需求一-白名单详解.md）。本模块加载为每特性一张表：
+#   每条 = (engine 精确, name_tokens 小写子串, card_tokens 子串|"*")。
+#   无 forced：有效=开关 on AND 命中对应表；miss → 该特性不产（§0 裁定1/2）。
+#   表内顺序即优先级（首命中即命中）；更具体型号须排在更泛型号之前。
+SMART_FEATURES = ("spec", "sparse", "offload")
 _SMART_WHITELIST_PATH = (
     Path(__file__).resolve().parents[1] / "config" / "smart_feature_whitelist.json"
 )
 
 
-def _load_smart_feature_whitelist(path: Path = _SMART_WHITELIST_PATH) -> tuple:
-    """从 JSON 加载白名单，构造与原内联等价的 4-tuple 序列（保序）。
+def _load_smart_feature_whitelists(path: Path = _SMART_WHITELIST_PATH) -> dict:
+    """从 JSON 加载三独立白名单表，返回 {feature: tuple[row, ...]}。
 
-    每条 JSON 记录取 engine / name_tokens / card_tokens / features 四键，其余键
-    （arch/source 等）为文档元信息、加载器忽略。文件缺失/解析失败 → 空 tuple
-    （miss 即不产，安全降级）并记 error。
+    每条记录保留整行元数据，并规整 engine/name_tokens/card_tokens 供匹配使用。
+    文件缺失/解析失败或某表为空 → 该表空 tuple（miss 即不产，安全降级）。
     """
     data = load_json_config(str(path))
-    rows = data.get("whitelist", []) if isinstance(data, dict) else []
-    whitelist = tuple(
-        (
-            row["engine"],
-            tuple(row["name_tokens"]),
-            tuple(row["card_tokens"]),
-            frozenset(row["features"]),
-        )
-        for row in rows
-    )
-    if not whitelist:
+    tables = {}
+    for feat in SMART_FEATURES:
+        rows = data.get(feat, []) if isinstance(data, dict) else []
+        normalized = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            normalized.append({
+                **row,
+                "engine": str(row.get("engine", "")),
+                "name_tokens": tuple(str(tok).lower() for tok in row.get("name_tokens", ())),
+                "card_tokens": tuple(str(tok).lower() for tok in row.get("card_tokens", ())),
+            })
+        tables[feat] = tuple(normalized)
+    if not any(tables.values()):
         logger.error(
-            "[SmartFeature] SMART_FEATURE_WHITELIST empty after load from %s "
+            "[SmartFeature] all whitelists empty after load from %s "
             "-> spec/sparse/offload will all miss.", path,
         )
-    return whitelist
+    return tables
 
 
-SMART_FEATURE_WHITELIST: tuple = _load_smart_feature_whitelist()
+_SMART_WHITELISTS: dict = _load_smart_feature_whitelists()
 
 
-def resolve_feature_whitelist(engine, model_name, model_path, card_token):
-    """返回 (engine, model, card) 命中的允许特性 frozenset；未命中返回空集。
-
-    无 forced（需求一 §0 裁定1：只开关不强制，白名单只收窄、永不强开）。
-    匹配维度：engine 精确 → 模型名/路径子串任一命中 → 卡型 "*" 或子串任一命中。
-    """
-    hay = " ".join(str(x).lower() for x in (model_name, model_path) if x)
-    ct = (card_token or "").lower()
-    for wl_engine, name_tokens, card_tokens, feats in SMART_FEATURE_WHITELIST:
-        if wl_engine != engine:
+def _whitelist_table_match(table, engine: str, hay: str, ct: str) -> Optional[dict]:
+    """三维（engine 精确 → 名子串 → 卡型 "*"/子串）与匹配，首命中返回行。"""
+    for row in table:
+        if row["engine"] != engine:
             continue
-        if not any(tok in hay for tok in name_tokens):
+        if not any(tok in hay for tok in row["name_tokens"]):
             continue
+        card_tokens = row["card_tokens"]
         if not (("*" in card_tokens) or any(c in ct for c in card_tokens)):
             continue
-        return feats
-    return frozenset()
+        return row
+    return None
+
+
+def _whitelist_table_hit(table, engine: str, hay: str, ct: str) -> bool:
+    return _whitelist_table_match(table, engine, hay, ct) is not None
 
 
 def feature_allowed(engine, model_name, model_path, card_token, feature) -> bool:
-    """白名单门控：该 (engine, model, card) 是否允许某特性（spec/sparse/offload）。"""
-    return feature in resolve_feature_whitelist(engine, model_name, model_path, card_token)
+    """白名单门控：该 (engine, model, card) 是否命中某特性独立表（spec/sparse/offload）。
+
+    无 forced（需求一 §0 裁定1：只开关不强制，白名单只收窄、永不强开）。
+    """
+    table = _SMART_WHITELISTS.get(feature)
+    if not table:
+        return False
+    hay = " ".join(str(x).lower() for x in (model_name, model_path) if x)
+    ct = (card_token or "").lower()
+    return _whitelist_table_hit(table, engine, hay, ct)
+
+
+def resolve_feature_whitelist(engine, model_name, model_path, card_token):
+    """返回 (engine, model, card) 命中的允许特性 frozenset（聚合三独立表，保持原返回契约）。"""
+    hay = " ".join(str(x).lower() for x in (model_name, model_path) if x)
+    ct = (card_token or "").lower()
+    return frozenset(
+        feat for feat in SMART_FEATURES
+        if _whitelist_table_hit(_SMART_WHITELISTS[feat], engine, hay, ct)
+    )
+
+
+def resolve_sparse_topk(engine, model_name, model_path, card_token, sparse_level, default: int = 4) -> int:
+    """返回 sparse 表当前匹配行在指定档位下的 index_topk_freq。
+
+    未命中 sparse 表、未声明 topk、或该档位缺失时回退 accuracy_first，再回退 default。
+    """
+    hay = " ".join(str(x).lower() for x in (model_name, model_path) if x)
+    ct = (card_token or "").lower()
+    row = _whitelist_table_match(_SMART_WHITELISTS.get("sparse", ()), engine, hay, ct)
+    topk = row.get("topk", {}) if row else {}
+    if not isinstance(topk, dict):
+        return int(default)
+    value = topk.get(sparse_level, topk.get("accuracy_first", default))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
 
 _GLM51_NAME_MARKERS = (
     "glm-5.1",

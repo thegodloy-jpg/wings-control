@@ -331,18 +331,18 @@ def get_sparse_env():
 
 
 # SmartKVSparse 精度/性能档位取值（需求一 §2.4）
-SPARSE_LEVEL_ACCURACY_FIRST = 'accuracy_first'      # 精度优先（本次落地）
-SPARSE_LEVEL_PERFORMANCE_FIRST = 'performance_first'  # 性能优先（暂未实现，调用方告警回落）
+SPARSE_LEVEL_ACCURACY_FIRST = 'accuracy_first'      # 精度优先
+SPARSE_LEVEL_PERFORMANCE_FIRST = 'performance_first'  # 性能优先
 
 
 def get_sparse_level_env():
     """读取 SmartKVSparse 请求档位（accuracy_first / performance_first）。需求一 §2.4。
 
     取值语义：
-        - ``accuracy_first``（精度优先）：本次落地档位；
-        - ``performance_first``（性能优先）：暂未实现，由调用方告警回落 accuracy_first。
+        - ``accuracy_first``（精度优先）：使用 sparse 表 accuracy topk；
+        - ``performance_first``（性能优先）：优先使用 sparse 表 performance topk，缺失则回退本行 accuracy topk。
     缺省（未下发）或非法取值一律回落 ``accuracy_first``。
-    本函数只返回「请求档位」（已小写规整），是否实现/回落由调用方决定。
+    本函数只返回「请求档位」（已小写规整），具体 topk 由 sparse 白名单表解析。
 
     Returns:
         str: ``accuracy_first`` 或 ``performance_first``

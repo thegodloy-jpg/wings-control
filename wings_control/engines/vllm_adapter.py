@@ -28,12 +28,12 @@ import yaml
 from utils.model_utils import (ModelIdentifier, ModelIdentifierDraft,
                                INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51,
                                is_glm51_ascend_kvsparse_tmp_scope, is_glm52_model,
-                               is_glm52_single_node_even, feature_allowed)
+                               is_glm52_single_node_even, feature_allowed, resolve_sparse_topk)
 from utils.device_utils import resolve_card_token
 
 from utils.env_utils import get_local_ip, get_lmcache_env, \
     get_pd_role_env, get_qat_env, get_cold_start_env, \
-    get_sparse_level_env, SPARSE_LEVEL_ACCURACY_FIRST, SPARSE_LEVEL_PERFORMANCE_FIRST
+    get_sparse_level_env
 from utils.shell_env_utils import dedupe_env_exports
 from utils.file_utils import safe_write_file, WriteOptions
 from utils.vllm_helpers import (
@@ -2987,25 +2987,20 @@ def should_append_auto_speculative_config(params: Dict[str, Any]) -> bool:
 
 
 def _resolve_sparse_level() -> str:
-    """解析 SmartKVSparse 有效精度/性能档位（需求一 §2.4）。
+    """解析 SmartKVSparse 有效精度/性能档位（需求一 §2.4）。"""
+    return get_sparse_level_env()
 
-    读取请求档位 ``SPARSE_LEVEL``：
-      - ``accuracy_first``（精度优先）：本次落地档位，原样生效；
-      - ``performance_first``（性能优先）：**暂未实现** → 告警并回落 accuracy_first。
-    因此当前有效档位恒为 ``accuracy_first``；待 performance_first 落地后，
-    在本函数放开分支即可，``_build_kv_sparse_cmd`` 据返回值切换稀疏策略。
 
-    Returns:
-        str: 有效档位（当前恒 ``accuracy_first``）。
-    """
-    requested = get_sparse_level_env()
-    if requested == SPARSE_LEVEL_PERFORMANCE_FIRST:
-        logger.warning(
-            "[KV Sparse] SPARSE_LEVEL=performance_first not implemented yet; "
-            "falling back to accuracy_first."
-        )
-        return SPARSE_LEVEL_ACCURACY_FIRST
-    return requested
+def _resolve_sparse_topk(params: Dict[str, Any], engine: str, sparse_level: str, default: int) -> int:
+    card_token = params.get("_smart_card_token") or resolve_card_token()
+    return resolve_sparse_topk(
+        engine,
+        params.get("model_name"),
+        params.get("model_path"),
+        card_token,
+        sparse_level,
+        default=default,
+    )
 
 
 def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
@@ -3031,8 +3026,7 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     if engine not in ("vllm", "vllm_ascend"):
         return ""
 
-    # 需求一 §2.4：稀疏精度/性能档位。performance_first 暂未实现，由 _resolve_sparse_level
-    # 告警回落 accuracy_first；本次各分支均为 accuracy_first 现状，档位仅作观测与回落锚点。
+    # 需求一 §2.4/P5：档位由 SPARSE_LEVEL 决定，topk 来自 sparse 独立白名单行。
     sparse_level = _resolve_sparse_level()
     logger.info("[KV Sparse] effective SPARSE_LEVEL=%s (engine=%s)", sparse_level, engine)
 
@@ -3057,7 +3051,8 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
                 "[GLM5.1-Ascend-Tmp] vllm_ascend + GLM-5.1 → "
                 "IndexCache via --hf-overrides (no patch install)"
             )
-            return " --hf-overrides '{\"index_topk_freq\": 8}'"
+            topk = _resolve_sparse_topk(params, engine, sparse_level, default=8)
+            return f" --hf-overrides '{{\"index_topk_freq\": {topk}}}'"
         logger.info(
             "[KV Sparse] engine=vllm_ascend arch=%s not GLM-5.1; "
             "KV sparse is no-op on ascend", arch,
@@ -3070,11 +3065,13 @@ def _build_kv_sparse_cmd(params: Dict[str, Any], engine: str) -> str:
     if _is_deepseek_v4_flash_params(params, model_info):
         logger.info("[KV Sparse] DeepSeek-V4-Flash (NV) → IndexCache use_index_cache "
                     "(--hf-overrides, no patch install)")
-        return " --hf-overrides '{\"use_index_cache\": true, \"index_topk_freq\": 4}'"
+        topk = _resolve_sparse_topk(params, engine, sparse_level, default=4)
+        return f" --hf-overrides '{{\"use_index_cache\": true, \"index_topk_freq\": {topk}}}'"
 
     if arch in INDEXCACHE_ARCHS:
         logger.info("[KV Sparse] Architecture %s → IndexCache strategy (--hf-overrides)", arch)
-        return " --hf-overrides '{\"index_topk_freq\": 4}'"
+        topk = _resolve_sparse_topk(params, engine, sparse_level, default=4)
+        return f" --hf-overrides '{{\"index_topk_freq\": {topk}}}'"
     else:
         logger.info("[KV Sparse] Architecture %s → FP8 KV CACHE strategy (kv_cache_dtype=fp8)", arch)
         engine_config = params.setdefault("engine_config", {})
@@ -3094,17 +3091,21 @@ def resolve_sparse_variant(params: Dict[str, Any], engine: str) -> str:
     model_info = ModelIdentifier(params.get("model_name"), params.get("model_path"),
                                  params.get("model_type"))
     arch = model_info.model_architecture
+    sparse_level = get_sparse_level_env()
     if engine == "vllm_ascend":
         if is_glm51_ascend_kvsparse_tmp_scope(
             model_info, engine,
             model_name=params.get("model_name"), model_path=params.get("model_path"),
         ):
-            return "indexcache_topk8"
+            topk = _resolve_sparse_topk(params, engine, sparse_level, default=8)
+            return f"indexcache_topk{topk}"
         return "noop"                    # Ascend 非 GLM-5.1
     if _is_deepseek_v4_flash_params(params, model_info):
-        return "indexcache_use_index_cache_topk4"
+        topk = _resolve_sparse_topk(params, engine, sparse_level, default=4)
+        return f"indexcache_use_index_cache_topk{topk}"
     if arch in INDEXCACHE_ARCHS:
-        return "indexcache_topk4"
+        topk = _resolve_sparse_topk(params, engine, sparse_level, default=4)
+        return f"indexcache_topk{topk}"
     return "fp8"
 
 
@@ -3364,3 +3365,4 @@ def start_engine(params: Dict[str, Any]):
         "start_engine 在 launcher 模式中已禁用。"
         "请使用 build_start_command() 并将结果写入共享卷。"
     )
+

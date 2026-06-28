@@ -120,8 +120,35 @@ def run_case(user_cli: dict, orchestration_env: dict | None, model_config: dict)
             if os.path.exists(af):
                 data = json.load(open(af, encoding="utf-8"))
                 feats, vars_ = data.get("features", {}), data.get("variants", {})
+            if not feats and not vars_:
+                block = advanced_features_block(plan.command)
+                if block:
+                    data = json.loads(block)
+                    feats, vars_ = data.get("features", {}), data.get("variants", {})
         except Exception:
             pass
+        if not any(feats.values()) and (
+            merged.get("enable_speculative_decode") or merged.get("enable_sparse")
+            or os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true"
+            or os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true"
+        ):
+            from engines.vllm_adapter import (
+                resolve_speculative_strategy, resolve_sparse_variant, resolve_offload_variant,
+            )
+            feats = {
+                "speculative_decode": bool(merged.get("enable_speculative_decode")),
+                "sparse_kv": bool(merged.get("enable_sparse")),
+                "kv_offload": os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true",
+                "rag_acc": os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true",
+            }
+            vars_ = {
+                "speculative_decode": (resolve_speculative_strategy(merged, str(merged.get("engine", ""))) or "none")
+                if feats["speculative_decode"] else None,
+                "sparse_kv": resolve_sparse_variant(merged, str(merged.get("engine", "")))
+                if feats["sparse_kv"] else None,
+                "kv_offload": resolve_offload_variant(merged, str(merged.get("engine", "")))
+                if feats["kv_offload"] else None,
+            }
         return CaseResult(command=plan.command, logs=handler.records,
                           merged=merged, engine=str(merged.get("engine", "")),
                           features=feats, variants=vars_)

@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "distributed", "hardware": "ascend", "nnodes": 2, "node_rank": 0, "distributed_backend": "dp_deployment", "tensor_parallel_size": 16, "model_name": "GLM-5.2-w8a8", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h2_h08_2", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "distributed", "hardware": "ascend", "nnodes": 2, "node_rank": 0, "distributed_backend": "dp_deployment", "tensor_parallel_size": 16, "model_name": "GLM-5.2-w8a8", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6xnk2noh", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -55,8 +55,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -163,7 +162,7 @@ if [ -f "/accel-volume/install.py" ]; then
     set -e
     if [ $SPEC_RC -ne 0 ]; then
         echo "[wings-accel] WARNING: Speculative decoding runtime deps install failed (exit=$SPEC_RC), skipping. Service will continue without patches."
-        python3 -c "import json, os; p='/shared-volume\advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
+        python3 -c "import json, os; p='/shared-volume/advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
     else
         echo '[wings-accel] Speculative decoding runtime deps installed successfully.'
     fi
@@ -269,8 +268,8 @@ export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_FLASHCOMM1=${VLLM_ASCEND_ENABLE_FLASHCOMM1:-}"
 export VLLM_ENGINE_READY_TIMEOUT_S=7200
 echo "[wings-env] export VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-}"
-echo '[wings-cmd] >>> exec vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h2_h08_2 --trust-remote-code --max-model-len 133120 --quantization ascend --seed 1024 --max-num-seqs 30 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-expert-parallel --async-scheduling --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-w8a8 --dtype auto --kv-cache-dtype auto --block-size 16 --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 16 --enable-prefix-caching --speculative-config '"'"'{"method": "deepseek_mtp", "num_speculative_...<truncated>'
-vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h2_h08_2 --trust-remote-code --max-model-len 133120 --quantization ascend --seed 1024 --max-num-seqs 30 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-expert-parallel --async-scheduling --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-w8a8 --dtype auto --kv-cache-dtype auto --block-size 16 --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 16 --enable-prefix-caching --speculative-config '{"method": "deepseek_mtp", "num_speculative_tokens": 3}' --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 &
+echo '[wings-cmd] >>> exec vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6xnk2noh --trust-remote-code --max-model-len 133120 --quantization ascend --seed 1024 --max-num-seqs 30 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-expert-parallel --async-scheduling --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-w8a8 --dtype auto --kv-cache-dtype auto --block-size 16 --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 16 --enable-prefix-caching --speculative-config '"'"'{"method": "deepseek_mtp", "num_speculative_...<truncated>'
+vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6xnk2noh --trust-remote-code --max-model-len 133120 --quantization ascend --seed 1024 --max-num-seqs 30 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-expert-parallel --async-scheduling --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-w8a8 --dtype auto --kv-cache-dtype auto --block-size 16 --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 16 --enable-prefix-caching --speculative-config '{"method": "deepseek_mtp", "num_speculative_tokens": 3}' --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features enabled)"
 
@@ -295,7 +294,7 @@ else
   echo "[AdvFeature] └── Fallback command about to execute..."
   echo "[Engine] Falling back to basic mode (disabled: speculative_decode)..."
   # 更新 advanced_features.json：引擎级特性全部置 false，RAG 保持不变
-  cat > "/shared-volume\advanced_features.json" <<'FEATURES_EOF'
+  cat > "/shared-volume/advanced_features.json" <<'FEATURES_EOF'
 {
     "engine": "vllm_ascend",
     "features": {
@@ -424,8 +423,8 @@ export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_FLASHCOMM1=${VLLM_ASCEND_ENABLE_FLASHCOMM1:-}"
 export VLLM_ENGINE_READY_TIMEOUT_S=7200
 echo "[wings-env] export VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-}"
-echo '[wings-cmd] >>> exec vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h2_h08_2 --trust-remote-code --max-model-len 133120 --quantization ascend --seed 1024 --max-num-seqs 30 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-expert-parallel --async-scheduling --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-w8a8 --dtype auto --kv-cache-dtype auto --block-size 16 --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 16 --enable-prefix-caching --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 133...<truncated>'
-vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h2_h08_2 --trust-remote-code --max-model-len 133120 --quantization ascend --seed 1024 --max-num-seqs 30 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-expert-parallel --async-scheduling --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-w8a8 --dtype auto --kv-cache-dtype auto --block-size 16 --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 16 --enable-prefix-caching --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 &
+echo '[wings-cmd] >>> exec vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6xnk2noh --trust-remote-code --max-model-len 133120 --quantization ascend --seed 1024 --max-num-seqs 30 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-expert-parallel --async-scheduling --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-w8a8 --dtype auto --kv-cache-dtype auto --block-size 16 --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 16 --enable-prefix-caching --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 133...<truncated>'
+vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6xnk2noh --trust-remote-code --max-model-len 133120 --quantization ascend --seed 1024 --max-num-seqs 30 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-expert-parallel --async-scheduling --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 192.168.1.100 --port 17000 --served-model-name GLM-5.2-w8a8 --dtype auto --kv-cache-dtype auto --block-size 16 --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 16 --enable-prefix-caching --data-parallel-address 192.168.1.100 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features disabled: speculative_decode, fallback mode)"
   echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."

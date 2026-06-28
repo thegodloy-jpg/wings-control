@@ -59,8 +59,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -199,39 +198,9 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -258,18 +227,10 @@ export HCCL_BUFFSIZE=512
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export TRITON_ALL_BLOCKS_PARALLEL=1
 echo "[wings-env] export TRITON_ALL_BLOCKS_PARALLEL=${TRITON_ALL_BLOCKS_PARALLEL:-}"
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
-echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 1 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}'"'"' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Fl...<truncated>'
-vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 1 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache-dtype auto --seed 0 &
+echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 1 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}'"'"' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache...<truncated>'
+vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 1 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache-dtype auto --seed 0 --default-chat-template-kwargs '{"thinking":false}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -346,39 +307,9 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -405,18 +336,10 @@ export HCCL_BUFFSIZE=512
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export TRITON_ALL_BLOCKS_PARALLEL=1
 echo "[wings-env] export TRITON_ALL_BLOCKS_PARALLEL=${TRITON_ALL_BLOCKS_PARALLEL:-}"
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
-echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 1 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}'"'"' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Fl...<truncated>'
-vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 1 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache-dtype auto --seed 0 &
+echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 1 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}'"'"' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache...<truncated>'
+vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 1 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache-dtype auto --seed 0 --default-chat-template-kwargs '{"thinking":false}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
@@ -510,8 +433,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -650,39 +572,9 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -709,18 +601,10 @@ export HCCL_BUFFSIZE=512
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export TRITON_ALL_BLOCKS_PARALLEL=1
 echo "[wings-env] export TRITON_ALL_BLOCKS_PARALLEL=${TRITON_ALL_BLOCKS_PARALLEL:-}"
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
-echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 2 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}'"'"' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Fl...<truncated>'
-vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 2 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache-dtype auto --seed 0 &
+echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 2 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}'"'"' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache...<truncated>'
+vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 2 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache-dtype auto --seed 0 --default-chat-template-kwargs '{"thinking":false}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -797,39 +681,9 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -856,18 +710,10 @@ export HCCL_BUFFSIZE=512
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export TRITON_ALL_BLOCKS_PARALLEL=1
 echo "[wings-env] export TRITON_ALL_BLOCKS_PARALLEL=${TRITON_ALL_BLOCKS_PARALLEL:-}"
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
-echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 2 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}'"'"' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Fl...<truncated>'
-vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 2 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --reasoning-parser deepseek_v4 --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache-dtype auto --seed 0 &
+echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 2 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}'"'"' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache...<truncated>'
+vllm serve /usr/local/serving/models/DeepSeek-V4-Flash-w8a8-mtp --trust-remote-code --max-model-len 65536 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 8 --data-parallel-size 2 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 10.0.0.1 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype bfloat16 --kv-cache-dtype auto --seed 0 --default-chat-template-kwargs '{"thinking":false}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
@@ -902,5 +748,5 @@ fi
 
 
 ========================================================================================
- Output written to: D:\project\inference\wings\wings-control\tests\dryrun_v4flash_a2_a3_output.txt
+ Output written to: D:\project\inference\wings-control\wings-control-0730\wings-control\tests\dryrun_v4flash_a2_a3_output.txt
 ========================================================================================

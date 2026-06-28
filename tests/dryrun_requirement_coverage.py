@@ -324,13 +324,13 @@ def run_all():
     t.out("日志 effective SPARSE_LEVEL", "accuracy_first", "accuracy_first" if logh(r_acc, "effective SPARSE_LEVEL=accuracy_first") else "其它", logh(r_acc, "effective SPARSE_LEVEL=accuracy_first"))
     t.out("日志 performance_first 告警", "不出现", "出现" if logh(r_acc, "performance_first not impl") else "不出现", not logh(r_acc, "performance_first not impl"))
     t.done()
-    # 层3 performance_first → 告警回落，命令不变
-    t = TC("TC-P6-05", "P6", "层3 档位：SPARSE_LEVEL=performance_first → 告警回落 accuracy_first，命令与缺省一致",
+    # 层3 performance_first：档位生效；若当前 sparse 行未声明 performance topk，则回退该行 accuracy topk
+    t = TC("TC-P6-05", "P6", "层3 档位：SPARSE_LEVEL=performance_first → 档位生效，GLM-5.1·NV topk 回退本行 accuracy",
            NV, {**ON, "SPARSE_LEVEL": "performance_first"}, MC)
     r = t.r
-    t.out("日志 performance_first not implemented", "出现（WARNING）", "出现" if logh(r, "performance_first not impl") else "缺失", logh(r, "performance_first not impl"))
-    t.out("有效档位日志", "accuracy_first（回落）", "accuracy_first" if logh(r, "effective SPARSE_LEVEL=accuracy_first") else "其它", logh(r, "effective SPARSE_LEVEL=accuracy_first"))
-    t.out("start_command 与缺省(TC-P6-04)归一化", "一致", "一致" if norm(r.command) == norm(r_acc.command) else "不一致", norm(r.command) == norm(r_acc.command))
+    t.out("日志 performance_first not implemented", "不出现（已实现）", "出现" if logh(r, "performance_first not impl") else "不出现", not logh(r, "performance_first not impl"))
+    t.out("有效档位日志", "performance_first", "performance_first" if logh(r, "effective SPARSE_LEVEL=performance_first") else "其它", logh(r, "effective SPARSE_LEVEL=performance_first"))
+    t.out("start_command 与缺省(TC-P6-04)归一化", "一致（本行无 performance topk，回退 accuracy=4）", "一致" if norm(r.command) == norm(r_acc.command) else "不一致", norm(r.command) == norm(r_acc.command))
     t.done()
     # 层3 非法值 → 回落，无告警
     t = TC("TC-P6-06", "P6", "层3 档位：SPARSE_LEVEL=turbo（非法）→ 回落 accuracy_first，不触发 performance 告警",
@@ -338,6 +338,24 @@ def run_all():
     r = t.r
     t.out("有效档位日志", "accuracy_first", "accuracy_first" if logh(r, "effective SPARSE_LEVEL=accuracy_first") else "其它", logh(r, "effective SPARSE_LEVEL=accuracy_first"))
     t.out("日志 performance_first 告警", "不出现（非法值非 performance_first）", "出现" if logh(r, "performance_first not impl") else "不出现", not logh(r, "performance_first not impl"))
+    t.done()
+
+
+    # ════════ P5 · sparse 表 per-row topk + performance_first 产出路径 ════════
+    emit("\n############ P5 · sparse 表档位 topk：performance_first 产出路径 ############")
+    V4 = {"model-name": "DeepSeek-V4-Flash", "engine": "vllm", "device-count": 8}
+    V4_MC = {"architecture": "DeepseekV4ForCausalLM"}
+    t = TC("TC-P5-01", "P5", "V4-Flash·NV sparse accuracy_first → topk4", V4, ON, V4_MC)
+    r_v4_acc = t.r
+    t.out("variants.sparse_kv", "indexcache_use_index_cache_topk4", v_sparse(r_v4_acc), v_sparse(r_v4_acc) == "indexcache_use_index_cache_topk4")
+    t.out("命令 index_topk_freq:4", "出现", "出现" if has(r_v4_acc, '"index_topk_freq": 4') else "缺失", has(r_v4_acc, '"index_topk_freq": 4'))
+    t.done()
+    t = TC("TC-P5-02", "P5", "V4-Flash·NV sparse performance_first → topk8", V4, {**ON, "SPARSE_LEVEL": "performance_first"}, V4_MC)
+    r_v4_perf = t.r
+    t.out("variants.sparse_kv", "indexcache_use_index_cache_topk8", v_sparse(r_v4_perf), v_sparse(r_v4_perf) == "indexcache_use_index_cache_topk8")
+    t.out("有效档位日志", "performance_first", "performance_first" if logh(r_v4_perf, "effective SPARSE_LEVEL=performance_first") else "其它", logh(r_v4_perf, "effective SPARSE_LEVEL=performance_first"))
+    t.out("命令 index_topk_freq:8", "出现", "出现" if has(r_v4_perf, '"index_topk_freq": 8') else "缺失", has(r_v4_perf, '"index_topk_freq": 8'))
+    t.out("与 accuracy 命令归一化", "不一致（topk 4→8）", "不一致" if norm(r_v4_perf.command) != norm(r_v4_acc.command) else "一致", norm(r_v4_perf.command) != norm(r_v4_acc.command))
     t.done()
 
     # ════════ P7 · 硬件信息 / ENGINE-VERSION 卡型解析 ════════

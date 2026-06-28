@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "sglang", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "Qwen3.6-27B", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_27t67h34", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "sglang", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "Qwen3.6-27B", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_5jq_5jts", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -55,8 +55,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -112,8 +111,8 @@ echo "[wings-env] export PYTHONPATH=${PYTHONPATH:-}"
 echo "[wings] Injected faulthandler.enable() OOM patch for SGLang"
 # --- end faulthandler patch ---
 ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --trust-remote-code --context-length 5120 --tool-call-parser qwen --host 192.168.1.100 --port 17000 --served-model-name Qwen3.6-27B --model-path D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_27t67h34 --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --tp-size 8'
-python3 -m sglang.launch_server --trust-remote-code --context-length 5120 --tool-call-parser qwen --host 192.168.1.100 --port 17000 --served-model-name Qwen3.6-27B --model-path D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_27t67h34 --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --tp-size 8 &
+echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --trust-remote-code --context-length 5120 --tool-call-parser qwen --host 192.168.1.100 --port 17000 --served-model-name Qwen3.6-27B --model-path D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_5jq_5jts --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --tp-size 8'
+python3 -m sglang.launch_server --trust-remote-code --context-length 5120 --tool-call-parser qwen --host 192.168.1.100 --port 17000 --served-model-name Qwen3.6-27B --model-path D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_5jq_5jts --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --tp-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -150,8 +149,8 @@ else
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --trust-remote-code --context-length 5120 --tool-call-parser qwen --host 192.168.1.100 --port 17000 --served-model-name Qwen3.6-27B --model-path D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_27t67h34 --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --tp-size 8'
-python3 -m sglang.launch_server --trust-remote-code --context-length 5120 --tool-call-parser qwen --host 192.168.1.100 --port 17000 --served-model-name Qwen3.6-27B --model-path D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_27t67h34 --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --tp-size 8 &
+echo '[wings-cmd] >>> exec python3 -m sglang.launch_server --trust-remote-code --context-length 5120 --tool-call-parser qwen --host 192.168.1.100 --port 17000 --served-model-name Qwen3.6-27B --model-path D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_5jq_5jts --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --tp-size 8'
+python3 -m sglang.launch_server --trust-remote-code --context-length 5120 --tool-call-parser qwen --host 192.168.1.100 --port 17000 --served-model-name Qwen3.6-27B --model-path D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_5jq_5jts --dtype auto --kv-cache-dtype auto --mem-fraction-static 0.9 --chunked-prefill-size 4096 --max-running-requests 32 --random-seed 0 --disable-chunked-prefix-cache --tp-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

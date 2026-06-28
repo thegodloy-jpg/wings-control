@@ -300,19 +300,19 @@
         期望 = 不出现
         实际 = 不出现    [PASS]
 
-[TC-P6-05] P6 · 层3 档位：SPARSE_LEVEL=performance_first → 告警回落 accuracy_first，命令与缺省一致  ==> PASS
+[TC-P6-05] P6 · 层3 档位：SPARSE_LEVEL=performance_first → 档位生效，GLM-5.1·NV topk 回退本行 accuracy  ==> PASS
   入参 user_cli          : {'model-name': 'glm-5.1', 'engine': 'vllm', 'device-count': 8}
   入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'SPARSE_LEVEL': 'performance_first'}
   入参 model_config      : {'architecture': 'GlmMoeDsaForCausalLM'}
   下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'SPARSE_LEVEL': 'performance_first'})  user_cli含特性CLI标志=False
   出参 日志 performance_first not implemented
-        期望 = 出现（WARNING）
-        实际 = 出现    [PASS]
+        期望 = 不出现（已实现）
+        实际 = 不出现    [PASS]
   出参 有效档位日志
-        期望 = accuracy_first（回落）
-        实际 = accuracy_first    [PASS]
+        期望 = performance_first
+        实际 = performance_first    [PASS]
   出参 start_command 与缺省(TC-P6-04)归一化
-        期望 = 一致
+        期望 = 一致（本行无 performance topk，回退 accuracy=4）
         实际 = 一致    [PASS]
 
 [TC-P6-06] P6 · 层3 档位：SPARSE_LEVEL=turbo（非法）→ 回落 accuracy_first，不触发 performance 告警  ==> PASS
@@ -326,6 +326,38 @@
   出参 日志 performance_first 告警
         期望 = 不出现（非法值非 performance_first）
         实际 = 不出现    [PASS]
+
+############ P5 · sparse 表档位 topk：performance_first 产出路径 ############
+
+[TC-P5-01] P5 · V4-Flash·NV sparse accuracy_first → topk4  ==> PASS
+  入参 user_cli          : {'model-name': 'DeepSeek-V4-Flash', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true'}
+  入参 model_config      : {'architecture': 'DeepseekV4ForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true'})  user_cli含特性CLI标志=False
+  出参 variants.sparse_kv
+        期望 = indexcache_use_index_cache_topk4
+        实际 = indexcache_use_index_cache_topk4    [PASS]
+  出参 命令 index_topk_freq:4
+        期望 = 出现
+        实际 = 出现    [PASS]
+
+[TC-P5-02] P5 · V4-Flash·NV sparse performance_first → topk8  ==> PASS
+  入参 user_cli          : {'model-name': 'DeepSeek-V4-Flash', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'SPARSE_LEVEL': 'performance_first'}
+  入参 model_config      : {'architecture': 'DeepseekV4ForCausalLM'}
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'SPARSE_LEVEL': 'performance_first'})  user_cli含特性CLI标志=False
+  出参 variants.sparse_kv
+        期望 = indexcache_use_index_cache_topk8
+        实际 = indexcache_use_index_cache_topk8    [PASS]
+  出参 有效档位日志
+        期望 = performance_first
+        实际 = performance_first    [PASS]
+  出参 命令 index_topk_freq:8
+        期望 = 出现
+        实际 = 出现    [PASS]
+  出参 与 accuracy 命令归一化
+        期望 = 不一致（topk 4→8）
+        实际 = 不一致    [PASS]
 
 ############ P7 · 卡型解析（保留老逻辑 + 依赖 ENGINE-VERSION）############
 
@@ -377,6 +409,6 @@
         实际 = 出现    [PASS]
 
 ================================================================================================
- 用例：29 个（29 PASS / 0 FAIL）  ·  断言：60 PASS / 0 FAIL
+ 用例：31 个（31 PASS / 0 FAIL）  ·  断言：66 PASS / 0 FAIL
  输出：D:\project\inference\wings-control\wings-control-0730\wings-control\tests\dryrun_requirement_coverage_output.txt
 ================================================================================================

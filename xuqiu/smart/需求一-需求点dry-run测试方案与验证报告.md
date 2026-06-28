@@ -58,7 +58,7 @@
 ```
 SmartKVSparse 产出 ⇔  层1 开关 ENABLE_SPARSE=true（env，非 CLI）
                   AND 层2 (engine,model,卡) ∈ sparse 白名单
-                  AND 层3 档位 SPARSE_LEVEL（performance_first 暂回落 accuracy_first）
+                  AND 层3 档位 SPARSE_LEVEL（performance_first 已接入 sparse 表 per-row topk；缺失则回退本行 accuracy）
 ```
 
 | 层 | 用例 | 入参要点（三特性=env） | 出参（实际） |
@@ -68,7 +68,7 @@ SmartKVSparse 产出 ⇔  层1 开关 ENABLE_SPARSE=true（env，非 CLI）
 | **层1 优先层3** | TC-P6-02 | 不设 `ENABLE_SPARSE` + `SPARSE_LEVEL=performance_first` | `sparse_kv=False`；**无** performance_first 告警 → 开关 OFF 直接门控档位 |
 | **层2 白名单** | TC-P6-03 | `ENABLE_SPARSE=true` + glm-4.7·Ascend（白名单无 sparse） | `sparse_kv=False`；日志 `sparse requested but not in whitelist → suppressed` |
 | **层3 档位·缺省** | TC-P6-04 | `ENABLE_SPARSE=true` + glm-5.1·NV，无 SPARSE_LEVEL | `variants=indexcache_topk4`；日志 `effective SPARSE_LEVEL=accuracy_first` |
-| **层3 档位·perf** | TC-P6-05 | + `SPARSE_LEVEL=performance_first` | 告警 `performance_first not implemented`；回落 accuracy_first；**命令与缺省字节一致** |
+| **层3 档位·perf** | TC-P6-05 | + `SPARSE_LEVEL=performance_first` | 档位日志为 `performance_first`；GLM-5.1·NV 未声明 performance topk，回退本行 accuracy；**命令与缺省字节一致** |
 | **层3 档位·非法** | TC-P6-06 | + `SPARSE_LEVEL=turbo` | 回落 accuracy_first；不触发 performance 告警 |
 
 > 结论：稀疏开关（env ON/OFF）、开关对档位的门控优先级、开关×白名单×档位三层正交，**全部验证通过**。
@@ -144,7 +144,7 @@ SmartKVSparse 产出 ⇔  层1 开关 ENABLE_SPARSE=true（env，非 CLI）
 
 ### P6 · 稀疏三层门控（详见 §二）
 
-TC-P6-01 ~ TC-P6-06，6 例全 PASS。覆盖开关 env ON/OFF、开关门控档位、白名单抑制、accuracy_first 缺省、performance_first 告警回落（命令不变）、非法值回落。
+TC-P6-01 ~ TC-P6-06，6 例全 PASS。覆盖开关 env ON/OFF、开关门控档位、白名单抑制、accuracy_first 缺省、performance_first 生效 + 未声明 performance topk 时回退本行 accuracy、非法值回落。
 
 ### P7 · 硬件信息 / ENGINE-VERSION 卡型解析
 
@@ -208,3 +208,4 @@ python tests/dryrun_requirement_coverage.py     # 29 PASS / 0 FAIL
 ```
 
 > 驱动器 [_dryrun_req_harness.py](../../tests/_dryrun_req_harness.py) 复用 `dry_run.py` 三段式管线，额外：① 复刻 wings_start.sh 的 `ENABLE_*` env→APP_ARGS 传播（三特性 env 下发）；② 清需求点专用 env 防串味；③ 捕获生产日志；④ 读 advanced_features.json 真实 features+variants。
+

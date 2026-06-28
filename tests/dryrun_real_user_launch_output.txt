@@ -59,8 +59,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -199,39 +198,7 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export TASK_QUEUE_ENABLE=1
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -240,18 +207,20 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export HCCL_BUFFSIZE=512
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /usr/local/serving/models/Qwen3-32B-Instruct --dtype bfloat16 --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 128 --max-num-seqs 64 --seed 0 --enable-prefix-caching --enable-auto-tool-choice --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /usr/local/serving/models/Qwen3-32B-Instruct --dtype bfloat16 --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 128 --max-num-seqs 64 --seed 0 --enable-prefix-caching --enable-auto-tool-choice --tensor-parallel-size 8 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /usr/local/serving/models/Qwen3-32B-Instruct --dtype bfloat16 --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 128 --max-num-seqs 64 --seed 0 --enable-prefix-caching --enable-auto-tool-choice --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /usr/local/serving/models/Qwen3-32B-Instruct --dtype bfloat16 --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 128 --max-num-seqs 64 --seed 0 --enable-prefix-caching --enable-auto-tool-choice --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -328,39 +297,7 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export TASK_QUEUE_ENABLE=1
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -369,18 +306,20 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export HCCL_BUFFSIZE=512
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /usr/local/serving/models/Qwen3-32B-Instruct --dtype bfloat16 --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 128 --max-num-seqs 64 --seed 0 --enable-prefix-caching --enable-auto-tool-choice --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --reasoning-parser qwen3 --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /usr/local/serving/models/Qwen3-32B-Instruct --dtype bfloat16 --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 128 --max-num-seqs 64 --seed 0 --enable-prefix-caching --enable-auto-tool-choice --tensor-parallel-size 8 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /usr/local/serving/models/Qwen3-32B-Instruct --dtype bfloat16 --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 128 --max-num-seqs 64 --seed 0 --enable-prefix-caching --enable-auto-tool-choice --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --tool-call-parser hermes --host 10.0.0.1 --port 17000 --served-model-name Qwen3-32B-Instruct --model /usr/local/serving/models/Qwen3-32B-Instruct --dtype bfloat16 --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 128 --max-num-seqs 64 --seed 0 --enable-prefix-caching --enable-auto-tool-choice --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
@@ -436,7 +375,7 @@ fi
   enable_prefix_caching               = True
   hardware.device                     = 'ascend'
   hardware.count                      = 8
-  command_bytes                       = 20497
+  command_bytes                       = 17778
 
 [CASE-A  Qwen3 single-node] invariant check: PASS
 
@@ -500,8 +439,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -640,39 +578,9 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -681,16 +589,18 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
+export HCCL_OP_EXPANSION_MODE=AIV
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export HCCL_BUFFSIZE=1024
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
 export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
 echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
 export HCCL_WHITELIST_DISABLE=1
@@ -709,15 +619,21 @@ export HCCL_EXEC_TIMEOUT=7200
 echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
 export OMP_PROC_BIND=false
 echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=100
+export OMP_NUM_THREADS=1
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export HCCL_BUFFSIZE=1024
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --async-scheduling --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 10.254.124.178 --port 17000 --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1'
-vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --async-scheduling --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 10.254.124.178 --port 17000 --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 &
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
+export VLLM_ENGINE_READY_TIMEOUT_S=7200
+echo "[wings-env] export VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-}"
+echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 10.254.124.178 --port 17000 --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8 --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-lo...<truncated>'
+vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 10.254.124.178 --port 17000 --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -794,39 +710,9 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -835,16 +721,18 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
+export HCCL_OP_EXPANSION_MODE=AIV
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export HCCL_BUFFSIZE=1024
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
 export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
 echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
 export HCCL_WHITELIST_DISABLE=1
@@ -863,15 +751,21 @@ export HCCL_EXEC_TIMEOUT=7200
 echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
 export OMP_PROC_BIND=false
 echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=100
+export OMP_NUM_THREADS=1
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export HCCL_BUFFSIZE=1024
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --async-scheduling --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 10.254.124.178 --port 17000 --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1'
-vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --async-scheduling --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 10.254.124.178 --port 17000 --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 &
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
+export VLLM_ENGINE_READY_TIMEOUT_S=7200
+echo "[wings-env] export VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-}"
+echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --host 10.254.124.178 --port 17000 --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8 --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-lo...<truncated>'
+vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --host 10.254.124.178 --port 17000 --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
@@ -927,7 +821,7 @@ fi
   enable_prefix_caching               = True
   hardware.device                     = 'ascend'
   hardware.count                      = 8
-  command_bytes                       = 24284
+  command_bytes                       = 22659
 
 [CASE-B  rank0] invariant check: PASS
 
@@ -1081,39 +975,9 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -1122,16 +986,18 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
+export HCCL_OP_EXPANSION_MODE=AIV
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export HCCL_BUFFSIZE=1024
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
 export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
 echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
 export HCCL_WHITELIST_DISABLE=1
@@ -1150,15 +1016,21 @@ export HCCL_EXEC_TIMEOUT=7200
 echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
 export OMP_PROC_BIND=false
 echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=100
+export OMP_NUM_THREADS=1
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export HCCL_BUFFSIZE=1024
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --async-scheduling --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-start-rank 1'
-vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --async-scheduling --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-start-rank 1 &
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
+export VLLM_ENGINE_READY_TIMEOUT_S=7200
+echo "[wings-env] export VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-}"
+echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8 --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-st...<truncated>'
+vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-start-rank 1 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -1235,39 +1107,9 @@ else
     exit 1
 fi
 
-# jemalloc 预加载: 防止 Mooncake Transfer Engine 并发堆损坏
-# ref: kvcache-ai/Mooncake#1369, kvcache-ai/Mooncake#1338
-if [ -f /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 ]; then
-    export LD_PRELOAD="/usr/lib/aarch64-linux-gnu/libjemalloc.so.2${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[wings-env] export LD_PRELOAD=${LD_PRELOAD:-}"
-    echo "INFO: jemalloc preloaded from /usr/lib/aarch64-linux-gnu/libjemalloc.so.2"
-fi
-
-# 通用性能调优：默认开启；可通过 WINGS_ASCEND_PERF_TUNING=false/0/no 关闭。
-# 在受限容器或只读 sysfs/procfs 中可能失败，失败不阻断引擎启动。
-case "${WINGS_ASCEND_PERF_TUNING:-true}" in
-    false|False|FALSE|0|no|No|NO)
-        echo "INFO: WINGS_ASCEND_PERF_TUNING=${WINGS_ASCEND_PERF_TUNING}; skip Ascend performance tuning"
-        ;;
-    *)
-        echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor || true
-        sysctl -w vm.swappiness=0 || true
-        sysctl -w kernel.numa_balancing=0 || true
-        sysctl -w kernel.sched_migration_cost_ns=50000 || true
-        ;;
-esac
-
 # 昇腾通用环境变量
-export HCCL_BUFFSIZE=1024
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=1
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export TASK_QUEUE_ENABLE=1
 echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -1276,16 +1118,18 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-export OMP_PROC_BIND=${OMP_PROC_BIND:-false}
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1024}
-echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-1}
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
+export HCCL_OP_EXPANSION_MODE=AIV
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export OMP_NUM_THREADS=1
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export HCCL_BUFFSIZE=1024
+echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
 export VLLM_HOST_IP=${POD_IP:-${RANK_IP:-$(python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('8.8.8.8',80));print(s.getsockname()[0]);s.close()" 2>/dev/null || hostname -i)}}
 echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
 export HCCL_WHITELIST_DISABLE=1
@@ -1304,15 +1148,21 @@ export HCCL_EXEC_TIMEOUT=7200
 echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
 export OMP_PROC_BIND=false
 echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=100
+export OMP_NUM_THREADS=1
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export HCCL_BUFFSIZE=1024
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 echo "[wings-env] final HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --async-scheduling --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-start-rank 1'
-vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --async-scheduling --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-start-rank 1 &
+export HCCL_OP_EXPANSION_MODE=AIV
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+export VLLM_ASCEND_BALANCE_SCHEDULING=1
+echo "[wings-env] export VLLM_ASCEND_BALANCE_SCHEDULING=${VLLM_ASCEND_BALANCE_SCHEDULING:-}"
+export VLLM_ENGINE_READY_TIMEOUT_S=7200
+echo "[wings-env] export VLLM_ENGINE_READY_TIMEOUT_S=${VLLM_ENGINE_READY_TIMEOUT_S:-}"
+echo '[wings-cmd] >>> exec vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '"'"'{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}'"'"' --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --default-chat-template-kwargs '"'"'{"enable_thinking":false}'"'"' --tensor-parallel-size 8 --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-st...<truncated>'
+vllm serve /usr/local/serving/models/GLM-5.1 --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 2 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --additional-config '{"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"ascend_compilation_config":{"enable_npugraph_ex":true}}' --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --served-model-name GLM-5.1 --dtype bfloat16 --kv-cache-dtype auto --enable-chunked-prefill --block-size 128 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --tensor-parallel-size 8 --enable-prefix-caching --data-parallel-address 10.254.124.178 --data-parallel-rpc-port 13355 --data-parallel-size 2 --data-parallel-size-local 1 --headless --data-parallel-start-rank 1 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
@@ -1366,11 +1216,11 @@ fi
   enable_prefix_caching               = True
   hardware.device                     = 'ascend'
   hardware.count                      = 8
-  command_bytes                       = 22129
+  command_bytes                       = 20551
 
 [CASE-B  rank1] invariant check: PASS
 
 ========================================================================================
  Overall result: ALL PASS
- Output written to: D:\project\inference\wings\wings-control\tests\dryrun_real_user_launch_output.txt
+ Output written to: D:\project\inference\wings-control\wings-control-0730\wings-control\tests\dryrun_real_user_launch_output.txt
 ========================================================================================

@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "MiniMax-M3-MXFP8", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6ehu3lns", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "MiniMax-M3-MXFP8", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_pr5gz6qk", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -55,8 +55,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -96,8 +95,8 @@ export PYTHONUNBUFFERED=1
 echo "[wings-env] export PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-}"
 exec > >(tee -a /var/log/wings/engine-full.log | grep --line-buffered -vE '"GET\s+/(health|metrics)\s|\b(Prefill|Decode) batch\b' | tee -a /var/log/wings/engine.log) 2>&1
 ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --block-size 128 --enforce-eager --host 192.168.1.100 --port 17000 --served-model-name MiniMax-M3-MXFP8 --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6ehu3lns --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --block-size 128 --enforce-eager --host 192.168.1.100 --port 17000 --served-model-name MiniMax-M3-MXFP8 --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6ehu3lns --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --block-size 128 --enforce-eager --host 192.168.1.100 --port 17000 --served-model-name MiniMax-M3-MXFP8 --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_pr5gz6qk --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --block-size 128 --enforce-eager --host 192.168.1.100 --port 17000 --served-model-name MiniMax-M3-MXFP8 --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_pr5gz6qk --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -134,8 +133,8 @@ else
   echo "[Engine] Waiting 5s for port release before retry..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --block-size 128 --enforce-eager --host 192.168.1.100 --port 17000 --served-model-name MiniMax-M3-MXFP8 --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6ehu3lns --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8'
-python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --block-size 128 --enforce-eager --host 192.168.1.100 --port 17000 --served-model-name MiniMax-M3-MXFP8 --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_6ehu3lns --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --block-size 128 --enforce-eager --host 192.168.1.100 --port 17000 --served-model-name MiniMax-M3-MXFP8 --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_pr5gz6qk --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --max-model-len 4096 --block-size 128 --enforce-eager --host 192.168.1.100 --port 17000 --served-model-name MiniMax-M3-MXFP8 --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_pr5gz6qk --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

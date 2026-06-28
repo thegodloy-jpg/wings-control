@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm", "deployment_mode": "single", "hardware": "nvidia", "nnodes": 1, "node_rank": 0, "distributed_backend": "mp", "tensor_parallel_size": 8, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_qi68whaq", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -55,8 +55,7 @@ find /shared-volume/log_analyzer -name '__pycache__' -type d -exec rm -rf {} + 2
 cd /shared-volume && python3 -B -m log_analyzer.log_analyzer \
     --config "$ANALYZER_CONFIG" \
     --log-file /var/log/wings/engine.log \
-    --progress-file /shared-volume/progress.jsonl \
-    --accel-file /shared-volume/advanced_features.json &
+    --progress-file /shared-volume/progress.jsonl &
 LOG_ANALYZER_PID=$!
 echo "[log_analyzer] 分析器PID: $LOG_ANALYZER_PID"
 
@@ -104,7 +103,7 @@ if [ -f "/accel-volume/install.py" ]; then
     set -e
     if [ $SPEC_RC -ne 0 ]; then
         echo "[wings-accel] WARNING: Speculative decoding runtime deps install failed (exit=$SPEC_RC), skipping. Service will continue without patches."
-        python3 -c "import json, os; p='/shared-volume\advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
+        python3 -c "import json, os; p='/shared-volume/advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
     else
         echo '[wings-accel] Speculative decoding runtime deps installed successfully.'
     fi
@@ -130,7 +129,7 @@ if [ -f "/accel-volume/install.py" ]; then
         set -e
         if [ $FEAT_RC -ne 0 ]; then
             echo "[wings-accel] WARNING: Feature 'ears' install failed (exit=$FEAT_RC), skipping."
-            python3 -c "import json, os; p='/shared-volume\advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
+            python3 -c "import json, os; p='/shared-volume/advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
         else
             echo "[wings-accel] Feature 'ears' installed successfully."
         fi
@@ -143,8 +142,8 @@ fi
 ENGINE_START_EPOCH=$(date +%s)
 export VLLM_EARS_TOLERANCE=0.5
 echo "[wings-env] export VLLM_EARS_TOLERANCE=${VLLM_EARS_TOLERANCE:-}"
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '"'"'{"thinking":false}'"'"' --tensor-parallel-size 8 --speculative-config '"'"'{"method": "mtp", "num_speculative_tokens": 1}'"'"' --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"' --kv_offloading_backend native --kv_offloading_size 200'
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '{"thinking":false}' --tensor-parallel-size 8 --speculative-config '{"method": "mtp", "num_speculative_tokens": 1}' --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' --kv_offloading_backend native --kv_offloading_size 200 &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_qi68whaq --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '"'"'{"thinking":false}'"'"' --tensor-parallel-size 8 --speculative-config '"'"'{"method": "mtp", "num_speculative_tokens": 1}'"'"' --kv_offloading_backend native --kv_offloading_size 200'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_qi68whaq --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '{"thinking":false}' --tensor-parallel-size 8 --speculative-config '{"method": "mtp", "num_speculative_tokens": 1}' --kv_offloading_backend native --kv_offloading_size 200 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features enabled)"
 
@@ -169,7 +168,7 @@ else
   echo "[AdvFeature] └── Fallback command about to execute..."
   echo "[Engine] Falling back to basic mode (disabled: speculative_decode, lmcache_offload)..."
   # 更新 advanced_features.json：引擎级特性全部置 false，RAG 保持不变
-  cat > "/shared-volume\advanced_features.json" <<'FEATURES_EOF'
+  cat > "/shared-volume/advanced_features.json" <<'FEATURES_EOF'
 {
     "engine": "vllm",
     "features": {
@@ -200,8 +199,8 @@ FEATURES_EOF
   echo "[Engine] Waiting 5s for port release before restart..."
   sleep 5
   ENGINE_START_EPOCH=$(date +%s)
-echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '"'"'{"thinking":false}'"'"' --tensor-parallel-size 8 --hf-overrides '"'"'{"use_index_cache": true, "index_topk_freq": 4}'"'"''
-python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_mhm8qiqc --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '{"thinking":false}' --tensor-parallel-size 8 --hf-overrides '{"use_index_cache": true, "index_topk_freq": 4}' &
+echo '[wings-cmd] >>> exec python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_qi68whaq --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '"'"'{"thinking":false}'"'"' --tensor-parallel-size 8'
+python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --kv-cache-dtype fp8 --block-size 256 --enable-expert-parallel --tokenizer-mode deepseek_v4 --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_qi68whaq --dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 4096 --max-num-seqs 32 --seed 0 --default-chat-template-kwargs '{"thinking":false}' --tensor-parallel-size 8 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (advanced features disabled: speculative_decode, lmcache_offload, fallback mode)"
   echo "[AdvFeature] Fallback-mode engine started, waiting for process exit..."
