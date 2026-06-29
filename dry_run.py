@@ -337,6 +337,13 @@ PD_SCENARIOS = {
         "decode": {"dp": 4, "tp": 1, "local": 2,
                    "nodes": ["9.0.1.1", "9.0.1.2"], "rpc": "12321"},
     },
+    "qwen3-1p1d": {
+        "description": "Qwen3-30B-A3B 1P1D (P:dp1×tp4 / D:dp1×tp4，单节点 P/D 分离)",
+        "architecture": "Qwen3MoeForCausalLM",
+        "model_name": "Qwen3-30B-A3B",
+        "prefill": {"dp": 1, "tp": 4, "local": 1, "nodes": ["10.254.0.1"], "rpc": "12890"},
+        "decode": {"dp": 1, "tp": 4, "local": 1, "nodes": ["10.254.0.2"], "rpc": "12777"},
+    },
     "glm5": {
         "description": "GLM-5 PD 分离 (P:dp2×tp16 / D:dp16×tp4)",
         "architecture": "GlmMoeDsaForCausalLM",
