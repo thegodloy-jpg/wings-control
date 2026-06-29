@@ -2971,6 +2971,17 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     # fork 主体包进子 shell，使其作为单个可后台化单元被上层监控
     # （wings_entry._strip_exec_and_backgroundify 给末行 ')' 追加 ' &' + ENGINE_PID=$!）。
     # 任一 service 退出 → 子 shell exit 1 → 上层 crash-retry 整 pod 重启（EP all-to-all 语义）。
+    # dp_size=1（1P1D）：单进程，不带 --data-parallel-external-lb（vllm-ascend 校验 dp_size>1），
+    # 不套 fork 子 shell，直接以前台单命令启动，env/registry 注入与多 service 路径一致。
+    if dp_size == 1:
+        svc_cmd = svc_cmd.replace("__PD_RANK__", "0")
+        svc_cmd = svc_cmd.replace("__PD_KVPORT__", str(kv_base))
+        rt_prefix_1 = f"ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $(({tp} - 1)))"
+        if "VLLM_MOONCAKE_BOOTSTRAP_PORT" not in strip_env:
+            rt_prefix_1 += f" VLLM_MOONCAKE_BOOTSTRAP_PORT={bootstrap_base}"
+        single_cmd = f"{rt_prefix_1} {svc_cmd} --port {base_port} --tensor-parallel-size {tp}"
+        return "\n".join(env_lines + [single_cmd]) + "\n"
+
     fork_body = [
         "(",
         "  pids=()",
