@@ -885,6 +885,14 @@ def _get_pd_config(ctx, pd_role):
                 },
             },
         }
+        # kv_p2p (MooncakeConnector) 要求 role 级 engine_id (P=0/D=1) + 显式模块路径；
+        # 缺失会致 connector worker receive thread 初始化失败（assert self.kv_recv_thread is not None）。
+        # MooncakeConnectorV1 / MooncakeHybridConnector 不需要（引擎自生成或用户通过 env 注入）。
+        if connector_type == "MooncakeConnector":
+            config["engine_id"] = "0" if pd_role == "P" else "1"
+            config["kv_connector_module_path"] = (
+                "vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector"
+            )
         logger.info("[PD Config] Ascend device detected, connector=%s, role=%s, kv_role=%s, "
                      "prefill(tp=%d,dp=%d,pp=%d), decode(tp=%d,dp=%d,pp=%d)",
                      connector_type, pd_role, kv_role,
@@ -902,9 +910,11 @@ def _get_pd_config(ctx, pd_role):
 
 
 def _get_pd_external_lb_params():
-    """读取上层下发的 external-lb DP 参数；未提供或 dp_size<=1 时返回 None。
+    """读取上层下发的 external-lb DP 参数；PD_ROLE 未设置时返回 None。
 
-    触发 external-lb（模式 A，pod 内 fork 多 service）需 PD_ROLE∈{P,D} 且 DP_SIZE>1。
+    触发 external-lb（模式 A，pod 内 fork 多 service）需 PD_ROLE∈{P,D}。
+    DP_SIZE≥1 均进入 external-lb 路径（含 1P1D），由 pd_config.json 注册表统一管理
+    connector/引擎参数/环境变量，消除 standalone PD 绕过注册表的配置双轨。
 
     上层契约（角色域，P/D 各自独立）：
       DP_SIZE / TP_SIZE / DP_SIZE_LOCAL：本角色全局 DP / 单实例 TP / 本节点 fork 数；
@@ -939,16 +949,18 @@ def _get_pd_external_lb_params():
     # DP_SIZE/TP_SIZE 优先显式；缺省时从本角色全局拓扑 PD_{ROLE}_* 派生（P→PREFILL / D→DECODE）。
     # 全局拓扑 PD_PREFILL_*/PD_DECODE_* 已含本角色 dp/tp（P/D 互相感知对方），故上层可只下发这 4 个，
     # 不必再单独给 DP_SIZE/TP_SIZE（二者等于本角色在全局拓扑中的那一项）。
+    # DP_SIZE 未设置时默认 1（1P1D），允许通过 pd_config.json 注册表统一管理配置。
     role_prefix = "PREFILL" if role == "P" else "DECODE"
     raw = _first_env("DP_SIZE", "PD_DP_SIZE", f"PD_{role_prefix}_DP_SIZE")
     if raw is None:
-        return None
-    try:
-        dp_size = int(raw)
-    except (ValueError, TypeError):
-        return None
-    if dp_size <= 1:
-        return None  # DP_SIZE=1 → standalone，无需 dp 参数
+        dp_size = 1  # 1P1D：未显式设 DP_SIZE 时默认 1，仍走 external-lb 读注册表
+    else:
+        try:
+            dp_size = int(raw)
+        except (ValueError, TypeError):
+            dp_size = 1
+    if dp_size < 1:
+        return None  # 非法值
 
     tp_size = _int("1", "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
     dp_size_local = _int("1", "DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
@@ -1102,7 +1114,7 @@ def _resolve_ascend_platform() -> str:
 def _apply_pd_external_lb(cmd_known_params, model_info):
     """检测 external-lb PD 并应用模型配置注册表（config/defaults/pd_config.json）。
 
-    命中条件：PD_ROLE∈{P,D} 且 PD_DP_SIZE>1。命中后（专属架构优先、回退 default）：
+    命中条件：PD_ROLE∈{P,D}（DP_SIZE≥1，含 1P1D）。命中后（专属架构优先、回退 default）：
       1. 合并 common + 角色 engine 参数到 engine_config（不覆盖用户显式键）；
       2. 用注册表连接器/kv_port/extra 构建 kv_transfer_config（覆盖 standalone 版）；
       3. 外层标记 _pd_external_lb / _pd_env，并置 distributed=False（不进 Ray/headless）。
