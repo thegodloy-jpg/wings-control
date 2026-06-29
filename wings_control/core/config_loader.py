@@ -962,7 +962,14 @@ def _get_pd_external_lb_params():
     if dp_size < 1:
         return None  # 非法值
 
-    tp_size = _int("1", "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
+    # tp_size 默认优先取 DEVICE_COUNT（硬件探测/上层下发），回退 1。
+    # 1P1D(dp_size=1) 下 DEVICE_COUNT 即为正确 TP；dp>1 时用户应显式设 TP_SIZE（与旧行为一致）。
+    try:
+        _device_count = int(os.getenv("DEVICE_COUNT", "0") or "0")
+    except (ValueError, TypeError):
+        _device_count = 0
+    _tp_default = str(_device_count) if _device_count > 0 else "1"
+    tp_size = _int(_tp_default, "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
     dp_size_local = _int("1", "DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
     dp_address = _first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS") or (get_master_ip() or "")
     # rpc-port 按角色硬编码，刻意不读 env：同角色每 pod 各算同一常量 → DP 域天然一致。
