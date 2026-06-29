@@ -1193,6 +1193,7 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
     ext["bootstrap_base"] = int(
         os.getenv("VLLM_MOONCAKE_BOOTSTRAP_PORT", "23000" if role == "P" else "23100")
     )
+    ext["connector"] = entry["connector"]  # fork 脚本按连接器分叉 kv_port 行为
 
     cmd_known_params["_pd_external_lb"] = ext
     # L3：common_env（P/D 共用）+ 角色 env（角色覆盖共用）。PD 脚本侧会对合并后的整段 env 去重。

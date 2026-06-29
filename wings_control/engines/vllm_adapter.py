@@ -2939,11 +2939,17 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
         svc_cmd = _re.sub(rf"\s*{flag}\s+\S+", "", svc_cmd)
     svc_cmd = _re.sub(r"\s*--data-parallel-external-lb\b", "", svc_cmd)
     svc_cmd = _re.sub(r"\s*--headless\b", "", svc_cmd)
-    # 占位符 → 让 bash 在单引号 JSON 内展开 shell 变量（engine_id 按 rank，kv_port 按 base+i）
-    svc_cmd = svc_cmd.replace("__PD_RANK__", "'\"$RANK\"'")
-    svc_cmd = svc_cmd.replace("__PD_KVPORT__", "'\"$KVPORT\"'")
+    # 占位符 → 让 bash 在单引号 JSON 内展开 shell 变量（engine_id 按 rank，kv_port 按连接器分叉）：
+    #   MooncakeConnector(kv_p2p): kv_port 是 per-role 标识符，用字面值不引入 shell 变量
+    #   V1 / Hybrid: kv_port 按 base+i 自增，每 service 独立端口
     kv_base = pd_ext.get("kv_port_base", 30000)
     bootstrap_base = pd_ext.get("bootstrap_base", 23000)
+    svc_cmd = svc_cmd.replace("__PD_RANK__", "'\"$RANK\"'")
+    connector = pd_ext.get("connector", "")
+    if connector == "MooncakeConnector":
+        svc_cmd = svc_cmd.replace("__PD_KVPORT__", str(kv_base))
+    else:
+        svc_cmd = svc_cmd.replace("__PD_KVPORT__", "'\"$KVPORT\"'")
 
     role_env = params.get("_pd_env") or {}
     env_lines = list(common_env_cmds)
@@ -2973,7 +2979,8 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     # 任一 service 退出 → 子 shell exit 1 → 上层 crash-retry 整 pod 重启（EP all-to-all 语义）。
     # dp_size=1（1P1D）：单进程，不带 --data-parallel-external-lb（vllm-ascend 校验 dp_size>1），
     # 不套 fork 子 shell，直接以前台单命令启动，env/registry 注入与多 service 路径一致。
-    # 注意：此时 __PD_RANK__/__PD_KVPORT__ 已被上段替换为 '"$RANK"'/'"$KVPORT"'，故此处替换后者。
+    # MooncakeConnector(kv_p2p) 已在上面将 __PD_KVPORT__ 替换为字面值，此处仅处理 V1/Hybrid 的
+    # '"$KVPORT"' → 字面值回退（dp_size=1 时无多 service，无需 shell 变量）。
     if dp_size == 1:
         svc_cmd = svc_cmd.replace("'\"$RANK\"'", "0")
         svc_cmd = svc_cmd.replace("'\"$KVPORT\"'", str(kv_base))
@@ -2988,7 +2995,13 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
         "  pids=()",
         f"  for i in $(seq 0 {local - 1}); do",
         f"    RANK=$(({start} + i)); PORT=$(({base_port} + i))",
-        f"    KVPORT=$(({kv_base} + i)); BOOTSTRAP=$(({bootstrap_base} + i))",
+    ]
+    # MooncakeConnector(kv_p2p): kv_port 已在 JSON 里是字面值，不引入 $KVPORT 变量
+    if connector == "MooncakeConnector":
+        fork_body.append(f"    BOOTSTRAP=$(({bootstrap_base} + i))")
+    else:
+        fork_body.append(f"    KVPORT=$(({kv_base} + i)); BOOTSTRAP=$(({bootstrap_base} + i))")
+    fork_body += [
         f"    LO=$((i * {tp})); HI=$((LO + {tp} - 1)); CARDS=$(seq -s, $LO $HI)",
         (f"    {rt_prefix}"
          f" {svc_cmd} --port $PORT"
