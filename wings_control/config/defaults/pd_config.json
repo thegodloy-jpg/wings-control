@@ -126,7 +126,11 @@
         "ASCEND_A3_ENABLE": "1",
         "ASCEND_TRANSPORT_PRINT": "1",
         "HCCL_OP_EXPANSION_MODE": "AIV",
-        "VLLM_VERSION": "0.21.0"
+        "VLLM_VERSION": "0.21.0",
+        "VLLM_RPC_TIMEOUT": "3600000",
+        "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS": "30000",
+        "HCCL_EXEC_TIMEOUT": "2000",
+        "HCCL_CONNECT_TIMEOUT": "1200"
       },
       "common": {
         "enable_expert_parallel": true,
