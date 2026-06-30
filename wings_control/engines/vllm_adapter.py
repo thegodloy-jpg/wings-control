@@ -2993,7 +2993,7 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
         "  pids=()",
         f"  for i in $(seq 0 {local - 1}); do",
         f"    RANK=$(({start} + i)); PORT=$(({base_port} + i))",
-        f"    PD_INDEX=$(({pd_index_base} + i))",
+        "    PD_INDEX=$PD_INDEX",
         f"    KVPORT=$((30000 + PD_INDEX)); BOOTSTRAP=$(({bootstrap_base} + i))",
     ]
     fork_body += [
