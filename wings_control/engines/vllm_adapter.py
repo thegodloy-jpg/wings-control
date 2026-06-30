@@ -2925,7 +2925,7 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     # --data-parallel-rpc-port 按角色硬编码（config_loader 已置 pd_ext.rpc_port=12890/12777，
     # 刻意不读 env）；此处 or 仅作防御性兜底，常量须与 config_loader 保持一致。
     rpc = pd_ext.get("rpc_port") or ("12890" if pd_ext.get("role") == "P" else "12777")
-    # PD_INDEX 由上层下发（env PD_INDEX），wings 不计算，直接用 + 本地 i
+    # PD_INDEX 由上层下发（env），默认 P=0/D=1（config_loader 已处理），wings 透传不计算
     pd_index_base = pd_ext.get("pd_index_base", 0)
 
     # 端口基址：优先取 base cmd 里的 --port，否则回退 ENGINE_PORT
@@ -2952,6 +2952,8 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     env_lines = list(common_env_cmds)
     for k, v in role_env.items():
         env_lines.append(f"export {k}={shlex.quote(str(v))}")
+    # PD_INDEX 透传给 bash 环境（config_loader 已处理默认值 P=0/D=1），fork 脚本不计算直接引用
+    env_lines.append(f"export PD_INDEX={pd_index_base}")
     # L3：common_env/角色 env 追加在 base 之后（bash 后者生效）；对整段去重，使注册表覆盖值收口、
     # 消掉 base 的同名重复（common_env_cmds 内部已去重，这里把角色 env 一并纳入再收口一次）。
     env_lines = dedupe_env_exports(env_lines)
