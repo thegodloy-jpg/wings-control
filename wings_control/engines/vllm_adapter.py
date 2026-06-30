@@ -2927,6 +2927,8 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     rpc = pd_ext.get("rpc_port") or ("12890" if pd_ext.get("role") == "P" else "12777")
     # PD_INDEX 由上层下发（env），默认 P=0/D=1（config_loader 已处理），wings 透传不计算
     pd_index_base = pd_ext.get("pd_index_base", 0)
+    # kv_port_base：按角色从 pd_config.json 注册表取（P=30000 / D=40000 等），fork 脚本据此派生 kv_port
+    kv_port_base = pd_ext.get("kv_port_base", 30000 if pd_ext.get("role") == "P" else 30100)
 
     # 端口基址：优先取 base cmd 里的 --port，否则回退 ENGINE_PORT
     m = _re.search(r"--port\s+(\S+)", cmd)
@@ -2981,7 +2983,7 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     if dp_size == 1:
         _pd_idx = str(pd_index_base)
         svc_cmd = svc_cmd.replace("'\"$PD_INDEX\"'", _pd_idx)
-        svc_cmd = svc_cmd.replace("'\"$KVPORT\"'", str(30000 + pd_index_base))
+        svc_cmd = svc_cmd.replace("'\"$KVPORT\"'", str(kv_port_base + pd_index_base))
         rt_prefix_1 = f"ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $(({tp} - 1)))"
         if "VLLM_MOONCAKE_BOOTSTRAP_PORT" not in strip_env:
             rt_prefix_1 += f" VLLM_MOONCAKE_BOOTSTRAP_PORT={bootstrap_base}"
@@ -2994,7 +2996,7 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
         f"  for i in $(seq 0 {local - 1}); do",
         f"    RANK=$(({start} + i)); PORT=$(({base_port} + i))",
         "    PD_INDEX=$PD_INDEX",
-        f"    KVPORT=$((30000 + PD_INDEX)); BOOTSTRAP=$(({bootstrap_base} + i))",
+        f"    KVPORT=$(({kv_port_base} + PD_INDEX)); BOOTSTRAP=$(({bootstrap_base} + i))",
     ]
     fork_body += [
         f"    LO=$((i * {tp})); HI=$((LO + {tp} - 1)); CARDS=$(seq -s, $LO $HI)",
