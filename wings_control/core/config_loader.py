@@ -970,7 +970,17 @@ def _get_pd_external_lb_params():
         _device_count = 0
     _tp_default = str(_device_count) if _device_count > 0 else "1"
     tp_size = _int(_tp_default, "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
-    dp_size_local = _int("1", "DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
+    # dp_size_local：优先 env 显式下发；否则由 DEVICE_COUNT / tp_size 推导（单 pod 最多塞几个 service）
+    _dp_local_raw = _first_env("DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
+    if _dp_local_raw is not None:
+        try:
+            dp_size_local = int(_dp_local_raw)
+        except (ValueError, TypeError):
+            dp_size_local = 1
+    else:
+        dp_size_local = max(1, (_device_count // tp_size) if _device_count > 0 and tp_size > 0 else 1)
+    # dp_size_local 不能超过全局 dp_size（1P1D 单 pod 场景下两者应相等）
+    dp_size_local = min(dp_size_local, dp_size)
     dp_address = (_first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS")
                   or get_master_ip()
                   or _first_env("RANK_IP", "HOST_IP")
