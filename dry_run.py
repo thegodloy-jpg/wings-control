@@ -69,7 +69,7 @@ _PORT_ENV_KEYS = {"PORT", "PROXY_PORT", "ENABLE_REASON_PROXY"}
 _INFRA_ENV_KEYS = {
     "NNODES", "NODE_RANK", "HEAD_NODE_ADDR", "MASTER_IP", "NODE_IPS", "NODES",
     "DISTRIBUTED_EXECUTOR_BACKEND", "RAY_HEAD_IP", "POD_IP", "RANK_IP",
-    "NETWORK_INTERFACE", "ENABLE_ACCEL", "LMCACHE_OFFLOAD", "LMCACHE_MAX_LOCAL_CPU_SIZE",
+    "NETWORK_INTERFACE", "ENABLE_ACCEL", "ENABLE_KV_OFFLOAD", "KV_MEM_OFFLOAD_SIZE",
     "SHARED_VOLUME_PATH", "WINGS_DEVICE", "WINGS_ASCEND_PLATFORM", "ENGINE_VERSION",
 }
 
@@ -179,8 +179,8 @@ SCENARIOS = {
         },
         "orchestration_env": {
             "DISTRIBUTED_EXECUTOR_BACKEND": "mp",
-            "LMCACHE_OFFLOAD": "true",
-            "LMCACHE_MAX_LOCAL_CPU_SIZE": "25",   # 每卡 GB，V4-Flash 乘本节点卡数
+            "ENABLE_KV_OFFLOAD": "true",
+            "KV_MEM_OFFLOAD_SIZE": "25",   # 每卡 GB，V4-Flash 乘本节点卡数
         },
         "model_config": {
             "architecture": "DeepseekV4ForCausalLM",
@@ -498,7 +498,7 @@ def apply_orchestration_env(scenario: dict, model_dir: str) -> None:
         "MASTER_IP": head,
         "NETWORK_INTERFACE": "eth0",
         "ENABLE_ACCEL": "false",
-        "LMCACHE_OFFLOAD": "false",       # 默认不卸载；KV 卸载场景由 orchestration_env 覆盖
+        "ENABLE_KV_OFFLOAD": "false",       # 默认不卸载；KV 卸载场景由 orchestration_env 覆盖
         "WINGS_DEVICE": device_type,
         "WINGS_ASCEND_PLATFORM": "",      # 默认空；用 platform 的场景覆盖（A2/A3 细分）
         "ENGINE_VERSION": "",             # 默认空；用 engine-version 后缀的场景覆盖

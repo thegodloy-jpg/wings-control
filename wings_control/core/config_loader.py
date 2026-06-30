@@ -815,17 +815,19 @@ def _build_deepseek_v4_cpu_offload_config(params, ctx, model_info) -> Dict[str, 
     """构建 V4 CPUOffloadingConnector 配置。
 
     cpu_swap_space_gb 取值:
-      * V4-Flash: ``device_count(本节点卡数) × LMCACHE_MAX_LOCAL_CPU_SIZE``（每卡语义）;
-      * V4-Pro / 其它: 直接等于 ``LMCACHE_MAX_LOCAL_CPU_SIZE``（不乘卡数）;
-      * 未设置/非法: 一律缺省 200（不乘）。
+      * V4-Flash: ``device_count(本节点卡数) × KV_MEM_OFFLOAD_SIZE``（每卡语义）;
+      * V4-Pro / 其它: 直接等于 ``KV_MEM_OFFLOAD_SIZE``（不乘卡数）;
+      * "auto" / 未设置 / 非法: 一律缺省 200（不乘；auto 精确值由 vllm_adapter C4 补偿）。
     须与 ``vllm_adapter._apply_deepseek_v4_cpu_offload`` 公式保持一致。
     """
-    raw_size = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "").strip()
+    raw_size = os.getenv("KV_MEM_OFFLOAD_SIZE", "").strip()
+    if raw_size.lower() == "auto":
+        raw_size = ""  # auto 由 vllm_adapter C4 反算补偿，此处回退缺省
     try:
         per_card_gb = int(raw_size) if raw_size else None
     except ValueError:
         logger.warning(
-            "[DeepSeek-V4 KV Offload] Invalid LMCACHE_MAX_LOCAL_CPU_SIZE=%r; "
+            "[DeepSeek-V4 KV Offload] Invalid KV_MEM_OFFLOAD_SIZE=%r; "
             "falling back to 200 GB.", raw_size,
         )
         per_card_gb = None
@@ -941,7 +943,7 @@ def _enforce_glm51_nvidia_no_kv_offload(engine_config: Dict[str, Any],
     elif get_lmcache_env():
         logger.warning(
             "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
-            "LMCACHE_OFFLOAD=true was requested but will be ignored."
+            "ENABLE_KV_OFFLOAD=true was requested but will be ignored."
         )
 
 
@@ -1830,7 +1832,7 @@ def apply_effective_feature_enablement(p: Dict[str, Any], hardware_env: Dict[str
         p["enable_speculative_decode"] = False
         p["_smart_feats"] = []
         for env_name in ("ENABLE_SPARSE", "SPARSE_ENABLE",
-                         "ENABLE_SPECULATIVE_DECODE", "SD_ENABLE", "LMCACHE_OFFLOAD"):
+                         "ENABLE_SPECULATIVE_DECODE", "SD_ENABLE", "ENABLE_KV_OFFLOAD"):
             os.environ[env_name] = "false"
         logger.info("[SmartFeature] PD role detected -> veto: spec/sparse/offload all disabled")
         return
@@ -1866,9 +1868,9 @@ def apply_effective_feature_enablement(p: Dict[str, Any], hardware_env: Dict[str
     # 卸载：白名单外收口为关（容量 auto/custom 仍由产出口 _build_cache_env_commands 处理）
     offload_eff = offload_req and "offload" in feats
     if offload_req and "offload" not in feats:
-        os.environ["LMCACHE_OFFLOAD"] = "false"
+        os.environ["ENABLE_KV_OFFLOAD"] = "false"
         logger.info("[SmartFeature] offload requested but not in whitelist (engine=%s card=%s) "
-                    "-> suppressed (LMCACHE_OFFLOAD=false)", engine, card or "(empty)")
+                    "-> suppressed (ENABLE_KV_OFFLOAD=false)", engine, card or "(empty)")
 
     # 投机：suffix 地板恒产 → 开关不收口（保持 true 是诚实的）；
     #   MTP-vs-suffix 由 §2.3 在 resolve_speculative_strategy 内按白名单 gate。

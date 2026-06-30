@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 #   ENABLE_SPECULATIVE_DECODE → adaptive_draft_model（已改为 --install-runtime-deps 独立安装）
 #   ENABLE_SPARSE             → indexcache（仅 IndexCache 架构，通过独立安装片段处理）
 #
-# 注意：LMCACHE_OFFLOAD（KV 卸载）通常通过 --lmcache-target 独立安装，
+# 注意：ENABLE_KV_OFFLOAD（KV 卸载）通常通过 --lmcache-target 独立安装，
 # DeepSeek-V4 Flash/Pro on vllm_ascend 例外：直接追加 CPUOffloadingConnector
 # kv_transfer_config，不安装 LMCache 补丁。
 #
@@ -84,7 +84,7 @@ _PATCH_FEATURE_STATUS_KEYS: dict[str, str] = {
 }
 
 # 引擎到 LMCache 安装目标的映射
-# 当 LMCACHE_OFFLOAD=true 时，通过 install.py --lmcache-target <target> 安装 LMCache 补丁；
+# 当 ENABLE_KV_OFFLOAD=true 时，通过 install.py --lmcache-target <target> 安装 LMCache 补丁；
 # DeepSeek-V4 Flash/Pro on vllm_ascend 不走此路径。
 _ENGINE_LMCACHE_TARGET_MAP = {
     "vllm": "nvidia-x86",
@@ -370,20 +370,20 @@ def _resolve_lmcache_install_target(engine: str, merged: dict | None) -> str | N
     """决定是否安装 LMCache 补丁，并返回目标平台（vllm→nvidia-x86 / vllm_ascend→ascend-arm）。
 
     命中下列任一情况返回 None（跳过安装）：
-      * ``LMCACHE_OFFLOAD`` 未开启；
+      * ``ENABLE_KV_OFFLOAD`` 未开启；
       * V4 Flash/Pro on vllm_ascend → 用 CPUOffloadingConnector；
       * V4-Flash on NV/vllm → 用 native ``--kv_offloading_backend``（构建期 CLI flag）；
       * GLM-5.1 on NV/vllm → 强制关闭 LMCache；
       * 引擎无已知 lmcache-target 映射。
     """
-    if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() != "true":
+    if os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() != "true":
         return None
 
     if merged and _is_deepseek_v4_cpu_offload_params(merged, engine=engine):
         logger.info(
             "[KVCache Offload] DeepSeek-V4 Flash/Pro uses vllm-ascend "
             "CPUOffloadingConnector; skipping LMCache patch install despite "
-            "LMCACHE_OFFLOAD=true."
+            "ENABLE_KV_OFFLOAD=true."
         )
         return None
 
@@ -393,14 +393,14 @@ def _resolve_lmcache_install_target(engine: str, merged: dict | None) -> str | N
         logger.info(
             "[KVCache Offload] DeepSeek-V4-Flash (NV) uses native "
             "--kv_offloading_backend; skipping LMCache patch install despite "
-            "LMCACHE_OFFLOAD=true."
+            "ENABLE_KV_OFFLOAD=true."
         )
         return None
 
     if _is_glm51_nvidia_vllm_merged(engine, merged):
         logger.warning(
             "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
-            "skipping LMCache patch install despite LMCACHE_OFFLOAD=true."
+            "skipping LMCache patch install despite ENABLE_KV_OFFLOAD=true."
         )
         return None
 
@@ -577,7 +577,7 @@ def _build_accel_preamble(engine: str, merged: dict) -> str:
 
     安装策略（容错）：
       1. 投机推理（ENABLE_SPECULATIVE_DECODE）使用 --install-runtime-deps 独立安装
-      2. LMCache KV 卸载（LMCACHE_OFFLOAD）使用 --lmcache-target 独立安装
+      2. LMCache KV 卸载（ENABLE_KV_OFFLOAD）使用 --lmcache-target 独立安装
          （DeepSeek-V4 Flash/Pro on vllm_ascend 例外，直接注入 CPUOffloadingConnector）
       3. IndexCache（KV 稀疏 + IndexCache 架构）使用 --features indexcache 安装
       4. 其他高级特性继续走 --features 路径
@@ -973,7 +973,7 @@ def _write_advanced_features_json(engine: str, merged: dict) -> None:
     features = {
         "speculative_decode": bool(merged.get("enable_speculative_decode")),
         "sparse_kv": bool(merged.get("enable_sparse")),
-        "kv_offload": os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true",
+        "kv_offload": os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() == "true",
         "rag_acc": os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true",
     }
     variants = {
@@ -1021,7 +1021,7 @@ def _has_advanced_features(merged: dict) -> bool:
         return True
     if merged.get("enable_sparse"):
         return True
-    if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true":
+    if os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() == "true":
         return True
     return False
 
@@ -1033,7 +1033,7 @@ def _collect_active_feature_names(merged: dict) -> list[str]:
         names.append("speculative_decode")
     if merged.get("enable_sparse"):
         names.append("sparse_kv")
-    if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true":
+    if os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() == "true":
         names.append("lmcache_offload")
     return names
 
@@ -1289,7 +1289,7 @@ def _log_advanced_feature_config(
         logger.info("[AdvFeature] │ [sparse_kv]")
         logger.info("[AdvFeature] │   strategy = %s (arch=%s)", strategy, arch)
     # KV 卸载
-    if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true":
+    if os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() == "true":
         logger.info("[AdvFeature] │ [lmcache_offload]")
         logger.info("[AdvFeature] │   kv_transfer_config = %s",
                     merged.get("kv_transfer_config", "(not set)"))
@@ -1317,7 +1317,7 @@ def _build_advanced_feature_fallback_cmd(merged: dict) -> str:
     # engine_config 嵌套字典中，需要从正确的层级移除。
     # 使用浅拷贝 engine_config 避免污染原始 merged 数据。
     # （PD 分离的 kv_transfer_config 也会一并移除，但在崩溃回退场景下可接受）
-    if os.getenv("LMCACHE_OFFLOAD", "").strip().lower() == "true":
+    if os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() == "true":
         original_ec = merged_no_features.get("engine_config", {})
         if isinstance(original_ec, dict) and "kv_transfer_config" in original_ec:
             ec_copy = dict(original_ec)
