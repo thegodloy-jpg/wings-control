@@ -434,6 +434,8 @@ def run_pd_dry_run(name: str, scenario: dict) -> None:
             # —— ① KV 全局拓扑（P/D 互相感知对方；本角色 dp/tp 亦由此派生）——
             "PD_PREFILL_DP_SIZE": str(pf["dp"]), "PD_PREFILL_TP_SIZE": str(pf["tp"]),
             "PD_DECODE_DP_SIZE": str(dc["dp"]), "PD_DECODE_TP_SIZE": str(dc["tp"]),
+            # PD_INDEX：上层下发跨 P/D 全局实例序号。P 从 0 起，D 从 P 总实例数之后起。
+            "PD_INDEX": str((pf["dp"] if role == "D" else 0) + node_idx * topo["local"]),
         })
         # CLI 入参（承载 model/engine/device-count/nnodes/node-rank；其 env 兜底名见 build_parser）
         la = parse_launch_args(["--model-name", model_name, "--model-path", model_dir,

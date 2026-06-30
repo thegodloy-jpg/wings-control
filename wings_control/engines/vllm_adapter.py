@@ -2925,6 +2925,8 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     # --data-parallel-rpc-port 按角色硬编码（config_loader 已置 pd_ext.rpc_port=12890/12777，
     # 刻意不读 env）；此处 or 仅作防御性兜底，常量须与 config_loader 保持一致。
     rpc = pd_ext.get("rpc_port") or ("12890" if pd_ext.get("role") == "P" else "12777")
+    # PD_INDEX 由上层下发（env PD_INDEX），wings 不计算，直接用 + 本地 i
+    pd_index_base = pd_ext.get("pd_index_base", 0)
 
     # 端口基址：优先取 base cmd 里的 --port，否则回退 ENGINE_PORT
     m = _re.search(r"--port\s+(\S+)", cmd)
@@ -2939,17 +2941,12 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
         svc_cmd = _re.sub(rf"\s*{flag}\s+\S+", "", svc_cmd)
     svc_cmd = _re.sub(r"\s*--data-parallel-external-lb\b", "", svc_cmd)
     svc_cmd = _re.sub(r"\s*--headless\b", "", svc_cmd)
-    # 占位符 → 让 bash 在单引号 JSON 内展开 shell 变量（engine_id 按 rank，kv_port 按连接器分叉）：
-    #   MooncakeConnector(kv_p2p): kv_port 是 per-role 标识符，用字面值不引入 shell 变量
-    #   V1 / Hybrid: kv_port 按 base+i 自增，每 service 独立端口
-    kv_base = pd_ext.get("kv_port_base", 30000)
+    # 占位符 → 让 bash 在单引号 JSON 内展开 shell 变量：
+    #   engine_id / kv_port 均由 PD_INDEX 派生（跨 P/D 全局连续，所有 connector 统一）。
     bootstrap_base = pd_ext.get("bootstrap_base", 23000)
-    svc_cmd = svc_cmd.replace("__PD_RANK__", "'\"$RANK\"'")
+    svc_cmd = svc_cmd.replace("__PD_INDEX__", "'\"$PD_INDEX\"'")
+    svc_cmd = svc_cmd.replace("__PD_KVPORT__", "'\"$KVPORT\"'")
     connector = pd_ext.get("connector", "")
-    if connector == "MooncakeConnector":
-        svc_cmd = svc_cmd.replace("__PD_KVPORT__", str(kv_base))
-    else:
-        svc_cmd = svc_cmd.replace("__PD_KVPORT__", "'\"$KVPORT\"'")
 
     role_env = params.get("_pd_env") or {}
     env_lines = list(common_env_cmds)
@@ -2978,12 +2975,11 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
     # （wings_entry._strip_exec_and_backgroundify 给末行 ')' 追加 ' &' + ENGINE_PID=$!）。
     # 任一 service 退出 → 子 shell exit 1 → 上层 crash-retry 整 pod 重启（EP all-to-all 语义）。
     # dp_size=1（1P1D）：单进程，不带 --data-parallel-external-lb（vllm-ascend 校验 dp_size>1），
-    # 不套 fork 子 shell，直接以前台单命令启动，env/registry 注入与多 service 路径一致。
-    # MooncakeConnector(kv_p2p) 已在上面将 __PD_KVPORT__ 替换为字面值，此处仅处理 V1/Hybrid 的
-    # '"$KVPORT"' → 字面值回退（dp_size=1 时无多 service，无需 shell 变量）。
+    # 不套 fork 子 shell，直接以前台单命令启动。将 '"$PD_INDEX"' / '"$KVPORT"' 替换为字面值。
     if dp_size == 1:
-        svc_cmd = svc_cmd.replace("'\"$RANK\"'", "0")
-        svc_cmd = svc_cmd.replace("'\"$KVPORT\"'", str(kv_base))
+        _pd_idx = str(pd_index_base)
+        svc_cmd = svc_cmd.replace("'\"$PD_INDEX\"'", _pd_idx)
+        svc_cmd = svc_cmd.replace("'\"$KVPORT\"'", str(30000 + pd_index_base))
         rt_prefix_1 = f"ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $(({tp} - 1)))"
         if "VLLM_MOONCAKE_BOOTSTRAP_PORT" not in strip_env:
             rt_prefix_1 += f" VLLM_MOONCAKE_BOOTSTRAP_PORT={bootstrap_base}"
@@ -2995,12 +2991,9 @@ def _build_vllm_pd_external_lb_script(params: Dict[str, Any], cmd: str,
         "  pids=()",
         f"  for i in $(seq 0 {local - 1}); do",
         f"    RANK=$(({start} + i)); PORT=$(({base_port} + i))",
+        f"    PD_INDEX=$(({pd_index_base} + i))",
+        f"    KVPORT=$((30000 + PD_INDEX)); BOOTSTRAP=$(({bootstrap_base} + i))",
     ]
-    # MooncakeConnector(kv_p2p): kv_port 已在 JSON 里是字面值，不引入 $KVPORT 变量
-    if connector == "MooncakeConnector":
-        fork_body.append(f"    BOOTSTRAP=$(({bootstrap_base} + i))")
-    else:
-        fork_body.append(f"    KVPORT=$(({kv_base} + i)); BOOTSTRAP=$(({bootstrap_base} + i))")
     fork_body += [
         f"    LO=$((i * {tp})); HI=$((LO + {tp} - 1)); CARDS=$(seq -s, $LO $HI)",
         (f"    {rt_prefix}"

@@ -1002,6 +1002,13 @@ def _get_pd_external_lb_params():
     # 注：--data-parallel-rpc-port 现按角色硬编码（见上），不再读 env，故无需 ephemeral 一致性告警：
     # 同角色每 pod 各自算出同一常量，跨 pod 天然一致。--data-parallel-address 仍信任平台 Master_IP 透传。
 
+    # PD_INDEX：跨 P/D 全局实例序号，由上层下发（env PD_INDEX）。
+    # 1P1D 默认：P=0, D=1；多实例场景上层直接传递，wings 不计算。
+    try:
+        pd_index_base = int(os.getenv("PD_INDEX", ""))
+    except (ValueError, TypeError):
+        pd_index_base = 0 if role == "P" else 1
+
     return {
         "role": role,
         "dp_size": dp_size,
@@ -1010,6 +1017,7 @@ def _get_pd_external_lb_params():
         "dp_rank_start": dp_rank_start,
         "dp_address": dp_address,
         "rpc_port": str(rpc_port),
+        "pd_index_base": pd_index_base,
     }
 
 
@@ -1072,8 +1080,7 @@ def _build_pd_external_lb_kv(entry, ext):
     cfg = {
         "kv_connector": entry["connector"],
         "kv_role": kv_role,
-        # kv_port 按 service 偏移（base + 本地 i），避免单 pod 多 service 抢同一端口；
-        # 占位符由 fork 脚本（vllm_adapter）按 base + i 替换。base 见 _apply_pd_external_lb。
+        # kv_port 占位符由 fork 脚本按 30000 + PD_INDEX 替换（跨 P/D 全局连续唯一）。
         "kv_port": "__PD_KVPORT__",
         "kv_connector_extra_config": extra,
     }
@@ -1082,16 +1089,10 @@ def _build_pd_external_lb_kv(entry, ext):
     module_path = entry.get("connector_module_path")
     if module_path:
         cfg["kv_connector_module_path"] = module_path
-    # engine_id 按连接器策略区分（见 docstring 与
-    # docs/reference/pd-glm5-runtime-log-vs-official-glm52-report.md §4.9）：
-    if entry["connector"] == "MooncakeConnector":
-        # 官方 kv_p2p：engine_id 是 P/D 角色标签（producer=0 / consumer=1），与官方样例一致；
-        # 节点唯一性来自 IP:kv_port。per-rank 会让 P-rank-k 与 D-rank-k engine_id 撞号，
-        # 高并发下 _get_remote_rank 越界崩溃；改 role 级后真机验证可正常拉起且不崩。
-        cfg["engine_id"] = "0" if role == "P" else "1"
-    elif entry["connector"] in ("MooncakeConnectorV1", "MooncakeHybridConnector"):
-        # 这两种要求每节点唯一 engine_id：放占位符，fork 脚本（vllm_adapter）按 dp_rank 替换。
-        cfg["engine_id"] = "__PD_RANK__"
+    # engine_id 由 PD_INDEX 派生（跨 P/D 全局连续），统一适用于所有连接器。
+    # PD_INDEX 跨角色共用编号：P 实例在前、D 实例在后，天然避免 P/D engine_id 撞号。
+    # 占位符 __PD_INDEX__ 由 fork 脚本按 shell 变量 $PD_INDEX 展开。
+    cfg["engine_id"] = "__PD_INDEX__"
     return cfg
 
 
@@ -1184,8 +1185,8 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
     if "kv_transfer_config" not in explicit:
         ec["kv_transfer_config"] = json.dumps(_build_pd_external_lb_kv(entry, ext))
 
-    # 端口偏移基址：fork 脚本按 base + 本地 i 给每个 service 算独立 kv_port / bootstrap_port，
-    # 避免单 pod 内多 service（dp_size_local>1）抢同一端口。
+    # kv_port_base：MooncakeConnector(kv_p2p) 用 role 字面值（保持注册表值）。
+    # V1 / Hybrid 的 kv_port 不再从这里派生——fork 脚本直接算 30000 + PD_INDEX（全局连续唯一）。
     try:
         ext["kv_port_base"] = int(entry["kv_port"][role])
     except (KeyError, ValueError, TypeError):
