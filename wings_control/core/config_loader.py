@@ -971,7 +971,11 @@ def _get_pd_external_lb_params():
     _tp_default = str(_device_count) if _device_count > 0 else "1"
     tp_size = _int(_tp_default, "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
     dp_size_local = _int("1", "DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
-    dp_address = _first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS") or (get_master_ip() or "")
+    dp_address = (_first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS")
+                  or get_master_ip()
+                  or _first_env("RANK_IP", "HOST_IP")
+                  or get_local_ip()
+                  or "")
     # rpc-port 按角色硬编码，刻意不读 env：同角色每 pod 各算同一常量 → DP 域天然一致。
     rpc_port = "12890" if role == "P" else "12777"
 
