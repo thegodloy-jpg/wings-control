@@ -2,7 +2,7 @@
 """需求一 · 三特性使能改造 —— 八需求点 dry-run 覆盖验证（模拟用户真实下发）。
 
 ★ 关键口径：投机/稀疏/卸载三特性**仅经环境变量下发**（MaaS 页面开关 → 编排层注入
-   ENABLE_SPECULATIVE_DECODE / ENABLE_SPARSE / LMCACHE_OFFLOAD env），**不走 wings_start.sh CLI**。
+   ENABLE_SPECULATIVE_DECODE / ENABLE_SPARSE / ENABLE_KV_OFFLOAD env），**不走 wings_start.sh CLI**。
    因此本方案所有用例的三特性开关一律置于 `orchestration_env`（env），`user_cli` **不含**
    --enable-speculative-decode / --enable-sparse 等特性标志。驱动器复刻 wings_start.sh
    (299-300/345-348) 的 env→APP_ARGS 传播，等价真实链路。
@@ -32,7 +32,7 @@ _TOTAL = {"pass": 0, "fail": 0, "cases": 0, "case_fail": 0}
 # 三特性的「环境变量下发」键（MaaS 注入；非 CLI）
 SPEC = "ENABLE_SPECULATIVE_DECODE"
 SPARSE = "ENABLE_SPARSE"
-OFFLOAD = "LMCACHE_OFFLOAD"
+OFFLOAD = "ENABLE_KV_OFFLOAD"
 
 
 def emit(s: str = ""):
@@ -52,7 +52,7 @@ def feat(r, k):   return r.features.get(k)
 
 
 def cpu_size(r):
-    vals = re.findall(r'export LMCACHE_MAX_LOCAL_CPU_SIZE=([0-9]+)', r.command)
+    vals = re.findall(r'export KV_MEM_OFFLOAD_SIZE=([0-9]+)', r.command)
     return int(vals[0]) if vals else None
 
 
@@ -128,12 +128,12 @@ def run_all():
     t.out("user_cli 含 --enable-speculative-decode", "否", "enable-speculative-decode" in t.user_cli, "enable-speculative-decode" not in t.user_cli)
     t.out("variants.speculative_decode（仅由 env 驱动）", "deepseek_mtp", v_spec(r), v_spec(r) == "deepseek_mtp")
     t.done()
-    t = TC("TC-P0-03", "P0", "LMCACHE_OFFLOAD env → 卸载生效（卸载本就纯 env，无 CLI）",
+    t = TC("TC-P0-03", "P0", "ENABLE_KV_OFFLOAD env → 卸载生效（卸载本就纯 env，无 CLI）",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", OFFLOAD: "true", "LMCACHE_POD_MEMORY": "512"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "512"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
-    t.out("features.kv_offload（仅由 LMCACHE_OFFLOAD env 驱动）", "True", feat(r, "kv_offload"), feat(r, "kv_offload") is True)
+    t.out("features.kv_offload（仅由 ENABLE_KV_OFFLOAD env 驱动）", "True", feat(r, "kv_offload"), feat(r, "kv_offload") is True)
     t.out("variants.kv_offload", "lmcache_cpu+auto", v_offload(r), v_offload(r) == "lmcache_cpu+auto")
     t.done()
 
@@ -191,7 +191,7 @@ def run_all():
     t.out("日志 sparse requested but not in whitelist", "出现", "出现" if logh(r, "sparse requested but not in whitelist") else "缺失", logh(r, "sparse requested but not in whitelist"))
     t.out("摘要含 sparse True->False（请求→有效）", "出现", "出现" if logh(r, "sparse True->False") else "缺失", logh(r, "sparse True->False"))
     t.done()
-    t = TC("TC-P3-03", "P3", "非白名单 + LMCACHE_OFFLOAD → offload 抑制对称日志",
+    t = TC("TC-P3-03", "P3", "非白名单 + ENABLE_KV_OFFLOAD → offload 抑制对称日志",
            {"model-name": "Llama-3-70B", "engine": "vllm", "device-count": 8},
            {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", OFFLOAD: "true"}, {"architecture": "LlamaForCausalLM"})
     r = t.r
@@ -217,16 +217,16 @@ def run_all():
     t.done()
     t = TC("TC-P4-03", "P4", "offload 不在白名单 → 收口关（Qwen3.5-397B·NV：spec,sparse 无 offload）",
            {"model-name": "qwen3.5-397b", "engine": "vllm", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "LMCACHE_POD_MEMORY": "512"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "512"},
            {"architecture": "Qwen3_5MoeForConditionalGeneration"})
     r = t.r
     t.out("features.kv_offload", "False", feat(r, "kv_offload"), feat(r, "kv_offload") is False)
-    t.out("命令 export LMCACHE_OFFLOAD=true", "不出现", "出现" if has(r, "export LMCACHE_OFFLOAD=true") else "不出现", not has(r, "export LMCACHE_OFFLOAD=true"))
+    t.out("命令 export ENABLE_KV_OFFLOAD=true", "不出现", "出现" if has(r, "export ENABLE_KV_OFFLOAD=true") else "不出现", not has(r, "export ENABLE_KV_OFFLOAD=true"))
     t.done()
     t = TC("TC-P4-04", "P4", "PD 一票否决 → 三特性全关",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
            {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPEC: "true", SPARSE: "true", OFFLOAD: "true",
-            "LMCACHE_POD_MEMORY": "512", "PD_ROLE": "P"},
+            "AVAILABLE_POD_MEM_SIZE": "512", "PD_ROLE": "P"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
     t.out("日志 PD role detected -> veto", "出现", "出现" if logh(r, "PD role detected") else "缺失", logh(r, "PD role detected"))
@@ -244,11 +244,11 @@ def run_all():
     t.out("命令 --speculative-config", "不出现", "出现" if has(r, "--speculative-config") else "不出现", not has(r, "--speculative-config"))
     t.out("features.speculative_decode", "False", feat(r, "speculative_decode"), feat(r, "speculative_decode") is False)
     t.done()
-    t = TC("TC-P4-06", "P4", "offload 开关 OFF（不设 LMCACHE_OFFLOAD）→ 不产卸载",
+    t = TC("TC-P4-06", "P4", "offload 开关 OFF（不设 ENABLE_KV_OFFLOAD）→ 不产卸载",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
            {"DISTRIBUTED_EXECUTOR_BACKEND": "mp"}, {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
-    t.out("命令 export LMCACHE_OFFLOAD=true", "不出现", "出现" if has(r, "export LMCACHE_OFFLOAD=true") else "不出现", not has(r, "export LMCACHE_OFFLOAD=true"))
+    t.out("命令 export ENABLE_KV_OFFLOAD=true", "不出现", "出现" if has(r, "export ENABLE_KV_OFFLOAD=true") else "不出现", not has(r, "export ENABLE_KV_OFFLOAD=true"))
     t.out("features.kv_offload", "False", feat(r, "kv_offload"), feat(r, "kv_offload") is False)
     t.done()
 
@@ -257,32 +257,32 @@ def run_all():
          "  M_offload=POD-(7*TP*DP+3)-10% ############")
     t = TC("TC-P5-01", "P5", "auto LMCache：写回 per-card 容量 + 强制 swap_space=0（POD=512, 8卡, TP8/DP1）",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "LMCACHE_POD_MEMORY": "512"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "512"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
-    t.out("LMCACHE_MAX_LOCAL_CPU_SIZE", "50 = M_offload(512-59-51=401) ÷ 8卡", cpu_size(r), cpu_size(r) == 50)
+    t.out("KV_MEM_OFFLOAD_SIZE", "50 = M_offload(512-59-51=401) ÷ 8卡", cpu_size(r), cpu_size(r) == 50)
     t.out("命令 --swap-space 0", "出现（auto 原子绑定）", "出现" if has(r, "--swap-space 0") else "不出现", has(r, "--swap-space 0"))
     t.done()
     t = TC("TC-P5-02", "P5", "auto native：整节点 M_offload 不除卡数（V4-Flash·Ascend cpu_swap_space_gb）",
            {"model-name": "DeepSeek-V4-Flash", "engine": "vllm_ascend", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "dp_deployment", "WINGS_ASCEND_PLATFORM": "a2", OFFLOAD: "true", "LMCACHE_POD_MEMORY": "512"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "dp_deployment", "WINGS_ASCEND_PLATFORM": "a2", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "512"},
            {"architecture": "DeepseekV4ForCausalLM", "quantization_config": {"quant_method": "ascend"}})
     r = t.r
     t.out("cpu_swap_space_gb", "401 = 整节点 M_offload（不除卡数）", native_cpu_swap(r), native_cpu_swap(r) == 401)
     t.done()
-    t = TC("TC-P5-03", "P5", "custom：给 LMCACHE_MAX_LOCAL_CPU_SIZE 数值 → 透传不计算",
+    t = TC("TC-P5-03", "P5", "custom：给 KV_MEM_OFFLOAD_SIZE 数值 → 透传不计算",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "LMCACHE_MAX_LOCAL_CPU_SIZE": "200"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "KV_MEM_OFFLOAD_SIZE": "200"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
-    t.out("LMCACHE_MAX_LOCAL_CPU_SIZE", "200（原样透传，不计算）", cpu_size(r), cpu_size(r) == 200)
+    t.out("KV_MEM_OFFLOAD_SIZE", "200（原样透传，不计算）", cpu_size(r), cpu_size(r) == 200)
     t.done()
     t = TC("TC-P5-04", "P5", "熔断：可用容量 < 下限(100G) → 不建 CPU 卸载池（POD=100→31）",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "LMCACHE_POD_MEMORY": "100"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "100"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
-    t.out("LMCACHE_MAX_LOCAL_CPU_SIZE（auto 写回）", "无（熔断）", cpu_size(r), cpu_size(r) is None)
+    t.out("KV_MEM_OFFLOAD_SIZE（auto 写回）", "无（熔断）", cpu_size(r), cpu_size(r) is None)
     t.out("日志 熔断告警（below floor / skip CPU offload）", "出现",
           "出现" if (logh(r, "below floor") or logh(r, "skip CPU offload")) else "缺失",
           logh(r, "below floor") or logh(r, "skip CPU offload"))

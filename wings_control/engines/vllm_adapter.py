@@ -2325,13 +2325,21 @@ def resolve_offload_cpu_capacity_gb(params: Dict[str, Any]) -> Optional[int]:
     if _size_env is None:
         _size_env = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "")  # 过渡期兼容旧名
     max_cpu = (_size_env or "").strip()
-    if max_cpu.lower() != "auto":
-        return None  # custom 带 GB 值或未设置 → 透传
 
     _pod_env = os.getenv("AVAILABLE_POD_MEM_SIZE")
     if _pod_env is None:
         _pod_env = os.getenv("LMCACHE_POD_MEMORY", "")  # 过渡期兼容旧名
     pod_mem = (_pod_env or "").strip()
+
+    # 判定 auto:
+    #   新行为: KV_MEM_OFFLOAD_SIZE == "auto" → auto 自算
+    #   旧兼容: size 缺省(空) AND POD_MEMORY 非空 → 视为 auto（过渡期）
+    if max_cpu.lower() != "auto":
+        if max_cpu == "" and pod_mem:
+            logger.info("[KVCache Offload] legacy auto mode (size absent + POD_MEMORY present); "
+                        "please migrate to KV_MEM_OFFLOAD_SIZE=auto.")
+        else:
+            return None  # custom 带 GB 值或未设置 → 透传
     if not pod_mem:
         return None
     try:
