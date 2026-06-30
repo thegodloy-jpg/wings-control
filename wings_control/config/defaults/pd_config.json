@@ -32,7 +32,6 @@
       "common": {
         "trust_remote_code": true,
         "enable_expert_parallel": true,
-        "enable_prefix_caching": true,
         "disable_hybrid_kv_cache_manager": false
       },
       "prefill": {
@@ -61,6 +60,7 @@
           "max_num_batched_tokens": 120,
           "max_num_seqs": 60,
           "gpu_memory_utilization": 0.88,
+          "enable_prefix_caching": true,
           "async_scheduling": true,
           "compilation_config": { "cudagraph_mode": "FULL_DECODE_ONLY" }
         },
