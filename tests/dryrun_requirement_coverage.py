@@ -130,7 +130,7 @@ def run_all():
     t.done()
     t = TC("TC-P0-03", "P0", "ENABLE_KV_OFFLOAD env → 卸载生效（卸载本就纯 env，无 CLI）",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "512"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", OFFLOAD: "true", "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "512"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
     t.out("features.kv_offload（仅由 ENABLE_KV_OFFLOAD env 驱动）", "True", feat(r, "kv_offload"), feat(r, "kv_offload") is True)
@@ -257,7 +257,7 @@ def run_all():
          "  M_offload=POD-(7*TP*DP+3)-10% ############")
     t = TC("TC-P5-01", "P5", "auto LMCache：写回 per-card 容量 + 强制 swap_space=0（POD=512, 8卡, TP8/DP1）",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "512"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "512"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
     t.out("KV_MEM_OFFLOAD_SIZE", "50 = M_offload(512-59-51=401) ÷ 8卡", cpu_size(r), cpu_size(r) == 50)
@@ -265,7 +265,7 @@ def run_all():
     t.done()
     t = TC("TC-P5-02", "P5", "auto native：整节点 M_offload 不除卡数（V4-Flash·Ascend cpu_swap_space_gb）",
            {"model-name": "DeepSeek-V4-Flash", "engine": "vllm_ascend", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "dp_deployment", "WINGS_ASCEND_PLATFORM": "a2", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "512"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "dp_deployment", "WINGS_ASCEND_PLATFORM": "a2", OFFLOAD: "true", "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "512"},
            {"architecture": "DeepseekV4ForCausalLM", "quantization_config": {"quant_method": "ascend"}})
     r = t.r
     t.out("cpu_swap_space_gb", "401 = 整节点 M_offload（不除卡数）", native_cpu_swap(r), native_cpu_swap(r) == 401)
@@ -279,7 +279,7 @@ def run_all():
     t.done()
     t = TC("TC-P5-04", "P5", "熔断：可用容量 < 下限(100G) → 不建 CPU 卸载池（POD=100→31）",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
-           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "AVAILABLE_POD_MEM_SIZE": "100"},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "100"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
     t.out("KV_MEM_OFFLOAD_SIZE（auto 写回）", "无（熔断）", cpu_size(r), cpu_size(r) is None)

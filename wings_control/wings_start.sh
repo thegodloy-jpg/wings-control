@@ -48,7 +48,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "===== [$(date)] Script started ====="
 
 # ===== QAT 设备文件转移（与 A 保持一致） =====
-if [ "${ENABLE_KV_QAT:-}" = "true" ] || [ "${LMCACHE_QAT:-}" = "True" ]; then
+if [ "${ENABLE_KV_QAT:-}" = "true" ]; then
     DEVICE_PATTERNS=("uio*" "qat_*" "usdm_drv")
     for pattern in "${DEVICE_PATTERNS[@]}"; do
         for device in /tmp/host_dev/$pattern; do

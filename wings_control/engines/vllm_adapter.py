@@ -473,16 +473,8 @@ def _build_lmcache_yaml_dict(engine: str) -> dict:
     config: dict = {}
 
     # ── L2 门控（需求一 §A.1）──
-    _mem_env = os.getenv("ENABLE_KV_MEM_OFFLOAD")
-    if _mem_env is None:
-        _mem_env = os.getenv("LMCACHE_LOCAL_CPU", "false")  # 过渡期兼容旧名
-    mem_enabled = _mem_env.strip().lower() == "true"
-
-    _disk_env = os.getenv("ENABLE_KV_DISK_OFFLOAD")
-    if _disk_env is None:
-        _disk_legacy = os.getenv("LMCACHE_LOCAL_DISK", "").strip()
-        _disk_env = "true" if _disk_legacy and _disk_legacy.lower() != "false" else "false"
-    disk_enabled = _disk_env.strip().lower() == "true"
+    mem_enabled = os.getenv("ENABLE_KV_MEM_OFFLOAD", "false").strip().lower() == "true"
+    disk_enabled = os.getenv("ENABLE_KV_DISK_OFFLOAD", "false").strip().lower() == "true"
 
     # ── chunk_size ──
     chunk_size_str = os.getenv("LMCACHE_CHUNK_SIZE", "256")
@@ -493,10 +485,7 @@ def _build_lmcache_yaml_dict(engine: str) -> dict:
 
     # ── local_cpu（仅在 L2 mem=true 时处理）──
     if mem_enabled:
-        _size_env = os.getenv("KV_MEM_OFFLOAD_SIZE")
-        if _size_env is None:
-            _size_env = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "")  # 过渡期兼容旧名
-        max_cpu_size = (_size_env or "").strip()
+        max_cpu_size = os.getenv("KV_MEM_OFFLOAD_SIZE", "").strip()
         config["local_cpu"] = True
         if max_cpu_size and max_cpu_size.lower() != "auto":
             try:
@@ -506,17 +495,11 @@ def _build_lmcache_yaml_dict(engine: str) -> dict:
 
     # ── local_disk（仅在 L2 disk=true 时处理）──
     if disk_enabled:
-        _path_env = os.getenv("KV_DISK_OFFLOAD_PATH")
-        if _path_env is None:
-            _path_env = os.getenv("LMCACHE_LOCAL_DISK", "")  # 过渡期兼容旧名
-        local_disk_path = (_path_env or "").strip()
-        if local_disk_path and local_disk_path.lower() != "true":
+        local_disk_path = os.getenv("KV_DISK_OFFLOAD_PATH", "").strip()
+        if local_disk_path:
             config["local_disk"] = local_disk_path
 
-        _dsize_env = os.getenv("KV_DISK_OFFLOAD_SIZE")
-        if _dsize_env is None:
-            _dsize_env = os.getenv("LMCACHE_MAX_LOCAL_DISK_SIZE", "")  # 过渡期兼容旧名
-        max_disk_size = (_dsize_env or "").strip()
+        max_disk_size = os.getenv("KV_DISK_OFFLOAD_SIZE", "").strip()
         if max_disk_size:
             try:
                 config["max_local_disk_size"] = float(max_disk_size)
@@ -537,16 +520,10 @@ def _build_lmcache_yaml_dict(engine: str) -> dict:
     # ── qat（QAT 硬件压缩，L3 门控已在 get_qat_env() 内）──
     if get_qat_env():
         qat_module = "kv_agent" if engine == "vllm" else os.getenv("LMCACHE_QAT_MODULE", "kv_agent")
-        _inst = os.getenv("KV_QAT_INSTANCE_NUM")
-        if _inst is None:
-            _inst = os.getenv("LMCACHE_QAT_INSTANCE_NUM", "2")
-        _loss = os.getenv("KV_QAT_COMPRESS_LEVEL")
-        if _loss is None:
-            _loss = os.getenv("LMCACHE_QAT_LOSS_LEVEL", "0")
         qat_section: dict = {
             "module_name": qat_module,
-            "instance_num": int(_inst),
-            "loss_level": int(_loss),
+            "instance_num": int(os.getenv("KV_QAT_INSTANCE_NUM", "2")),
+            "loss_level": int(os.getenv("KV_QAT_COMPRESS_LEVEL", "0")),
             "log_enabled": int(os.getenv("LMCACHE_QAT_LOG_ENABLED", "0")),
         }
         config["qat"] = qat_section
@@ -572,20 +549,9 @@ def _need_lmcache_config_yaml() -> bool:
     """
     if get_cold_start_env() or get_qat_env():
         return True
-    # L2 内存门控
-    _mem_env = os.getenv("ENABLE_KV_MEM_OFFLOAD")
-    if _mem_env is None:
-        _mem_env = os.getenv("LMCACHE_LOCAL_CPU", "false")
-    if _mem_env.strip().lower() == "true":
+    if os.getenv("ENABLE_KV_MEM_OFFLOAD", "false").strip().lower() == "true":
         return True
-    # L2 磁盘门控
-    _disk_env = os.getenv("ENABLE_KV_DISK_OFFLOAD")
-    if _disk_env is None:
-        _disk_legacy = os.getenv("LMCACHE_LOCAL_DISK", "").strip()
-        if _disk_legacy and _disk_legacy.lower() != "false":
-            return True
-        return False
-    if _disk_env.strip().lower() == "true":
+    if os.getenv("ENABLE_KV_DISK_OFFLOAD", "false").strip().lower() == "true":
         return True
     return False
 
@@ -721,12 +687,8 @@ def _resolve_lmcache_cpu_env(params: Optional[Dict[str, Any]]) -> Tuple[str, str
     _mem_env = os.getenv("ENABLE_KV_MEM_OFFLOAD")
     if _mem_env is None:
         _mem_env = os.getenv("LMCACHE_LOCAL_CPU", "")  # 过渡期兼容旧名
-    local_cpu_value = _mem_env.strip()
-
-    _size_env = os.getenv("KV_MEM_OFFLOAD_SIZE")
-    if _size_env is None:
-        _size_env = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "")  # 过渡期兼容旧名
-    max_cpu_size = (_size_env or "").strip()
+    local_cpu_value = os.getenv("ENABLE_KV_MEM_OFFLOAD", "").strip()
+    max_cpu_size = os.getenv("KV_MEM_OFFLOAD_SIZE", "").strip()
 
     auto_total = resolve_offload_cpu_capacity_gb(params)
     if auto_total is None:
@@ -760,19 +722,9 @@ def _resolve_offload_backend(params: Optional[Dict[str, Any]]) -> Tuple[str, str
         has_cpu = auto_total > 0          # 熔断(0) → 无 CPU 池
         cpu_mode = "auto"
     else:
-        # L2 内存门控：显式 bool 检查（需求一 §A.1）
-        _mem_env = os.getenv("ENABLE_KV_MEM_OFFLOAD")
-        if _mem_env is None:
-            _mem_env = os.getenv("LMCACHE_LOCAL_CPU", "")
-        has_cpu = _mem_env.strip().lower() == "true"
+        has_cpu = os.getenv("ENABLE_KV_MEM_OFFLOAD", "false").strip().lower() == "true"
         cpu_mode = "custom" if has_cpu else ""
-    # L2 磁盘门控：显式 bool 检查（需求一 §A.1）
-    _disk_env = os.getenv("ENABLE_KV_DISK_OFFLOAD")
-    if _disk_env is None:
-        _disk_legacy = os.getenv("LMCACHE_LOCAL_DISK", "").strip()
-        has_disk = bool(_disk_legacy) and _disk_legacy.lower() != "false"
-    else:
-        has_disk = _disk_env.strip().lower() == "true"
+    has_disk = os.getenv("ENABLE_KV_DISK_OFFLOAD", "false").strip().lower() == "true"
     if has_cpu and has_disk:
         backend = "lmcache_cpu_disk"
     elif has_cpu:
@@ -2321,25 +2273,12 @@ def resolve_offload_cpu_capacity_gb(params: Dict[str, Any]) -> Optional[int]:
         0:    auto 命中但 M_offload < 熔断下限 → 调用方不建卸载池。
         >0:   auto「本节点总」容量 M_offload。
     """
-    _size_env = os.getenv("KV_MEM_OFFLOAD_SIZE")
-    if _size_env is None:
-        _size_env = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "")  # 过渡期兼容旧名
-    max_cpu = (_size_env or "").strip()
+    max_cpu = os.getenv("KV_MEM_OFFLOAD_SIZE", "").strip()
+    pod_mem = os.getenv("AVAILABLE_POD_MEM_SIZE", "").strip()
 
-    _pod_env = os.getenv("AVAILABLE_POD_MEM_SIZE")
-    if _pod_env is None:
-        _pod_env = os.getenv("LMCACHE_POD_MEMORY", "")  # 过渡期兼容旧名
-    pod_mem = (_pod_env or "").strip()
-
-    # 判定 auto:
-    #   新行为: KV_MEM_OFFLOAD_SIZE == "auto" → auto 自算
-    #   旧兼容: size 缺省(空) AND POD_MEMORY 非空 → 视为 auto（过渡期）
+    # 判定: KV_MEM_OFFLOAD_SIZE == "auto" 且 AVAILABLE_POD_MEM_SIZE 非空 → auto 自算
     if max_cpu.lower() != "auto":
-        if max_cpu == "" and pod_mem:
-            logger.info("[KVCache Offload] legacy auto mode (size absent + POD_MEMORY present); "
-                        "please migrate to KV_MEM_OFFLOAD_SIZE=auto.")
-        else:
-            return None  # custom 带 GB 值或未设置 → 透传
+        return None  # custom 带 GB 值或未设置 → 透传
     if not pod_mem:
         return None
     try:
@@ -2374,9 +2313,7 @@ def _resolve_v4_flash_offload_gb(params: Dict[str, Any]) -> int:
         logger.info("[KVCache Offload] native auto size = M_offload(%dG) (整节点，不除卡数).", auto_total)
         return int(auto_total)
     _size_env = os.getenv("KV_MEM_OFFLOAD_SIZE")
-    if _size_env is None:
-        _size_env = os.getenv("LMCACHE_MAX_LOCAL_CPU_SIZE", "")  # 过渡期兼容旧名
-    raw_size = (_size_env or "").strip()
+    raw_size = os.getenv("KV_MEM_OFFLOAD_SIZE", "").strip()
     if raw_size.lower() == "auto":
         raw_size = ""  # auto 已由上面 auto_total 处理，此处兜底回退缺省
     try:

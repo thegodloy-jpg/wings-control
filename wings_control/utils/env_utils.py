@@ -181,38 +181,28 @@ def get_sglang_distributed_port():
 def get_lmcache_env():
     """检查 KVCache Offload（卸载到 CPU/磁盘）功能是否启用。
 
-    从 ENABLE_KV_OFFLOAD 环境变量读取（兼容旧名 LMCACHE_OFFLOAD）。
+    从 ENABLE_KV_OFFLOAD 环境变量读取。
     判断是否将 KVCache 卸载到 CPU 内存或本地磁盘以节省 GPU 显存。
 
     Returns:
         bool: 启用返回 True，未设置或为 'false' 时返回 False
     """
-    _env_val = os.getenv('ENABLE_KV_OFFLOAD')
-    if _env_val is None:
-        _env_val = os.getenv('LMCACHE_OFFLOAD', 'false')  # 过渡期兼容旧名
-    return _env_val.lower() == 'true'
+    return os.getenv('ENABLE_KV_OFFLOAD', 'false').lower() == 'true'
 
 
 def get_qat_env():
     """检查 QAT（Quick Assist Technology）压缩功能是否启用。
 
-    从 ENABLE_KV_QAT 环境变量读取（兼容旧名 LMCACHE_QAT）。
-    L3 门控：仅在 L2 磁盘开关为 true 时生效（需求一 §A.1）。
+    从 ENABLE_KV_QAT 环境变量读取。
+    L3 门控：仅在 L2 磁盘开关 ENABLE_KV_DISK_OFFLOAD=true 时生效（需求一 §A.1）。
 
     Returns:
         bool: 启用返回 True，否则返回 False
     """
     # L3 门控：需 L2 磁盘开关为 true
-    _disk_new = os.getenv('ENABLE_KV_DISK_OFFLOAD', '').strip().lower()
-    _disk_old = os.getenv('LMCACHE_LOCAL_DISK', '').strip()
-    _disk_on = (_disk_new == 'true') or (_disk_new != 'false' and _disk_old and _disk_old.lower() != 'false')
-    if not _disk_on:
+    if os.getenv('ENABLE_KV_DISK_OFFLOAD', 'false').lower() != 'true':
         return False
-
-    _env_val = os.getenv('ENABLE_KV_QAT')
-    if _env_val is None:
-        _env_val = os.getenv('LMCACHE_QAT', 'false')  # 过渡期兼容旧名
-    return _env_val.lower() == 'true'
+    return os.getenv('ENABLE_KV_QAT', 'false').lower() == 'true'
 
 
 def get_cold_start_env():

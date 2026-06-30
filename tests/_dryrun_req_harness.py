@@ -31,15 +31,11 @@ import dry_run as dr  # noqa: E402
 _EXTRA_ENV_KEYS = {
     "SPARSE_LEVEL", "PD_ROLE", "ENABLE_OPERATOR_ACCELERATION", "ENABLE_SOFT_FP8",
     "ENABLE_SOFT_FP4",
-    # 新 ENV 名（需求一）
     "ENABLE_KV_OFFLOAD", "ENABLE_KV_MEM_OFFLOAD", "ENABLE_KV_DISK_OFFLOAD",
     "ENABLE_KV_QAT", "KV_MEM_OFFLOAD_SIZE", "KV_DISK_OFFLOAD_PATH",
     "KV_DISK_OFFLOAD_SIZE", "KV_QAT_COMPRESS_LEVEL", "KV_QAT_INSTANCE_NUM",
     "AVAILABLE_POD_MEM_SIZE",
-    # 旧 ENV 名（过渡期兼容，代码仍有 fallback 读取）
-    "LMCACHE_POD_MEMORY", "LMCACHE_LOCAL_CPU", "LMCACHE_LOCAL_DISK",
-    "LMCACHE_MAX_LOCAL_DISK_SIZE", "LMCACHE_QAT", "LMCACHE_COLD_START",
-    "LMCACHE_MAX_LOCAL_CPU_SIZE", "LMCACHE_OFFLOAD",
+    "LMCACHE_COLD_START",  # 内部参数
     "ENABLE_SPARSE", "SPARSE_ENABLE",
     "ENABLE_SPECULATIVE_DECODE", "SD_ENABLE",
     "WINGS_DEVICE_NAME", "WINGS_DEVICE_MEMORY", "ENABLE_RAG_ACC",
@@ -138,7 +134,7 @@ def run_case(user_cli: dict, orchestration_env: dict | None, model_config: dict)
             pass
         if not any(feats.values()) and (
             merged.get("enable_speculative_decode") or merged.get("enable_sparse")
-            or os.getenv("ENABLE_KV_OFFLOAD", os.getenv("LMCACHE_OFFLOAD", "")).strip().lower() == "true"
+            or os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() == "true"
             or os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true"
         ):
             from engines.vllm_adapter import (
@@ -147,7 +143,7 @@ def run_case(user_cli: dict, orchestration_env: dict | None, model_config: dict)
             feats = {
                 "speculative_decode": bool(merged.get("enable_speculative_decode")),
                 "sparse_kv": bool(merged.get("enable_sparse")),
-                "kv_offload": os.getenv("ENABLE_KV_OFFLOAD", os.getenv("LMCACHE_OFFLOAD", "")).strip().lower() == "true",
+                "kv_offload": os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() == "true",
                 "rag_acc": os.getenv("RAG_ACC_ENABLED", "").strip().lower() == "true",
             }
             vars_ = {
