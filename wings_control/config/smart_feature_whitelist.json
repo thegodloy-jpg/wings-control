@@ -15,7 +15,7 @@
     {"engine": "vllm_ascend", "name_tokens": ["glm-4.7"], "card_tokens": ["910b", "910c"], "arch": "Glm4MoeForCausalLM", "source": "0430"},
     {"engine": "vllm_ascend", "name_tokens": ["minimax-m2.5", "minimax-m25"], "card_tokens": ["910b", "910c"], "arch": "MiniMaxM2ForCausalLM", "source": "0430"},
     {"engine": "vllm_ascend", "name_tokens": ["deepseek-v3.2", "deepseek_v3.2"], "card_tokens": ["910c"], "arch": "DeepseekV32ForCausalLM", "source": "0430"},
-    {"engine": "vllm_ascend", "name_tokens": ["qwen3.6", "qwen3_6"], "card_tokens": ["910c"], "arch": "Qwen3_5MoeForConditionalGeneration", "source": "0430"},
+    {"engine": "vllm_ascend", "name_tokens": ["qwen3.6", "qwen3_6"], "card_tokens": ["910b", "910c"], "arch": "Qwen3_5MoeForConditionalGeneration", "source": "0430"},
     {"engine": "vllm_ascend", "name_tokens": ["deepseek-v4-flash", "v4-flash"], "card_tokens": ["910b", "910c"], "arch": "DeepseekV4ForCausalLM", "source": "day0"},
     {"engine": "vllm_ascend", "name_tokens": ["glm-5.2", "glm5.2"], "card_tokens": ["910b", "910c"], "arch": "GlmMoeDsaForCausalLM", "source": "day0"}
   ],
