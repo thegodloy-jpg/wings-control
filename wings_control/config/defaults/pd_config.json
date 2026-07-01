@@ -27,6 +27,7 @@
       "_source": "用户自定义 3P1D launch_online_dp / run_dp_template.sh 对齐；Qwen3-30B-A3B。external-lb(DP fork)专用条目。",
       "_confirm": "落地前需真机确认的值：quantization(当前 platform 跑的是非量化 dtype=auto，故此处不设 ascend；若权重是 w8a8 再加 quantization=ascend)；disable_hybrid_kv_cache_manager=false(对齐模板 --no-disable，与 default 的 true 相反)；decode 的 max_num_batched_tokens/max_num_seqs 沿用模板 120/60，按真机吞吐再调；prefill/decode 的 HCCL 超时与 buffer 取自模板。",
       "connector": "MooncakeConnectorV1",
+      "connector_module_path": "vllm_ascend.distributed.mooncake_connector",
       "kv_port": { "P": "30000", "D": "30100" },
       "extra_config": {},
       "common": {
