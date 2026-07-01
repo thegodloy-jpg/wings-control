@@ -1963,44 +1963,11 @@ def _writeback_dp_topology_to_params(params: Dict[str, Any], engine_config: Dict
 
 def _apply_auto_offload_swap_space(params: Dict[str, Any], engine_config: Dict[str, Any],
                                    explicit_keys: set) -> None:
-    """C4 挂载点②：auto 卸载模式强制 ``swap_space=0``（与卸载池预算原子绑定）。需求一 §3.0。
+    """C4 挂载点②：已废弃。
 
-    auto 把整块可用 host RAM 预算给卸载池；若不归零 vLLM 自身 swap_space，二者争抢同一
-    host RAM → 预算凭空少算 4G×本节点卡数（TP8≈32G）→ OOM 风险。前提：无 beam search / n>1。
-
-    注意：
-      - vLLM >= 0.21.0 已移除 --swap-space 参数，注入会导致引擎启动崩溃。
-      - 不在 offload 白名单的模型不注入。
+    vLLM >= 0.21.0 已移除 --swap-space CLI 参数，继续注入会导致引擎启动崩溃。
+    该函数保留为空操作以维持调用链兼容性，后续版本可彻底删除。
     """
-    if "swap_space" in explicit_keys:
-        return
-    if not get_lmcache_env():
-        return
-    # ── Smart 白名单守卫：不在白名单 = 不注入 swap_space ──
-    _smart_feats = params.get("_smart_feats")
-    if _smart_feats is not None:
-        if "offload" not in _smart_feats:
-            return
-    else:
-        if not feature_allowed(params.get("engine", ""), params.get("model_name"),
-                               params.get("model_path"), resolve_card_token(), "offload"):
-            return
-    # ── vLLM >= 0.21.0 守卫：--swap-space 已从 vLLM CLI 移除 ──
-    _ev = os.getenv("ENGINE_VERSION", "")
-    if _ev.startswith("v0."):
-        try:
-            _minor = int(_ev.split(".")[1]) if len(_ev.split(".")) >= 2 else 0
-            if _minor >= 21:
-                logger.info(
-                    "[KVCache Offload] ENGINE_VERSION=%s (vLLM >= 0.21) — "
-                    "--swap-space is removed; skipping swap_space=0 injection.", _ev)
-                return
-        except (ValueError, IndexError):
-            pass
-    if resolve_offload_cpu_capacity_gb(params) is None:
-        return  # 非 auto（custom 透传或无 AVAILABLE_POD_MEM_SIZE）
-    engine_config["swap_space"] = 0
-    logger.info("[KVCache Offload] auto mode -> force swap_space=0 (atomic with offload budget).")
 
 
 def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:

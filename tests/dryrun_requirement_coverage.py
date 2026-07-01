@@ -255,13 +255,13 @@ def run_all():
     # ════════ P5 · 内存自动计算 C4 ════════
     emit("\n############ P5 · KV 卸载 auto 容量反向预算（C4）"
          "  M_offload=POD-(7*TP*DP+3)-10% ############")
-    t = TC("TC-P5-01", "P5", "auto LMCache：写回 per-card 容量 + 强制 swap_space=0（POD=512, 8卡, TP8/DP1）",
+    t = TC("TC-P5-01", "P5", "auto LMCache：写回 per-card 容量（POD=512, 8卡, TP8/DP1）",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
            {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPARSE: "true", OFFLOAD: "true", "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "512"},
            {"architecture": "Glm4MoeForCausalLM"})
     r = t.r
     t.out("KV_MEM_OFFLOAD_SIZE", "50 = M_offload(512-59-51=401) ÷ 8卡", cpu_size(r), cpu_size(r) == 50)
-    t.out("命令 --swap-space 0", "出现（auto 原子绑定）", "出现" if has(r, "--swap-space 0") else "不出现", has(r, "--swap-space 0"))
+    t.out("命令 --swap-space 0", "不出现（vLLM >= 0.21.0 已移除该参数）", "出现" if has(r, "--swap-space 0") else "不出现", not has(r, "--swap-space 0"))
     t.done()
     t = TC("TC-P5-02", "P5", "auto native：整节点 M_offload 不除卡数（V4-Flash·Ascend cpu_swap_space_gb）",
            {"model-name": "DeepSeek-V4-Flash", "engine": "vllm_ascend", "device-count": 8},

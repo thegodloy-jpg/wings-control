@@ -202,7 +202,7 @@
 
 ############ P5 · KV 卸载 auto 容量反向预算（C4）  M_offload=POD-(7*TP*DP+3)-10% ############
 
-[TC-P5-01] P5 · auto LMCache：写回 per-card 容量 + 强制 swap_space=0（POD=512, 8卡, TP8/DP1）  ==> PASS
+[TC-P5-01] P5 · auto LMCache：写回 per-card 容量（POD=512, 8卡, TP8/DP1）  ==> PASS
   入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
   入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true', 'KV_MEM_OFFLOAD_SIZE': 'auto', 'AVAILABLE_POD_MEM_SIZE': '512'}
   入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
@@ -211,8 +211,8 @@
         期望 = 50 = M_offload(512-59-51=401) ÷ 8卡
         实际 = 50    [PASS]
   出参 命令 --swap-space 0
-        期望 = 出现（auto 原子绑定）
-        实际 = 出现    [PASS]
+        期望 = 不出现（vLLM >= 0.21.0 已移除该参数）
+        实际 = 不出现    [PASS]
 
 [TC-P5-02] P5 · auto native：整节点 M_offload 不除卡数（V4-Flash·Ascend cpu_swap_space_gb）  ==> PASS
   入参 user_cli          : {'model-name': 'DeepSeek-V4-Flash', 'engine': 'vllm_ascend', 'device-count': 8}
