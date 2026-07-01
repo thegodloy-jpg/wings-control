@@ -2739,7 +2739,9 @@ def _is_mtp_or_suffix_strategy(params: Dict[str, Any], engine: str) -> bool:
     if engine != "vllm":
         return False
     if params.get("speculative_decode_model_path"):
-        return False
+        _raw = str(params.get("speculative_decode_model_path", "")).strip().lower()
+        if _raw not in ("none", ""):
+            return False
     return True
 
 
