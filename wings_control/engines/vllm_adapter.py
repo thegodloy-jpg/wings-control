@@ -1967,12 +1967,36 @@ def _apply_auto_offload_swap_space(params: Dict[str, Any], engine_config: Dict[s
 
     auto 把整块可用 host RAM 预算给卸载池；若不归零 vLLM 自身 swap_space，二者争抢同一
     host RAM → 预算凭空少算 4G×本节点卡数（TP8≈32G）→ OOM 风险。前提：无 beam search / n>1。
-    注：部分 vLLM 版本可能弃用 swap_space，落地时按目标引擎版本核对该 flag 仍被接受。
+
+    注意：
+      - vLLM >= 0.21.0 已移除 --swap-space 参数，注入会导致引擎启动崩溃。
+      - 不在 offload 白名单的模型不注入。
     """
     if "swap_space" in explicit_keys:
         return
     if not get_lmcache_env():
         return
+    # ── Smart 白名单守卫：不在白名单 = 不注入 swap_space ──
+    _smart_feats = params.get("_smart_feats")
+    if _smart_feats is not None:
+        if "offload" not in _smart_feats:
+            return
+    else:
+        if not feature_allowed(params.get("engine", ""), params.get("model_name"),
+                               params.get("model_path"), resolve_card_token(), "offload"):
+            return
+    # ── vLLM >= 0.21.0 守卫：--swap-space 已从 vLLM CLI 移除 ──
+    _ev = os.getenv("ENGINE_VERSION", "")
+    if _ev.startswith("v0."):
+        try:
+            _minor = int(_ev.split(".")[1]) if len(_ev.split(".")) >= 2 else 0
+            if _minor >= 21:
+                logger.info(
+                    "[KVCache Offload] ENGINE_VERSION=%s (vLLM >= 0.21) — "
+                    "--swap-space is removed; skipping swap_space=0 injection.", _ev)
+                return
+        except (ValueError, IndexError):
+            pass
     if resolve_offload_cpu_capacity_gb(params) is None:
         return  # 非 auto（custom 透传或无 AVAILABLE_POD_MEM_SIZE）
     engine_config["swap_space"] = 0
