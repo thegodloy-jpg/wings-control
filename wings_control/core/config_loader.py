@@ -1103,6 +1103,10 @@ def _build_pd_external_lb_kv(entry, ext):
     module_path = entry.get("connector_module_path")
     if module_path:
         cfg["kv_connector_module_path"] = module_path
+    # kv_buffer_device：Layerwise 等连接器需指定 buffer 所在设备（npu）
+    kv_buf_dev = entry.get("kv_buffer_device")
+    if kv_buf_dev:
+        cfg["kv_buffer_device"] = kv_buf_dev
     # engine_id 由 PD_INDEX 派生（跨 P/D 全局连续），统一适用于所有连接器。
     # PD_INDEX 跨角色共用编号：P 实例在前、D 实例在后，天然避免 P/D engine_id 撞号。
     # 占位符 __PD_INDEX__ 由 fork 脚本按 shell 变量 $PD_INDEX 展开。
