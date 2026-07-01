@@ -2790,14 +2790,32 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
         return ""
 
     draft_path = params.get("speculative_decode_model_path")
+    _draft_raw = str(draft_path).strip().lower() if draft_path else ""
+    logger.info(
+        "[SpecDecode-DIAG] resolve_speculative_strategy entry: "
+        "raw_draft_path=%r stripped_lower=%r engine=%s",
+        draft_path, _draft_raw, engine,
+    )
     # "none" / 空串 / None 均视为「无草稿模型」，回落 MTP/suffix 路径。
     # K8s ConfigMap 常以 SPECULATIVE_DECODE_MODEL_PATH=none 表示未指定，
     # 但字符串 "none" 为 truthy，会被误判为有效草稿模型路径导致生成 draft_model 配置。
-    if draft_path and str(draft_path).strip().lower() not in ("none", ""):
+    if draft_path and _draft_raw not in ("none", ""):
+        logger.info(
+            "[SpecDecode-DIAG] draft_path is real (not none/empty) → entering draft_model branch"
+        )
         draft_model_info = ModelIdentifierDraft(draft_path)
         if 'eagle3' in draft_model_info.draft_model_architecture.lower():
             return "eagle3"
         return "draft_model"
+    if draft_path:
+        logger.info(
+            "[SpecDecode-DIAG] draft_path=%r filtered as 'none' → falling through to MTP/suffix",
+            draft_path,
+        )
+    else:
+        logger.info(
+            "[SpecDecode-DIAG] draft_path is None/empty → falling through to MTP/suffix"
+        )
 
     model_info = ModelIdentifier(
         params.get("model_name"),
@@ -2927,16 +2945,24 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         logger.info("[AdvFeature-SpecDecode] engine='%s' does not support speculative decode, skipping", engine)
         return ""
 
-    if params.get("speculative_decode_model_path"):
-        _raw_draft = str(params.get("speculative_decode_model_path", "")).strip().lower()
+    spec_draft_raw = params.get("speculative_decode_model_path")
+    logger.info(
+        "[SpecDecode-DIAG] _build_speculative_cmd entry: "
+        "enable_spec_decode=%s draft_path=%r engine=%s strategy=%s engine_has_spec_config=%s",
+        params.get("enable_speculative_decode"), spec_draft_raw, engine, strategy,
+        bool((params.get("engine_config") or {}).get("speculative_config")),
+    )
+
+    if spec_draft_raw:
+        _raw_draft = str(spec_draft_raw).strip().lower()
         if _raw_draft not in ("none", ""):
             logger.info("[AdvFeature-SpecDecode] Draft model path detected: %s, using draft_model strategy",
-                        params.get("speculative_decode_model_path"))
+                        spec_draft_raw)
             _handle_draft_model_case(params, speculative_config_temp)
             return _format_speculative_result(speculative_config_temp)
         logger.info("[AdvFeature-SpecDecode] Draft model path is '%s' — treated as no draft model, "
                     "falling through to strategy='%s'",
-                    params.get("speculative_decode_model_path"), strategy)
+                    spec_draft_raw, strategy)
 
     if strategy == "suffix":
         logger.info("[AdvFeature-SpecDecode] Architecture %s → suffix strategy",
