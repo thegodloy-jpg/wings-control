@@ -761,6 +761,25 @@ def _build_cache_env_commands(engine: str, params: Optional[Dict[str, Any]] = No
     if not get_lmcache_env():
         return env_commands
 
+    # ── Smart 白名单二次守卫（与 config_loader._set_kv_cache_config 对齐）──
+    # apply_effective_feature_enablement 通过 os.environ 收口，
+    # 但 os.environ 可能在中间层被重置；此处直接查询白名单确保不被绕过。
+    # 优先复用 C14 收口的 _smart_feats stash；stash 缺失时回退 feature_allowed()。
+    _smart_feats = params.get("_smart_feats")
+    if _smart_feats is not None:
+        _offload_ok = "offload" in _smart_feats
+    else:
+        _offload_ok = feature_allowed(
+            params.get("engine", ""), params.get("model_name"),
+            params.get("model_path"), resolve_card_token(), "offload",
+        )
+    if not _offload_ok:
+        logger.info(
+            "[SmartFeature] offload suppressed by whitelist in "
+            "_build_cache_env_commands — skipping LMCache env exports."
+        )
+        return env_commands
+
     # 守卫（条件由 _classify_offload_special_case 统一裁定；三特例均与 LMCache 互斥，跳过 env 导出）
     special = _classify_offload_special_case(params, engine)
     if _lmcache_engine_env_skip(special):
@@ -2777,8 +2796,12 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
     if engine not in ("vllm", "vllm_ascend"):
         return ""
 
-    if params.get("speculative_decode_model_path"):
-        draft_model_info = ModelIdentifierDraft(params.get("speculative_decode_model_path"))
+    draft_path = params.get("speculative_decode_model_path")
+    # "none" / 空串 / None 均视为「无草稿模型」，回落 MTP/suffix 路径。
+    # K8s ConfigMap 常以 SPECULATIVE_DECODE_MODEL_PATH=none 表示未指定，
+    # 但字符串 "none" 为 truthy，会被误判为有效草稿模型路径导致生成 draft_model 配置。
+    if draft_path and str(draft_path).strip().lower() not in ("none", ""):
+        draft_model_info = ModelIdentifierDraft(draft_path)
         if 'eagle3' in draft_model_info.draft_model_architecture.lower():
             return "eagle3"
         return "draft_model"
@@ -2912,10 +2935,15 @@ def _build_speculative_cmd(params: Dict[str, Any], engine: str) -> str:
         return ""
 
     if params.get("speculative_decode_model_path"):
-        logger.info("[AdvFeature-SpecDecode] Draft model path detected: %s, using draft_model strategy",
-                    params.get("speculative_decode_model_path"))
-        _handle_draft_model_case(params, speculative_config_temp)
-        return _format_speculative_result(speculative_config_temp)
+        _raw_draft = str(params.get("speculative_decode_model_path", "")).strip().lower()
+        if _raw_draft not in ("none", ""):
+            logger.info("[AdvFeature-SpecDecode] Draft model path detected: %s, using draft_model strategy",
+                        params.get("speculative_decode_model_path"))
+            _handle_draft_model_case(params, speculative_config_temp)
+            return _format_speculative_result(speculative_config_temp)
+        logger.info("[AdvFeature-SpecDecode] Draft model path is '%s' — treated as no draft model, "
+                    "falling through to strategy='%s'",
+                    params.get("speculative_decode_model_path"), strategy)
 
     if strategy == "suffix":
         logger.info("[AdvFeature-SpecDecode] Architecture %s → suffix strategy",

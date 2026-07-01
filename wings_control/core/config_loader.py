@@ -40,7 +40,7 @@ from utils.env_utils import get_master_ip, get_node_ips, get_lmcache_env, get_pd
 from utils.file_utils import check_torch_dtype, get_directory_size, check_permission_640, load_json_config
 from utils.model_utils import (ModelIdentifier,
                                is_glm_moe_dsa_glm51, is_glm52_single_node_even, resolve_thinking_off_policy,
-                               resolve_feature_whitelist,
+                               resolve_feature_whitelist, feature_allowed,
                                THINKING_ALWAYS_ON, THINKING_HYBRID, THINKING_NONE)
 from utils.device_utils import check_pcie_cards, resolve_card_token
 
@@ -861,6 +861,23 @@ def _set_kv_cache_config(params, ctx, model_info=None):
     lmcache_offload = get_lmcache_env()
     pd_role = get_pd_role_env()
     device = ctx.get('device', '')
+
+    # ── Smart 白名单二次守卫 ──
+    # apply_effective_feature_enablement 在上游通过 os.environ 收口，
+    # 但 os.environ 修改在复杂部署链路中可能被中间层重置。
+    # 此处直接查询白名单，确保不在白名单的模型即使 ENABLE_KV_OFFLOAD=true 也不注入。
+    if lmcache_offload:
+        _offload_engine = ctx.get("engine", "")
+        _offload_name = ctx.get("model_name", "")
+        _offload_path = ctx.get("model_path", "")
+        _offload_card = resolve_card_token()
+        if not feature_allowed(_offload_engine, _offload_name, _offload_path, _offload_card, "offload"):
+            logger.info(
+                "[SmartFeature] offload suppressed by whitelist in _set_kv_cache_config "
+                "(engine=%s model=%s card=%s) — ENABLE_KV_OFFLOAD was true but model not in offload whitelist.",
+                _offload_engine, _offload_name, _offload_card or "(empty)",
+            )
+            lmcache_offload = False
 
     if lmcache_offload and model_info is not None and _is_deepseek_v4_cpu_offload(ctx, model_info):
         params["kv_transfer_config"] = json.dumps(

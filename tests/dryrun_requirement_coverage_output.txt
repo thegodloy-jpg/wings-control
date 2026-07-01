@@ -31,12 +31,12 @@
         期望 = deepseek_mtp
         实际 = deepseek_mtp    [PASS]
 
-[TC-P0-03] P0 · LMCACHE_OFFLOAD env → 卸载生效（卸载本就纯 env，无 CLI）  ==> PASS
+[TC-P0-03] P0 · ENABLE_KV_OFFLOAD env → 卸载生效（卸载本就纯 env，无 CLI）  ==> PASS
   入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
-  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512'}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_KV_OFFLOAD': 'true', 'KV_MEM_OFFLOAD_SIZE': 'auto', 'AVAILABLE_POD_MEM_SIZE': '512'}
   入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
-  下发通道 三特性=env下发({'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
-  出参 features.kv_offload（仅由 LMCACHE_OFFLOAD env 驱动）
+  下发通道 三特性=env下发({'ENABLE_KV_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 features.kv_offload（仅由 ENABLE_KV_OFFLOAD env 驱动）
         期望 = True
         实际 = True    [PASS]
   出参 variants.kv_offload
@@ -118,11 +118,11 @@
         期望 = 出现
         实际 = 出现    [PASS]
 
-[TC-P3-03] P3 · 非白名单 + LMCACHE_OFFLOAD → offload 抑制对称日志  ==> PASS
+[TC-P3-03] P3 · 非白名单 + ENABLE_KV_OFFLOAD → offload 抑制对称日志  ==> PASS
   入参 user_cli          : {'model-name': 'Llama-3-70B', 'engine': 'vllm', 'device-count': 8}
-  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'LMCACHE_OFFLOAD': 'true'}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_KV_OFFLOAD': 'true'}
   入参 model_config      : {'architecture': 'LlamaForCausalLM'}
-  下发通道 三特性=env下发({'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  下发通道 三特性=env下发({'ENABLE_KV_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
   出参 日志 offload requested but not in whitelist
         期望 = 出现
         实际 = 出现    [PASS]
@@ -152,21 +152,21 @@
 
 [TC-P4-03] P4 · offload 不在白名单 → 收口关（Qwen3.5-397B·NV：spec,sparse 无 offload）  ==> PASS
   入参 user_cli          : {'model-name': 'qwen3.5-397b', 'engine': 'vllm', 'device-count': 8}
-  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512'}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true', 'AVAILABLE_POD_MEM_SIZE': '512'}
   入参 model_config      : {'architecture': 'Qwen3_5MoeForConditionalGeneration'}
-  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
   出参 features.kv_offload
         期望 = False
         实际 = False    [PASS]
-  出参 命令 export LMCACHE_OFFLOAD=true
+  出参 命令 export ENABLE_KV_OFFLOAD=true
         期望 = 不出现
         实际 = 不出现    [PASS]
 
 [TC-P4-04] P4 · PD 一票否决 → 三特性全关  ==> PASS
   入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
-  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512', 'PD_ROLE': 'P'}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true', 'AVAILABLE_POD_MEM_SIZE': '512', 'PD_ROLE': 'P'}
   入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
-  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'PD_ROLE': 'P'})  user_cli含特性CLI标志=False
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'true', 'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true', 'PD_ROLE': 'P'})  user_cli含特性CLI标志=False
   出参 日志 PD role detected -> veto
         期望 = 出现
         实际 = 出现    [PASS]
@@ -188,12 +188,12 @@
         期望 = False
         实际 = False    [PASS]
 
-[TC-P4-06] P4 · offload 开关 OFF（不设 LMCACHE_OFFLOAD）→ 不产卸载  ==> PASS
+[TC-P4-06] P4 · offload 开关 OFF（不设 ENABLE_KV_OFFLOAD）→ 不产卸载  ==> PASS
   入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
   入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp'}
   入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
   下发通道 三特性=env下发({})  user_cli含特性CLI标志=False
-  出参 命令 export LMCACHE_OFFLOAD=true
+  出参 命令 export ENABLE_KV_OFFLOAD=true
         期望 = 不出现
         实际 = 不出现    [PASS]
   出参 features.kv_offload
@@ -204,10 +204,10 @@
 
 [TC-P5-01] P5 · auto LMCache：写回 per-card 容量 + 强制 swap_space=0（POD=512, 8卡, TP8/DP1）  ==> PASS
   入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
-  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512'}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true', 'KV_MEM_OFFLOAD_SIZE': 'auto', 'AVAILABLE_POD_MEM_SIZE': '512'}
   入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
-  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
-  出参 LMCACHE_MAX_LOCAL_CPU_SIZE
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 KV_MEM_OFFLOAD_SIZE
         期望 = 50 = M_offload(512-59-51=401) ÷ 8卡
         实际 = 50    [PASS]
   出参 命令 --swap-space 0
@@ -216,28 +216,28 @@
 
 [TC-P5-02] P5 · auto native：整节点 M_offload 不除卡数（V4-Flash·Ascend cpu_swap_space_gb）  ==> PASS
   入参 user_cli          : {'model-name': 'DeepSeek-V4-Flash', 'engine': 'vllm_ascend', 'device-count': 8}
-  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'dp_deployment', 'WINGS_ASCEND_PLATFORM': 'a2', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '512'}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'dp_deployment', 'WINGS_ASCEND_PLATFORM': 'a2', 'ENABLE_KV_OFFLOAD': 'true', 'KV_MEM_OFFLOAD_SIZE': 'auto', 'AVAILABLE_POD_MEM_SIZE': '512'}
   入参 model_config      : {'architecture': 'DeepseekV4ForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
-  下发通道 三特性=env下发({'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  下发通道 三特性=env下发({'ENABLE_KV_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
   出参 cpu_swap_space_gb
         期望 = 401 = 整节点 M_offload（不除卡数）
         实际 = 401    [PASS]
 
-[TC-P5-03] P5 · custom：给 LMCACHE_MAX_LOCAL_CPU_SIZE 数值 → 透传不计算  ==> PASS
+[TC-P5-03] P5 · custom：给 KV_MEM_OFFLOAD_SIZE 数值 → 透传不计算  ==> PASS
   入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
-  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_MAX_LOCAL_CPU_SIZE': '200'}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true', 'KV_MEM_OFFLOAD_SIZE': '200'}
   入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
-  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
-  出参 LMCACHE_MAX_LOCAL_CPU_SIZE
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 KV_MEM_OFFLOAD_SIZE
         期望 = 200（原样透传，不计算）
         实际 = 200    [PASS]
 
 [TC-P5-04] P5 · 熔断：可用容量 < 下限(100G) → 不建 CPU 卸载池（POD=100→31）  ==> PASS
   入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
-  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true', 'LMCACHE_POD_MEMORY': '100'}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true', 'KV_MEM_OFFLOAD_SIZE': 'auto', 'AVAILABLE_POD_MEM_SIZE': '100'}
   入参 model_config      : {'architecture': 'Glm4MoeForCausalLM'}
-  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'LMCACHE_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
-  出参 LMCACHE_MAX_LOCAL_CPU_SIZE（auto 写回）
+  下发通道 三特性=env下发({'ENABLE_SPARSE': 'true', 'ENABLE_KV_OFFLOAD': 'true'})  user_cli含特性CLI标志=False
+  出参 KV_MEM_OFFLOAD_SIZE（auto 写回）
         期望 = 无（熔断）
         实际 = None    [PASS]
   出参 日志 熔断告警（below floor / skip CPU offload）

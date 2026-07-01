@@ -101,7 +101,7 @@ cat > /tmp/_mindie_overrides.json << 'OVERRIDES_EOF'
   },
   "model_config": {
     "modelName": "DeepSeek-V3.1",
-    "modelWeightPath": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_ljgspmx_",
+    "modelWeightPath": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h8y319xv",
     "worldSize": 8,
     "cpuMemSize": 5,
     "npuMemSize": -1,
@@ -319,7 +319,7 @@ cat > /tmp/_mindie_overrides.json << 'OVERRIDES_EOF'
   },
   "model_config": {
     "modelName": "DeepSeek-V3.1",
-    "modelWeightPath": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_ljgspmx_",
+    "modelWeightPath": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h8y319xv",
     "worldSize": 8,
     "cpuMemSize": 5,
     "npuMemSize": -1,
