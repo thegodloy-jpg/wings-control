@@ -1849,7 +1849,8 @@ def apply_effective_feature_enablement(p: Dict[str, Any], hardware_env: Dict[str
         p["enable_speculative_decode"] = False
         p["_smart_feats"] = []
         for env_name in ("ENABLE_SPARSE", "SPARSE_ENABLE",
-                         "ENABLE_SPECULATIVE_DECODE", "SD_ENABLE", "ENABLE_KV_OFFLOAD"):
+                         "ENABLE_SPECULATIVE_DECODE", "SD_ENABLE",
+                         "ENABLE_KV_OFFLOAD", "LMCACHE_OFFLOAD"):
             os.environ[env_name] = "false"
         logger.info("[SmartFeature] PD role detected -> veto: spec/sparse/offload all disabled")
         return
@@ -1886,6 +1887,7 @@ def apply_effective_feature_enablement(p: Dict[str, Any], hardware_env: Dict[str
     offload_eff = offload_req and "offload" in feats
     if offload_req and "offload" not in feats:
         os.environ["ENABLE_KV_OFFLOAD"] = "false"
+        os.environ["LMCACHE_OFFLOAD"] = "false"   # 过渡期兼容旧 ENV 名
         logger.info("[SmartFeature] offload requested but not in whitelist (engine=%s card=%s) "
                     "-> suppressed (ENABLE_KV_OFFLOAD=false)", engine, card or "(empty)")
 
