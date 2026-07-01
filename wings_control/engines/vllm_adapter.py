@@ -1961,15 +1961,6 @@ def _writeback_dp_topology_to_params(params: Dict[str, Any], engine_config: Dict
             params_engine_config[key] = engine_config[key]
 
 
-def _apply_auto_offload_swap_space(params: Dict[str, Any], engine_config: Dict[str, Any],
-                                   explicit_keys: set) -> None:
-    """C4 挂载点②：已废弃。
-
-    vLLM >= 0.21.0 已移除 --swap-space CLI 参数，继续注入会导致引擎启动崩溃。
-    该函数保留为空操作以维持调用链兼容性，后续版本可彻底删除。
-    """
-
-
 def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     """准备最终传给 ``_build_vllm_cmd_parts`` 的 engine_config。
 
@@ -1991,7 +1982,6 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     _apply_glm5_ascend_engine_defaults(params, engine_config, explicit_keys)
     _apply_generic_deepseek_ascend_dp_defaults(params, engine_config, explicit_keys)
     _apply_glm5_dsa_distributed_fixups(params, engine_config, explicit_keys)
-    _apply_auto_offload_swap_space(params, engine_config, explicit_keys)
 
     # ── GLM-5.1 RoCE 互联场景：强制剔除 async_scheduling / enable_expert_parallel，
     #    并将投机推理 speculative_config 替换为 RoCE 适配版本 ──
