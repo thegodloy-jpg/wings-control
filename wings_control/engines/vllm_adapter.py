@@ -2831,7 +2831,15 @@ def resolve_speculative_strategy(params: Dict[str, Any], engine: str) -> str:
             logger.info("[SpecDecode] spec not in whitelist -> suffix floor (arch=%s)",
                         model_info.model_architecture)
             return "suffix"
+        # LMCache 生效判定：优先复用白名单 stash 结论，
+        # 避免 apply_effective_feature_enablement 设了旧 ENV 名而 get_lmcache_env 读新名不一致。
         lmcache_effective = get_lmcache_env()
+        if lmcache_effective:
+            _offload_ok = ("offload" in smart_feats) if smart_feats is not None else feature_allowed(
+                engine, params.get("model_name"), params.get("model_path"),
+                resolve_card_token(), "offload")
+            if not _offload_ok:
+                lmcache_effective = False
         if lmcache_effective and _is_glm51_nvidia_vllm_params(params, engine, model_info):
             logger.warning(
                 "[KVCache Offload] Forced disabled for GLM-5.1 on NVIDIA/vLLM; "
