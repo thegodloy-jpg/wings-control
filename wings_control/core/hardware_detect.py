@@ -198,12 +198,33 @@ def detect_hardware() -> Dict[str, Any]:
     if device_name:
         details.append({"name": device_name})
 
+    # ── 兜底：从 hardware_info.json 提取 device / count / hardware_family ──
+    # K8s 环境下的 hardware_info.json 常缺少 count / details 导致文件校验失败，
+    # 但 device 和 hardware_family 字段对白名单卡型匹配至关重要。
+    try:
+        if os.path.isfile(hw_file):
+            with open(hw_file, "r", encoding="utf-8") as f:
+                hw_data = json.load(f)
+            if isinstance(hw_data, dict):
+                if hw_data.get("device"):
+                    device = _normalize_device(str(hw_data["device"]))
+                if hw_data.get("count"):
+                    count = max(int(hw_data["count"]), 1)
+                if hw_data.get("hardware_family"):
+                    hw_family = str(hw_data["hardware_family"]).strip()
+                    if hw_family and not device_name:
+                        device_name = hw_family
+    except Exception:
+        pass
+
     result = {
         "device": device,
         "count": count,
         "details": details,
         "units": "GB",
     }
+    if device_name and not details:
+        details.append({"name": device_name})
     logger.info("Using static hardware context (env vars): %s", result)
     return result
 

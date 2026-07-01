@@ -308,6 +308,13 @@ def resolve_card_token(hardware_env: Dict[str, Any] = None) -> str:
         details = hardware_env.get("details") or []
         if details and isinstance(details[0], dict):
             name = str(details[0].get("name", ""))
+        # ── 兜底：hardware_info.json 的 hardware_family 字段 ──
+        # K8s sidecar 模式下 hardware_info.json 常缺少 count/details，
+        # 但包含 hardware_family（如 "Ascend910B_64G" → 含 "910b"）。
+        if not name:
+            hw_family = str(hardware_env.get("hardware_family", "")).strip()
+            if hw_family:
+                name = hw_family.lower()
     name = (name or os.getenv("WINGS_DEVICE_NAME", "")).strip().lower()
     if name:
         return name
