@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 4, "model_name": "Qwen3-30B-A3B", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_j19dtdgo", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "distributed", "hardware": "ascend", "nnodes": 2, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 4, "model_name": "Qwen3-30B-A3B", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_jq5nj7nm", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -232,8 +232,6 @@ export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
 echo "[wings-env] export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
-export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
-echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
 export HCCL_INTRA_ROCE_ENABLE=1
 echo "[wings-env] export HCCL_INTRA_ROCE_ENABLE=${HCCL_INTRA_ROCE_ENABLE:-}"
 export USE_MULTI_GROUPS_KV_CACHE=1
@@ -256,7 +254,21 @@ export HCCL_CONNECT_TIMEOUT=120
 echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
 export PD_INDEX=0
 echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
-ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $((4 - 1))) VLLM_MOONCAKE_BOOTSTRAP_PORT=23000 python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_j19dtdgo --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"30000","kv_connector_extra_config":{"prefill":{"dp_size":1,"tp_size":4},"decode":{"dp_size":1,"tp_size":4}},"kv_buffer_device":"npu","engine_id":"0"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port 17000 --tensor-parallel-size 4 &
+(
+  pids=()
+  for i in $(seq 0 0); do
+    RANK=$((0 + i)); PORT=$((17000 + i))
+    PD_INDEX=$PD_INDEX
+    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23000 + i))
+    LO=$((i * 4)); HI=$((LO + 4 - 1)); CARDS=$(seq -s, $LO $HI)
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_jq5nj7nm --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 42 --enable-expert-parallel --enable-prefix-caching --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":4},"decode":{"dp_size":2,"tp_size":4}},"kv_buffer_device":"npu","engine_id":"'"$PD_INDEX"'"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port $PORT --tensor-parallel-size 4 --data-parallel-size 2 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 10.254.0.1 --data-parallel-rpc-port 12890 --data-parallel-external-lb &
+    pids+=($!)
+  done
+  wait -n || true
+  echo "[pd] a service exited, tearing down pod" >&2
+  kill "${pids[@]}" 2>/dev/null || true
+  exit 1
+) &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -370,8 +382,6 @@ export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
 echo "[wings-env] export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
-export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
-echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
 export HCCL_INTRA_ROCE_ENABLE=1
 echo "[wings-env] export HCCL_INTRA_ROCE_ENABLE=${HCCL_INTRA_ROCE_ENABLE:-}"
 export USE_MULTI_GROUPS_KV_CACHE=1
@@ -394,7 +404,21 @@ export HCCL_CONNECT_TIMEOUT=120
 echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
 export PD_INDEX=0
 echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
-ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $((4 - 1))) VLLM_MOONCAKE_BOOTSTRAP_PORT=23000 python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_j19dtdgo --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"30000","kv_connector_extra_config":{"prefill":{"dp_size":1,"tp_size":4},"decode":{"dp_size":1,"tp_size":4}},"kv_buffer_device":"npu","engine_id":"0"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port 17000 --tensor-parallel-size 4 &
+(
+  pids=()
+  for i in $(seq 0 0); do
+    RANK=$((0 + i)); PORT=$((17000 + i))
+    PD_INDEX=$PD_INDEX
+    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23000 + i))
+    LO=$((i * 4)); HI=$((LO + 4 - 1)); CARDS=$(seq -s, $LO $HI)
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_jq5nj7nm --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --enable-chunked-prefill --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 42 --enable-expert-parallel --enable-prefix-caching --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":4},"decode":{"dp_size":2,"tp_size":4}},"kv_buffer_device":"npu","engine_id":"'"$PD_INDEX"'"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port $PORT --tensor-parallel-size 4 --data-parallel-size 2 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 10.254.0.1 --data-parallel-rpc-port 12890 --data-parallel-external-lb &
+    pids+=($!)
+  done
+  wait -n || true
+  echo "[pd] a service exited, tearing down pod" >&2
+  kill "${pids[@]}" 2>/dev/null || true
+  exit 1
+) &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."
