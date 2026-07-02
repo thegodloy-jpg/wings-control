@@ -805,50 +805,112 @@ def _set_task(params, ctx):
 
 
 def _set_pd_parallelism_params(params, ctx) -> bool:
-    """PD 分离的并行度策略。
+    """PD 分离的并行度策略 —— 独立于标准推理 TP/DP 计算。
 
-    PD 场景的 TP/DP 组合由 PD_* 环境契约决定，不能复用标准推理的 Ray/global-TP
-    或 dp_deployment 兜底策略。
+    PD 场景的 TP/DP 组合**仅**由 PD_* 环境契约决定：
+      - Prefill (PD_ROLE=P): TP ← PD_PREFILL_TP_SIZE, DP ← PD_PREFILL_DP_SIZE
+      - Decode  (PD_ROLE=D): TP ← PD_DECODE_TP_SIZE,  DP ← PD_DECODE_DP_SIZE
+      - 兼容别名: TP_SIZE / PD_TP_SIZE 覆盖本角色 (per-pod)，DP_SIZE / PD_DP_SIZE 同理。
+
+    与标准推理的关键区别：
+      - **不**回退到 device_count —— PD 拓扑由上层显式下发，不存在「用所有卡当 TP」的语义。
+      - **不**复用 _adjust_tensor_parallelism 的 Ray / 分布式 / PCIe 等分支。
+      - 若角色级 TP/DP 均未设置 → 记录 WARNING 并返回 False（不阻断，但也不设值）。
     """
     pd_role = get_pd_role_env()
     if not pd_role:
         return False
 
     role_prefix = "PREFILL" if pd_role == "P" else "DECODE"
+
+    # TP: 逐级回退但 **不** 使用 device_count（PD 拓扑应显式下发）
     raw_tp = (
         os.getenv("TP_SIZE")
         or os.getenv("PD_TP_SIZE")
         or os.getenv(f"PD_{role_prefix}_TP_SIZE")
-        or str(ctx.get("device_count", 1))
     )
+    # DP: 逐级回退，缺省 1
     raw_dp = (
         os.getenv("DP_SIZE")
         or os.getenv("PD_DP_SIZE")
         or os.getenv(f"PD_{role_prefix}_DP_SIZE")
-        or "1"
     )
-    try:
-        params["tensor_parallel_size"] = int(raw_tp)
-    except (TypeError, ValueError):
-        params["tensor_parallel_size"] = int(ctx.get("device_count", 1) or 1)
+
+    if raw_tp is None and raw_dp is None:
         logger.warning(
-            "[PD] Invalid TP_SIZE/PD_%s_TP_SIZE value %r; fallback tensor_parallel_size=%s",
-            role_prefix, raw_tp, params["tensor_parallel_size"],
+            "[PD] PD_ROLE=%s but no TP_SIZE/PD_TP_SIZE/PD_%s_TP_SIZE "
+            "and no DP_SIZE/PD_DP_SIZE/PD_%s_DP_SIZE set; "
+            "PD firewall active: blocking standard inference _adjust_tensor_parallelism "
+            "(TP/DP will be handled by external-lb fallback or left unset for engine defaults)",
+            pd_role, role_prefix, role_prefix,
         )
-    try:
-        params["data_parallel_size"] = int(raw_dp)
-    except (TypeError, ValueError):
-        params["data_parallel_size"] = 1
+        return True  # 仍然返回 True，阻止标准推理 TP= device_count 路径进入
+
+    tp_set = False
+    dp_set = False
+    if raw_tp is not None:
+        try:
+            params["tensor_parallel_size"] = int(raw_tp)
+            tp_set = True
+        except (TypeError, ValueError):
+            logger.warning(
+                "[PD] Invalid TP value %r (role=%s, PD_%s_TP_SIZE); "
+                "tensor_parallel_size not set",
+                raw_tp, pd_role, role_prefix,
+            )
+    else:
         logger.warning(
-            "[PD] Invalid DP_SIZE/PD_%s_DP_SIZE value %r; fallback data_parallel_size=1",
-            role_prefix, raw_dp,
+            "[PD] TP_SIZE/PD_TP_SIZE/PD_%s_TP_SIZE not set (role=%s); "
+            "tensor_parallel_size not set by PD path",
+            role_prefix, pd_role,
         )
-    logger.info(
-        "[PD] parallel topology from role env: tensor_parallel_size=%s, "
-        "data_parallel_size=%s (role=%s, device_count=%s)",
-        params["tensor_parallel_size"], params["data_parallel_size"],
-        pd_role, ctx.get("device_count", 1),
-    )
+
+    if raw_dp is not None:
+        try:
+            params["data_parallel_size"] = int(raw_dp)
+            dp_set = True
+        except (TypeError, ValueError):
+            logger.warning(
+                "[PD] Invalid DP value %r (role=%s, PD_%s_DP_SIZE); "
+                "data_parallel_size not set",
+                raw_dp, pd_role, role_prefix,
+            )
+    else:
+        logger.warning(
+            "[PD] DP_SIZE/PD_DP_SIZE/PD_%s_DP_SIZE not set (role=%s); "
+            "data_parallel_size not set by PD path",
+            role_prefix, pd_role,
+        )
+
+    if tp_set or dp_set:
+        # 诊断：回推 TP/DP 值的来源 env var（用于排查是否意外走了 device_count）
+        _tp_src = "none"
+        _dp_src = "none"
+        if raw_tp:
+            if raw_tp == os.getenv(f"PD_{role_prefix}_TP_SIZE"):
+                _tp_src = f"PD_{role_prefix}_TP_SIZE"
+            elif raw_tp == os.getenv("TP_SIZE"):
+                _tp_src = "TP_SIZE"
+            elif raw_tp == os.getenv("PD_TP_SIZE"):
+                _tp_src = "PD_TP_SIZE"
+            else:
+                _tp_src = "unknown"
+        if raw_dp:
+            if raw_dp == os.getenv(f"PD_{role_prefix}_DP_SIZE"):
+                _dp_src = f"PD_{role_prefix}_DP_SIZE"
+            elif raw_dp == os.getenv("DP_SIZE"):
+                _dp_src = "DP_SIZE"
+            elif raw_dp == os.getenv("PD_DP_SIZE"):
+                _dp_src = "PD_DP_SIZE"
+            else:
+                _dp_src = "unknown"
+        logger.info(
+            "[PD] parallel topology from role env: tensor_parallel_size=%s, "
+            "data_parallel_size=%s (role=%s, tp_source=%s, dp_source=%s)",
+            params.get("tensor_parallel_size", "<unset>"),
+            params.get("data_parallel_size", "<unset>"),
+            pd_role, _tp_src, _dp_src,
+        )
     return True
 
 
@@ -911,10 +973,10 @@ def _get_pd_config(ctx, pd_role):
         # Ascend Mooncake 系列 connector 要求 kv_connector_extra_config 中包含
         # prefill 和 decode 双方的并行配置 (tp_size, dp_size, pp_size)，
         # 用于 KV cache 传输时的 TP/DP 映射计算。
-        # TP_SIZE / PD_TP_SIZE 是 per-pod 覆盖（只影响本角色），优先级：
-        #   TP_SIZE > PD_TP_SIZE > PD_{ROLE}_TP_SIZE > device_count
-        # 与 _adjust_tensor_parallelism / _get_pd_external_lb_params 保持一致。
-        default_tp = int(ctx.get('device_count', 1))
+        # PD 拓扑仅由 PD_* 环境契约决定，**不**回退到 device_count：
+        #   TP_SIZE > PD_TP_SIZE > PD_{ROLE}_TP_SIZE（缺省 1）
+        # 与独立 PD 路径 _set_pd_parallelism_params / _apply_pd_topology_fallback 保持一致。
+        default_tp = 1
         role_tp_override = os.getenv("TP_SIZE") or os.getenv("PD_TP_SIZE")
         if pd_role == "P":
             prefill_tp = int(role_tp_override or os.getenv("PD_PREFILL_TP_SIZE", str(default_tp)))
@@ -1021,15 +1083,12 @@ def _get_pd_external_lb_params():
     if dp_size < 1:
         return None  # 非法值
 
-    # tp_size 默认优先取 DEVICE_COUNT（硬件探测/上层下发），回退 1。
-    # 1P1D(dp_size=1) 下 DEVICE_COUNT 即为正确 TP；dp>1 时用户应显式设 TP_SIZE（与旧行为一致）。
-    try:
-        _device_count = int(os.getenv("DEVICE_COUNT", "0") or "0")
-    except (ValueError, TypeError):
-        _device_count = 0
-    _tp_default = str(_device_count) if _device_count > 0 else "1"
-    tp_size = _int(_tp_default, "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
-    # dp_size_local：优先 env 显式下发；否则由 DEVICE_COUNT / tp_size 推导（单 pod 最多塞几个 service）
+    # tp_size 仅由 PD_* 环境契约决定（独立于标准推理 device_count 路径）：
+    #   TP_SIZE > PD_TP_SIZE > PD_{PREFILL|DECODE}_TP_SIZE > 缺省 1
+    # 与 _set_pd_parallelism_params / _get_pd_config 保持一致。
+    tp_size = _int("1", "TP_SIZE", "PD_TP_SIZE", f"PD_{role_prefix}_TP_SIZE")
+    # dp_size_local：优先 env 显式下发；否则由 tp_size 推导（单 pod 最多塞几个 service）。
+    # 注意：不再依赖 DEVICE_COUNT，直接用 tp_size 和硬件探测数推导。
     _dp_local_raw = _first_env("DP_SIZE_LOCAL", "PD_DP_SIZE_LOCAL")
     if _dp_local_raw is not None:
         try:
@@ -1037,7 +1096,13 @@ def _get_pd_external_lb_params():
         except (ValueError, TypeError):
             dp_size_local = 1
     else:
-        dp_size_local = max(1, (_device_count // tp_size) if _device_count > 0 and tp_size > 0 else 1)
+        # 无 DP_SIZE_LOCAL 时默认 1（PD 拓扑应显式下发，不应靠 device_count 推导）
+        dp_size_local = 1
+        logger.warning(
+            "[PD external-lb] DP_SIZE_LOCAL/PD_DP_SIZE_LOCAL not set (role=%s); "
+            "defaulting dp_size_local=1. Set DP_SIZE_LOCAL to match the number "
+            "of engine instances forked in this pod.", role,
+        )
     # dp_size_local 不能超过全局 dp_size（1P1D 单 pod 场景下两者应相等）
     dp_size_local = min(dp_size_local, dp_size)
     dp_address = (_first_env("Master_IP", "MASTER_IP", "PD_DP_ADDRESS")
@@ -1082,7 +1147,7 @@ def _get_pd_external_lb_params():
     except (ValueError, TypeError):
         pd_index_base = 0 if role == "P" else 1
 
-    return {
+    result = {
         "role": role,
         "dp_size": dp_size,
         "tp_size": tp_size,
@@ -1092,6 +1157,20 @@ def _get_pd_external_lb_params():
         "rpc_port": str(rpc_port),
         "pd_index_base": pd_index_base,
     }
+    logger.info(
+        "[PD external-lb params] role=%s tp_size=%d dp_size=%d dp_size_local=%d "
+        "dp_rank_start=%d dp_address=%s rpc_port=%s pd_index_base=%d "
+        "(PD_DECODE_TP_SIZE=%s, PD_PREFILL_TP_SIZE=%s, PD_DECODE_DP_SIZE=%s, "
+        "PD_PREFILL_DP_SIZE=%s)",
+        result["role"], result["tp_size"], result["dp_size"], result["dp_size_local"],
+        result["dp_rank_start"], result["dp_address"], result["rpc_port"],
+        result["pd_index_base"],
+        os.getenv("PD_DECODE_TP_SIZE", "<unset>"),
+        os.getenv("PD_PREFILL_TP_SIZE", "<unset>"),
+        os.getenv("PD_DECODE_DP_SIZE", "<unset>"),
+        os.getenv("PD_PREFILL_DP_SIZE", "<unset>"),
+    )
+    return result
 
 
 def _build_pd_external_lb_kv(entry, ext):
@@ -1196,6 +1275,69 @@ def _resolve_ascend_platform() -> str:
     return ""
 
 
+def _apply_pd_topology_fallback(cmd_known_params: Dict[str, Any], pd_role: str) -> None:
+    """PD external-lb 降级路径：仅将 PD 拓扑参数（TP/DP）写入 engine_config。
+
+    当 _get_pd_external_lb_params 因缺少 DP_SIZE 等 env var 返回 None，
+    或 pd_config.json 无可用的注册表条目时，调用本函数确保 PD 的
+    tensor_parallel_size / data_parallel_size 仍从 PD_* 环境变量生效，
+    而不是静默保留 device_count 兜底值或上游默认值。
+
+    本函数不设置 _pd_external_lb（不进入 fork 脚本路径），不覆盖
+    kv_transfer_config，仅保证 TP/DP 不被 device_count 回退覆盖。
+    """
+    role_prefix = "PREFILL" if pd_role == "P" else "DECODE"
+    raw_tp = (
+        os.getenv("TP_SIZE")
+        or os.getenv("PD_TP_SIZE")
+        or os.getenv(f"PD_{role_prefix}_TP_SIZE")
+    )
+    raw_dp = (
+        os.getenv("DP_SIZE")
+        or os.getenv("PD_DP_SIZE")
+        or os.getenv(f"PD_{role_prefix}_DP_SIZE")
+    )
+    if raw_tp is None and raw_dp is None:
+        logger.warning(
+            "[PD fallback] PD_ROLE=%s but no PD_%s_TP_SIZE / PD_%s_DP_SIZE set; "
+            "TP/DP will fall back to defaults (may be device_count)",
+            pd_role, role_prefix, role_prefix,
+        )
+        return
+
+    ec = cmd_known_params.setdefault("engine_config", {})
+    explicit_keys = set(cmd_known_params.get("_explicit_cli_keys") or [])
+    pd_topology_keys = {"tensor_parallel_size", "data_parallel_size"}
+
+    overrides: Dict[str, Any] = {}
+    if raw_tp is not None:
+        try:
+            overrides["tensor_parallel_size"] = int(raw_tp)
+        except (ValueError, TypeError):
+            logger.warning("[PD fallback] invalid TP value %r, skipped", raw_tp)
+    if raw_dp is not None:
+        try:
+            overrides["data_parallel_size"] = int(raw_dp)
+        except (ValueError, TypeError):
+            logger.warning("[PD fallback] invalid DP value %r, skipped", raw_dp)
+
+    for k, v in overrides.items():
+        if k not in explicit_keys or k in pd_topology_keys:
+            ec[k] = v
+
+    # 存储为 _pd_engine_overrides，以使 vllm_adapter._prepare_engine_config
+    # 在所有模型默认注入器之后重申 TP/DP（防止被 device_count 回填覆盖）。
+    cmd_known_params["_pd_engine_overrides"] = {
+        k: v for k, v in overrides.items()
+        if k not in explicit_keys or k in pd_topology_keys
+    }
+
+    logger.info(
+        "[PD fallback] applied TP/DP overrides: %s (PD_ROLE=%s, role_prefix=%s)",
+        overrides, pd_role, role_prefix,
+    )
+
+
 def _apply_pd_external_lb(cmd_known_params, model_info):
     """检测 external-lb PD 并应用模型配置注册表（config/defaults/pd_config.json）。
 
@@ -1205,8 +1347,16 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
       3. 外层标记 _pd_external_lb / _pd_env，并置 distributed=False（不进 Ray/headless）。
     未命中或注册表无可用条目时原样返回（走原 standalone PD）。
     """
+    pd_role = get_pd_role_env()
+    logger.info("[PD external-lb] entry check: PD_ROLE=%s", pd_role)
     ext = _get_pd_external_lb_params()
     if not ext:
+        # _get_pd_external_lb_params 返回 None 时，若 PD_ROLE 已设但缺少 DP_SIZE/TP_SIZE
+        # 等 env var，仍应确保 PD 拓扑参数（tensor_parallel_size / data_parallel_size）
+        # 从 PD_* 环境变量写入 engine_config，而不是静默退回到 device_count 兜底。
+        # 否则 PD 容器内 wings 生成的 start_command.sh 会走单机路径，TP=device_count。
+        if pd_role:
+            _apply_pd_topology_fallback(cmd_known_params, pd_role)
         return
     registry = _load_pd_config()
     arch = getattr(model_info, "model_architecture", None) or ""
@@ -1214,6 +1364,9 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
     if not entry:
         logger.warning("[PD external-lb] no registry entry for arch=%s and no default; "
                        "fall back to standalone PD", arch)
+        # 即使没有注册表条目，PD 拓扑参数仍应从 env 生效
+        if pd_role:
+            _apply_pd_topology_fallback(cmd_known_params, pd_role)
         return
 
     # 注册表来自模块级缓存(_load_pd_config)；下面会对 entry 做 overlay/pop —— 先 deepcopy 防污染缓存。
@@ -3046,6 +3199,16 @@ def load_and_merge_configs(
     _apply_pd_external_lb(final_engine_params, model_info)
 
     logger.info("Final engine_config keys: %s", list(engine_config.keys()))
+    # 打印 PD 关键拓扑值用于诊断：确认 TP/DP 来自 env 而非 device_count 兜底
+    _pd_diag = {
+        k: engine_config.get(k)
+        for k in ("tensor_parallel_size", "data_parallel_size",
+                   "data_parallel_size_local", "data_parallel_start_rank")
+        if k in engine_config
+    }
+    if _pd_diag:
+        pd_role = get_pd_role_env()
+        logger.info("Final engine_config PD topology values (PD_ROLE=%s): %s", pd_role, _pd_diag)
     logger.info("Config merging completed.")
     return final_engine_params
 
