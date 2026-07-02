@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 8, "model_name": "glm-5.2-chat", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_lb1mpij_", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 8, "model_name": "glm-5.2-chat", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h2nhpdxb", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -232,19 +232,30 @@ export HCCL_OP_EXPANSION_MODE=AIV
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
 export VLLM_VERSION=0.21.0
 echo "[wings-env] export VLLM_VERSION=${VLLM_VERSION:-}"
+export VLLM_RPC_TIMEOUT=3600000
+echo "[wings-env] export VLLM_RPC_TIMEOUT=${VLLM_RPC_TIMEOUT:-}"
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=30000
+echo "[wings-env] export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-}"
+export HCCL_EXEC_TIMEOUT=2000
+echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
+export HCCL_CONNECT_TIMEOUT=1200
+echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
 export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_FLASHCOMM1=${VLLM_ASCEND_ENABLE_FLASHCOMM1:-}"
 export HCCL_BUFFSIZE=256
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export VLLM_NIXL_ABORT_REQUEST_TIMEOUT=300000
 echo "[wings-env] export VLLM_NIXL_ABORT_REQUEST_TIMEOUT=${VLLM_NIXL_ABORT_REQUEST_TIMEOUT:-}"
+export PD_INDEX=0
+echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
 (
   pids=()
   for i in $(seq 0 0); do
     RANK=$((0 + i)); PORT=$((17000 + i))
-    KVPORT=$((30000 + i)); BOOTSTRAP=$((23000 + i))
+    PD_INDEX=$PD_INDEX
+    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23000 + i))
     LO=$((i * 8)); HI=$((LO + 8 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 64 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --enable-prefix-caching --additional-config '{"enable_sparse_c8":false,"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true,"ascend_compilation_config":{"enable_npugraph_ex":true},"enable_dsa_cp":true}' --host 7.0.0.1 --served-model-name glm-5.2-chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_lb1mpij_ --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnector","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":4,"tp_size":8},"decode":{"dp_size":8,"tp_size":4},"use_ascend_direct":true},"kv_connector_module_path":"vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector","engine_id":"0"}' --async-scheduling --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --speculative-config '{"num_speculative_tokens":3,"method":"deepseek_mtp"}' --enforce-eager --port $PORT --tensor-parallel-size 8 --data-parallel-size 4 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 7.0.0.1 --data-parallel-rpc-port 12890 --data-parallel-external-lb &
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 115168 --quantization ascend --seed 1024 --max-num-seqs 64 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --enable-prefix-caching --additional-config '{"enable_sparse_c8":false,"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true,"ascend_compilation_config":{"enable_npugraph_ex":true},"enable_dsa_cp":true}' --host 7.0.0.1 --served-model-name glm-5.2-chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h2nhpdxb --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnector","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":4,"tp_size":8},"decode":{"dp_size":8,"tp_size":4},"use_ascend_direct":true},"kv_connector_module_path":"vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector","engine_id":"'"$PD_INDEX"'"}' --async-scheduling --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --speculative-config '{"num_speculative_tokens":3,"method":"deepseek_mtp"}' --enforce-eager --port $PORT --tensor-parallel-size 8 --data-parallel-size 4 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 7.0.0.1 --data-parallel-rpc-port 12890 --data-parallel-external-lb &
     pids+=($!)
   done
   wait -n || true
@@ -365,19 +376,30 @@ export HCCL_OP_EXPANSION_MODE=AIV
 echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
 export VLLM_VERSION=0.21.0
 echo "[wings-env] export VLLM_VERSION=${VLLM_VERSION:-}"
+export VLLM_RPC_TIMEOUT=3600000
+echo "[wings-env] export VLLM_RPC_TIMEOUT=${VLLM_RPC_TIMEOUT:-}"
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=30000
+echo "[wings-env] export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-}"
+export HCCL_EXEC_TIMEOUT=2000
+echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
+export HCCL_CONNECT_TIMEOUT=1200
+echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
 export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_FLASHCOMM1=${VLLM_ASCEND_ENABLE_FLASHCOMM1:-}"
 export HCCL_BUFFSIZE=256
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
 export VLLM_NIXL_ABORT_REQUEST_TIMEOUT=300000
 echo "[wings-env] export VLLM_NIXL_ABORT_REQUEST_TIMEOUT=${VLLM_NIXL_ABORT_REQUEST_TIMEOUT:-}"
+export PD_INDEX=0
+echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
 (
   pids=()
   for i in $(seq 0 0); do
     RANK=$((0 + i)); PORT=$((17000 + i))
-    KVPORT=$((30000 + i)); BOOTSTRAP=$((23000 + i))
+    PD_INDEX=$PD_INDEX
+    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23000 + i))
     LO=$((i * 8)); HI=$((LO + 8 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 131072 --quantization ascend --seed 1024 --max-num-seqs 64 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --enable-prefix-caching --additional-config '{"enable_sparse_c8":false,"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true,"ascend_compilation_config":{"enable_npugraph_ex":true},"enable_dsa_cp":true}' --host 7.0.0.1 --served-model-name glm-5.2-chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_lb1mpij_ --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnector","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":4,"tp_size":8},"decode":{"dp_size":8,"tp_size":4},"use_ascend_direct":true},"kv_connector_module_path":"vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector","engine_id":"0"}' --async-scheduling --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --speculative-config '{"num_speculative_tokens":3,"method":"deepseek_mtp"}' --enforce-eager --port $PORT --tensor-parallel-size 8 --data-parallel-size 4 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 7.0.0.1 --data-parallel-rpc-port 12890 --data-parallel-external-lb &
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 115168 --quantization ascend --seed 1024 --max-num-seqs 64 --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95 --enable-chunked-prefill --enable-prefix-caching --additional-config '{"enable_sparse_c8":false,"fuse_muls_add":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true,"ascend_compilation_config":{"enable_npugraph_ex":true},"enable_dsa_cp":true}' --host 7.0.0.1 --served-model-name glm-5.2-chat --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_h2nhpdxb --dtype auto --kv-cache-dtype auto --block-size 16 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnector","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":4,"tp_size":8},"decode":{"dp_size":8,"tp_size":4},"use_ascend_direct":true},"kv_connector_module_path":"vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector","engine_id":"'"$PD_INDEX"'"}' --async-scheduling --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --speculative-config '{"num_speculative_tokens":3,"method":"deepseek_mtp"}' --enforce-eager --port $PORT --tensor-parallel-size 8 --data-parallel-size 4 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 7.0.0.1 --data-parallel-rpc-port 12890 --data-parallel-external-lb &
     pids+=($!)
   done
   wait -n || true

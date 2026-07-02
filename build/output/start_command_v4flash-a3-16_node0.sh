@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 2, "model_name": "Qwen3-30B-A3B", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_1cxqeopf", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "dp_deployment", "tensor_parallel_size": 16, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_poqg3sid", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -154,6 +154,22 @@ except Exception as e:
     print(f'[modelslim-patch] Skip: {e}')
 MODELSLIM_PATCH_EOF
 # --- end modelslim patch ---
+# --- wings-accel: install speculative decoding runtime deps (fault-tolerant) ---
+if [ -f "/accel-volume/install.py" ]; then
+    echo '[wings-accel] Installing speculative decoding runtime deps...'
+    set +e
+    python3 /accel-volume/install.py --install-runtime-deps
+    SPEC_RC=$?
+    set -e
+    if [ $SPEC_RC -ne 0 ]; then
+        echo "[wings-accel] WARNING: Speculative decoding runtime deps install failed (exit=$SPEC_RC), skipping. Service will continue without patches."
+        python3 -c "import json, os; p='/shared-volume\advanced_features.json'; d=json.load(open(p)) if os.path.exists(p) else {'engine':'','features':{}}; d.setdefault('features',{})['speculative_decode']=False; f=open(p+'.tmp','w'); json.dump(d,f,indent=4); f.close(); os.replace(p+'.tmp',p)"
+    else
+        echo '[wings-accel] Speculative decoding runtime deps installed successfully.'
+    fi
+else
+    echo '[wings-accel] WARNING: /accel-volume/install.py not found, skipping speculative decoding runtime deps.'
+fi
 ENGINE_START_EPOCH=$(date +%s)
 # =============================================================================
 # vLLM-Ascend (华为昇腾) 引擎环境初始化脚本
@@ -196,6 +212,8 @@ else
 fi
 
 # 昇腾通用环境变量
+export TASK_QUEUE_ENABLE=1
+echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -204,75 +222,30 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-export HCCL_IF_IP=9.0.1.2
-echo "[wings-env] export HCCL_IF_IP=${HCCL_IF_IP:-}"
-export VLLM_HOST_IP=9.0.1.2
-echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
-export GLOO_SOCKET_IFNAME=eth0
-echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
-export TP_SOCKET_IFNAME=eth0
-echo "[wings-env] export TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME:-}"
-export HCCL_SOCKET_IFNAME=eth0
-echo "[wings-env] export HCCL_SOCKET_IFNAME=${HCCL_SOCKET_IFNAME:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=100
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export VLLM_USE_V1=1
-echo "[wings-env] export VLLM_USE_V1=${VLLM_USE_V1:-}"
-export VLLM_LLMDD_RPC_PORT=12321
-echo "[wings-env] export VLLM_LLMDD_RPC_PORT=${VLLM_LLMDD_RPC_PORT:-}"
-export VLLM_MOONCAKE_BOOTSTRAP_PORT=23000
-echo "[wings-env] export VLLM_MOONCAKE_BOOTSTRAP_PORT=${VLLM_MOONCAKE_BOOTSTRAP_PORT:-}"
-export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-120000}
-echo "[wings-env] export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-}"
-export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-120000}
-echo "[wings-env] export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-}"
-export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
-echo "[wings-env] export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
-export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
-echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
-export HCCL_INTRA_ROCE_ENABLE=1
-echo "[wings-env] export HCCL_INTRA_ROCE_ENABLE=${HCCL_INTRA_ROCE_ENABLE:-}"
-export VLLM_ASCEND_ENABLE_FUSED_MC2=1
-echo "[wings-env] export VLLM_ASCEND_ENABLE_FUSED_MC2=${VLLM_ASCEND_ENABLE_FUSED_MC2:-}"
-export USE_MULTI_GROUPS_KV_CACHE=1
-echo "[wings-env] export USE_MULTI_GROUPS_KV_CACHE=${USE_MULTI_GROUPS_KV_CACHE:-}"
 export USE_MULTI_BLOCK_POOL=1
 echo "[wings-env] export USE_MULTI_BLOCK_POOL=${USE_MULTI_BLOCK_POOL:-}"
-export ASCEND_BUFFER_POOL=4:8
-echo "[wings-env] export ASCEND_BUFFER_POOL=${ASCEND_BUFFER_POOL:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export ACL_OP_INIT_MODE=1
+echo "[wings-env] export ACL_OP_INIT_MODE=${ACL_OP_INIT_MODE:-}"
+export USE_MULTI_GROUPS_KV_CACHE=1
+echo "[wings-env] export USE_MULTI_GROUPS_KV_CACHE=${USE_MULTI_GROUPS_KV_CACHE:-}"
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+echo "[wings-env] export VLLM_ASCEND_ENABLE_FLASHCOMM1=${VLLM_ASCEND_ENABLE_FLASHCOMM1:-}"
+export OMP_NUM_THREADS=10
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export ASCEND_A3_ENABLE=1
+echo "[wings-env] export ASCEND_A3_ENABLE=${ASCEND_A3_ENABLE:-}"
 export HCCL_BUFFSIZE=1024
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=1
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export VLLM_RPC_TIMEOUT=3600000
-echo "[wings-env] export VLLM_RPC_TIMEOUT=${VLLM_RPC_TIMEOUT:-}"
-export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=30000
-echo "[wings-env] export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-}"
-export HCCL_EXEC_TIMEOUT=2000
-echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
-export HCCL_CONNECT_TIMEOUT=1200
-echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
-export PD_INDEX=4
-echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
-(
-  pids=()
-  for i in $(seq 0 1); do
-    RANK=$((2 + i)); PORT=$((17000 + i))
-    PD_INDEX=$PD_INDEX
-    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23100 + i))
-    LO=$((i * 1)); HI=$((LO + 1 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 9.0.1.2 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_1cxqeopf --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.88 --max-num-batched-tokens 120 --block-size 16 --max-num-seqs 60 --seed 0 --enable-expert-parallel --enable-prefix-caching --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":2},"decode":{"dp_size":4,"tp_size":1}},"kv_buffer_device":"npu","engine_id":"'"$PD_INDEX"'"}' --async-scheduling --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --port $PORT --tensor-parallel-size 1 --data-parallel-size 4 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 9.0.1.1 --data-parallel-rpc-port 12777 --data-parallel-external-lb &
-    pids+=($!)
-  done
-  wait -n || true
-  echo "[pd] a service exited, tearing down pod" >&2
-  kill "${pids[@]}" 2>/dev/null || true
-  exit 1
-) &
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+echo "[wings-env] export VLLM_ASCEND_ENABLE_FUSED_MC2=${VLLM_ASCEND_ENABLE_FUSED_MC2:-}"
+export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+echo '[wings-cmd] >>> exec vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_poqg3sid --trust-remote-code --max-model-len 1024000 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 4 --data-parallel-size 4 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false,"multistream_dsa_preprocess":false,"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":false}}'"'"' --tokenizer-mode deeps...<truncated>'
+vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_poqg3sid --trust-remote-code --max-model-len 1024000 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 4 --data-parallel-size 4 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false,"multistream_dsa_preprocess":false,"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":false}}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype auto --kv-cache-dtype auto --seed 0 --api-server-count 1 --speculative-config '{"method": "deepseek_mtp", "num_speculative_tokens": 1}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -350,6 +323,8 @@ else
 fi
 
 # 昇腾通用环境变量
+export TASK_QUEUE_ENABLE=1
+echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
 
 
 # Pre-flight: verify Ascend driver is accessible
@@ -358,75 +333,30 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
     echo 'HINT: Ensure the host Ascend driver is mounted into the container (hostPath: /usr/local/Ascend/driver)'
     exit 1
 fi
-export HCCL_IF_IP=9.0.1.2
-echo "[wings-env] export HCCL_IF_IP=${HCCL_IF_IP:-}"
-export VLLM_HOST_IP=9.0.1.2
-echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
-export GLOO_SOCKET_IFNAME=eth0
-echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
-export TP_SOCKET_IFNAME=eth0
-echo "[wings-env] export TP_SOCKET_IFNAME=${TP_SOCKET_IFNAME:-}"
-export HCCL_SOCKET_IFNAME=eth0
-echo "[wings-env] export HCCL_SOCKET_IFNAME=${HCCL_SOCKET_IFNAME:-}"
-export OMP_PROC_BIND=false
-echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
-export OMP_NUM_THREADS=100
-echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
-export VLLM_USE_V1=1
-echo "[wings-env] export VLLM_USE_V1=${VLLM_USE_V1:-}"
-export VLLM_LLMDD_RPC_PORT=12321
-echo "[wings-env] export VLLM_LLMDD_RPC_PORT=${VLLM_LLMDD_RPC_PORT:-}"
-export VLLM_MOONCAKE_BOOTSTRAP_PORT=23000
-echo "[wings-env] export VLLM_MOONCAKE_BOOTSTRAP_PORT=${VLLM_MOONCAKE_BOOTSTRAP_PORT:-}"
-export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-120000}
-echo "[wings-env] export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-}"
-export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-120000}
-echo "[wings-env] export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-}"
-export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
-echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
-export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
-echo "[wings-env] export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
-export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
-echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
-export HCCL_INTRA_ROCE_ENABLE=1
-echo "[wings-env] export HCCL_INTRA_ROCE_ENABLE=${HCCL_INTRA_ROCE_ENABLE:-}"
-export VLLM_ASCEND_ENABLE_FUSED_MC2=1
-echo "[wings-env] export VLLM_ASCEND_ENABLE_FUSED_MC2=${VLLM_ASCEND_ENABLE_FUSED_MC2:-}"
-export USE_MULTI_GROUPS_KV_CACHE=1
-echo "[wings-env] export USE_MULTI_GROUPS_KV_CACHE=${USE_MULTI_GROUPS_KV_CACHE:-}"
 export USE_MULTI_BLOCK_POOL=1
 echo "[wings-env] export USE_MULTI_BLOCK_POOL=${USE_MULTI_BLOCK_POOL:-}"
-export ASCEND_BUFFER_POOL=4:8
-echo "[wings-env] export ASCEND_BUFFER_POOL=${ASCEND_BUFFER_POOL:-}"
+export OMP_PROC_BIND=false
+echo "[wings-env] export OMP_PROC_BIND=${OMP_PROC_BIND:-}"
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
+export ACL_OP_INIT_MODE=1
+echo "[wings-env] export ACL_OP_INIT_MODE=${ACL_OP_INIT_MODE:-}"
+export USE_MULTI_GROUPS_KV_CACHE=1
+echo "[wings-env] export USE_MULTI_GROUPS_KV_CACHE=${USE_MULTI_GROUPS_KV_CACHE:-}"
+export VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+echo "[wings-env] export VLLM_ASCEND_ENABLE_FLASHCOMM1=${VLLM_ASCEND_ENABLE_FLASHCOMM1:-}"
+export OMP_NUM_THREADS=10
+echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
+export ASCEND_A3_ENABLE=1
+echo "[wings-env] export ASCEND_A3_ENABLE=${ASCEND_A3_ENABLE:-}"
 export HCCL_BUFFSIZE=1024
 echo "[wings-env] export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-}"
-export TASK_QUEUE_ENABLE=1
-echo "[wings-env] export TASK_QUEUE_ENABLE=${TASK_QUEUE_ENABLE:-}"
-export VLLM_RPC_TIMEOUT=3600000
-echo "[wings-env] export VLLM_RPC_TIMEOUT=${VLLM_RPC_TIMEOUT:-}"
-export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=30000
-echo "[wings-env] export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-}"
-export HCCL_EXEC_TIMEOUT=2000
-echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
-export HCCL_CONNECT_TIMEOUT=1200
-echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
-export PD_INDEX=4
-echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
-(
-  pids=()
-  for i in $(seq 0 1); do
-    RANK=$((2 + i)); PORT=$((17000 + i))
-    PD_INDEX=$PD_INDEX
-    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23100 + i))
-    LO=$((i * 1)); HI=$((LO + 1 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 9.0.1.2 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_1cxqeopf --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.88 --max-num-batched-tokens 120 --block-size 16 --max-num-seqs 60 --seed 0 --enable-expert-parallel --enable-prefix-caching --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":2},"decode":{"dp_size":4,"tp_size":1}},"kv_buffer_device":"npu","engine_id":"'"$PD_INDEX"'"}' --async-scheduling --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --port $PORT --tensor-parallel-size 1 --data-parallel-size 4 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 9.0.1.1 --data-parallel-rpc-port 12777 --data-parallel-external-lb &
-    pids+=($!)
-  done
-  wait -n || true
-  echo "[pd] a service exited, tearing down pod" >&2
-  kill "${pids[@]}" 2>/dev/null || true
-  exit 1
-) &
+export VLLM_ASCEND_ENABLE_FUSED_MC2=1
+echo "[wings-env] export VLLM_ASCEND_ENABLE_FUSED_MC2=${VLLM_ASCEND_ENABLE_FUSED_MC2:-}"
+export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-AIV}
+echo "[wings-env] export HCCL_OP_EXPANSION_MODE=${HCCL_OP_EXPANSION_MODE:-}"
+echo '[wings-cmd] >>> exec vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_poqg3sid --trust-remote-code --max-model-len 1024000 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 4 --data-parallel-size 4 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"' --additional-config '"'"'{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false,"multistream_dsa_preprocess":false,"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":false}}'"'"' --tokenizer-mode deeps...<truncated>'
+vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_poqg3sid --trust-remote-code --max-model-len 1024000 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.9 --max-num-seqs 16 --tensor-parallel-size 4 --data-parallel-size 4 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --enable-prefix-caching --enable-chunked-prefill --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"enable_cpu_binding":true,"multistream_overlap_shared_expert":false,"multistream_dsa_preprocess":false,"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":false}}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 192.168.1.100 --port 17000 --served-model-name DeepSeek-V4-Flash --dtype auto --kv-cache-dtype auto --seed 0 --api-server-count 1 --speculative-config '{"method": "deepseek_mtp", "num_speculative_tokens": 1}' &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

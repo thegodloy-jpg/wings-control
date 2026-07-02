@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 4, "model_name": "Qwen3-30B-A3B", "model_path": "d:/project/inference/wings-control/wings-control-0730/wings-control/build/model_n341a9b_", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 4, "model_name": "Qwen3-30B-A3B", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_nyimc9ei", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -206,6 +206,8 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
 fi
 export HCCL_IF_IP=9.0.0.1
 echo "[wings-env] export HCCL_IF_IP=${HCCL_IF_IP:-}"
+export VLLM_HOST_IP=9.0.0.1
+echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
 export GLOO_SOCKET_IFNAME=eth0
 echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
 export TP_SOCKET_IFNAME=eth0
@@ -218,16 +220,14 @@ export OMP_NUM_THREADS=100
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export VLLM_USE_V1=1
 echo "[wings-env] export VLLM_USE_V1=${VLLM_USE_V1:-}"
-export LCCL_DETERMINISTIC=1
-echo "[wings-env] export LCCL_DETERMINISTIC=${LCCL_DETERMINISTIC:-}"
-export HCCL_DETERMINISTIC=true
-echo "[wings-env] export HCCL_DETERMINISTIC=${HCCL_DETERMINISTIC:-}"
-export CLOSE_MATMUL_K_SHIFT=1
-echo "[wings-env] export CLOSE_MATMUL_K_SHIFT=${CLOSE_MATMUL_K_SHIFT:-}"
 export VLLM_LLMDD_RPC_PORT=12321
 echo "[wings-env] export VLLM_LLMDD_RPC_PORT=${VLLM_LLMDD_RPC_PORT:-}"
 export VLLM_MOONCAKE_BOOTSTRAP_PORT=23000
 echo "[wings-env] export VLLM_MOONCAKE_BOOTSTRAP_PORT=${VLLM_MOONCAKE_BOOTSTRAP_PORT:-}"
+export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-120000}
+echo "[wings-env] export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-}"
+export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-120000}
+echo "[wings-env] export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-}"
 export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
@@ -254,13 +254,16 @@ export HCCL_EXEC_TIMEOUT=204
 echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
 export HCCL_CONNECT_TIMEOUT=120
 echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
+export PD_INDEX=0
+echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
 (
   pids=()
   for i in $(seq 0 1); do
     RANK=$((0 + i)); PORT=$((17000 + i))
-    KVPORT=$((30000 + i)); BOOTSTRAP=$((23000 + i))
+    PD_INDEX=$PD_INDEX
+    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23000 + i))
     LO=$((i * 2)); HI=$((LO + 2 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 9.0.0.1 --served-model-name Qwen3-30B-A3B --model d:/project/inference/wings-control/wings-control-0730/wings-control/build/model_n341a9b_ --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --enable-prefix-caching --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":2},"decode":{"dp_size":4,"tp_size":1}},"engine_id":"'"$RANK"'"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port $PORT --tensor-parallel-size 2 --data-parallel-size 2 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 9.0.0.1 --data-parallel-rpc-port 12321 --data-parallel-external-lb &
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 9.0.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_nyimc9ei --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":2},"decode":{"dp_size":4,"tp_size":1}},"kv_buffer_device":"npu","engine_id":"'"$PD_INDEX"'"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port $PORT --tensor-parallel-size 2 --data-parallel-size 2 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 9.0.0.1 --data-parallel-rpc-port 12890 --data-parallel-external-lb &
     pids+=($!)
   done
   wait -n || true
@@ -355,6 +358,8 @@ if [ ! -f /usr/local/Ascend/driver/lib64/driver/libascend_hal.so ]; then
 fi
 export HCCL_IF_IP=9.0.0.1
 echo "[wings-env] export HCCL_IF_IP=${HCCL_IF_IP:-}"
+export VLLM_HOST_IP=9.0.0.1
+echo "[wings-env] export VLLM_HOST_IP=${VLLM_HOST_IP:-}"
 export GLOO_SOCKET_IFNAME=eth0
 echo "[wings-env] export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}"
 export TP_SOCKET_IFNAME=eth0
@@ -367,16 +372,14 @@ export OMP_NUM_THREADS=100
 echo "[wings-env] export OMP_NUM_THREADS=${OMP_NUM_THREADS:-}"
 export VLLM_USE_V1=1
 echo "[wings-env] export VLLM_USE_V1=${VLLM_USE_V1:-}"
-export LCCL_DETERMINISTIC=1
-echo "[wings-env] export LCCL_DETERMINISTIC=${LCCL_DETERMINISTIC:-}"
-export HCCL_DETERMINISTIC=true
-echo "[wings-env] export HCCL_DETERMINISTIC=${HCCL_DETERMINISTIC:-}"
-export CLOSE_MATMUL_K_SHIFT=1
-echo "[wings-env] export CLOSE_MATMUL_K_SHIFT=${CLOSE_MATMUL_K_SHIFT:-}"
 export VLLM_LLMDD_RPC_PORT=12321
 echo "[wings-env] export VLLM_LLMDD_RPC_PORT=${VLLM_LLMDD_RPC_PORT:-}"
 export VLLM_MOONCAKE_BOOTSTRAP_PORT=23000
 echo "[wings-env] export VLLM_MOONCAKE_BOOTSTRAP_PORT=${VLLM_MOONCAKE_BOOTSTRAP_PORT:-}"
+export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-120000}
+echo "[wings-env] export ASCEND_CONNECT_TIMEOUT=${ASCEND_CONNECT_TIMEOUT:-}"
+export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-120000}
+echo "[wings-env] export ASCEND_TRANSFER_TIMEOUT=${ASCEND_TRANSFER_TIMEOUT:-}"
 export PYTORCH_NPU_ALLOC_CONF=max_split_size_mb:256
 echo "[wings-env] export PYTORCH_NPU_ALLOC_CONF=${PYTORCH_NPU_ALLOC_CONF:-}"
 export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
@@ -403,13 +406,16 @@ export HCCL_EXEC_TIMEOUT=204
 echo "[wings-env] export HCCL_EXEC_TIMEOUT=${HCCL_EXEC_TIMEOUT:-}"
 export HCCL_CONNECT_TIMEOUT=120
 echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
+export PD_INDEX=0
+echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
 (
   pids=()
   for i in $(seq 0 1); do
     RANK=$((0 + i)); PORT=$((17000 + i))
-    KVPORT=$((30000 + i)); BOOTSTRAP=$((23000 + i))
+    PD_INDEX=$PD_INDEX
+    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23000 + i))
     LO=$((i * 2)); HI=$((LO + 2 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 9.0.0.1 --served-model-name Qwen3-30B-A3B --model d:/project/inference/wings-control/wings-control-0730/wings-control/build/model_n341a9b_ --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --enable-prefix-caching --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":2},"decode":{"dp_size":4,"tp_size":1}},"engine_id":"'"$RANK"'"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port $PORT --tensor-parallel-size 2 --data-parallel-size 2 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 9.0.0.1 --data-parallel-rpc-port 12321 --data-parallel-external-lb &
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 9.0.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_nyimc9ei --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":2,"tp_size":2},"decode":{"dp_size":4,"tp_size":1}},"kv_buffer_device":"npu","engine_id":"'"$PD_INDEX"'"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port $PORT --tensor-parallel-size 2 --data-parallel-size 2 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 9.0.0.1 --data-parallel-rpc-port 12890 --data-parallel-external-lb &
     pids+=($!)
   done
   wait -n || true

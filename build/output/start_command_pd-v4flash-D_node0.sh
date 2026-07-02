@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 16, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_9xs7vkt4", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 16, "model_name": "DeepSeek-V4-Flash", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_zms5p1gm", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -268,13 +268,16 @@ export VLLM_ASCEND_ENABLE_FUSED_MC2=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_FUSED_MC2=${VLLM_ASCEND_ENABLE_FUSED_MC2:-}"
 export VLLM_ASCEND_ENABLE_MLAPO=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_MLAPO=${VLLM_ASCEND_ENABLE_MLAPO:-}"
+export PD_INDEX=4
+echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
 (
   pids=()
   for i in $(seq 0 15); do
     RANK=$((0 + i)); PORT=$((17000 + i))
-    KVPORT=$((30100 + i)); BOOTSTRAP=$((23100 + i))
+    PD_INDEX=$PD_INDEX
+    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23100 + i))
     LO=$((i * 1)); HI=$((LO + 1 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_9xs7vkt4 --trust-remote-code --max-model-len 1048576 --max-num-batched-tokens 120 --gpu-memory-utilization 0.9 --max-num-seqs 60 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":false},"enable_cpu_binding":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 8.0.1.1 --served-model-name DeepSeek-V4-Flash --dtype auto --kv-cache-dtype auto --seed 1024 --kv-transfer-config '{"kv_connector":"MooncakeHybridConnector","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":4,"tp_size":4},"decode":{"dp_size":16,"tp_size":1}},"engine_id":"'"$RANK"'"}' --no-enable-prefix-caching --reasoning-parser deepseek_v4 --no-disable-hybrid-kv-cache-manager --model-loader-extra-config '{"enable_multithread_load":"true","num_threads":128}' --speculative-config '{"num_speculative_tokens":1,"method":"mtp","enforce_eager":true}' --api-server-count 1 --port $PORT --tensor-parallel-size 1 --data-parallel-size 16 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 8.0.1.1 --data-parallel-rpc-port 12777 --data-parallel-external-lb &
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_zms5p1gm --trust-remote-code --max-model-len 1048576 --max-num-batched-tokens 120 --gpu-memory-utilization 0.9 --max-num-seqs 60 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":false},"enable_cpu_binding":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 8.0.1.1 --served-model-name DeepSeek-V4-Flash --dtype auto --kv-cache-dtype auto --seed 1024 --kv-transfer-config '{"kv_connector":"MooncakeHybridConnector","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":4,"tp_size":4},"decode":{"dp_size":16,"tp_size":1}},"engine_id":"'"$PD_INDEX"'"}' --no-enable-prefix-caching --reasoning-parser deepseek_v4 --no-disable-hybrid-kv-cache-manager --model-loader-extra-config '{"enable_multithread_load":"true","num_threads":128}' --speculative-config '{"num_speculative_tokens":1,"method":"mtp","enforce_eager":true}' --api-server-count 1 --port $PORT --tensor-parallel-size 1 --data-parallel-size 16 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 8.0.1.1 --data-parallel-rpc-port 12777 --data-parallel-external-lb &
     pids+=($!)
   done
   wait -n || true
@@ -415,13 +418,16 @@ export VLLM_ASCEND_ENABLE_FUSED_MC2=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_FUSED_MC2=${VLLM_ASCEND_ENABLE_FUSED_MC2:-}"
 export VLLM_ASCEND_ENABLE_MLAPO=1
 echo "[wings-env] export VLLM_ASCEND_ENABLE_MLAPO=${VLLM_ASCEND_ENABLE_MLAPO:-}"
+export PD_INDEX=4
+echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
 (
   pids=()
   for i in $(seq 0 15); do
     RANK=$((0 + i)); PORT=$((17000 + i))
-    KVPORT=$((30100 + i)); BOOTSTRAP=$((23100 + i))
+    PD_INDEX=$PD_INDEX
+    KVPORT=$((30000 + PD_INDEX * 100)); BOOTSTRAP=$((23100 + i))
     LO=$((i * 1)); HI=$((LO + 1 - 1)); CARDS=$(seq -s, $LO $HI)
-    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_9xs7vkt4 --trust-remote-code --max-model-len 1048576 --max-num-batched-tokens 120 --gpu-memory-utilization 0.9 --max-num-seqs 60 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":false},"enable_cpu_binding":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 8.0.1.1 --served-model-name DeepSeek-V4-Flash --dtype auto --kv-cache-dtype auto --seed 1024 --kv-transfer-config '{"kv_connector":"MooncakeHybridConnector","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":4,"tp_size":4},"decode":{"dp_size":16,"tp_size":1}},"engine_id":"'"$RANK"'"}' --no-enable-prefix-caching --reasoning-parser deepseek_v4 --no-disable-hybrid-kv-cache-manager --model-loader-extra-config '{"enable_multithread_load":"true","num_threads":128}' --speculative-config '{"num_speculative_tokens":1,"method":"mtp","enforce_eager":true}' --api-server-count 1 --port $PORT --tensor-parallel-size 1 --data-parallel-size 16 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 8.0.1.1 --data-parallel-rpc-port 12777 --data-parallel-external-lb &
+    ASCEND_RT_VISIBLE_DEVICES=$CARDS VLLM_MOONCAKE_BOOTSTRAP_PORT=$BOOTSTRAP vllm serve D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_zms5p1gm --trust-remote-code --max-model-len 1048576 --max-num-batched-tokens 120 --gpu-memory-utilization 0.9 --max-num-seqs 60 --enable-expert-parallel --quantization ascend --block-size 128 --chat-template /usr/local/serving/models/chat_template.jinja --async-scheduling --safetensors-load-strategy prefetch --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":false},"enable_cpu_binding":true,"multistream_overlap_shared_expert":true,"recompute_scheduler_enable":true}' --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --enable-auto-tool-choice --host 8.0.1.1 --served-model-name DeepSeek-V4-Flash --dtype auto --kv-cache-dtype auto --seed 1024 --kv-transfer-config '{"kv_connector":"MooncakeHybridConnector","kv_role":"kv_consumer","kv_port":"'"$KVPORT"'","kv_connector_extra_config":{"prefill":{"dp_size":4,"tp_size":4},"decode":{"dp_size":16,"tp_size":1}},"engine_id":"'"$PD_INDEX"'"}' --no-enable-prefix-caching --reasoning-parser deepseek_v4 --no-disable-hybrid-kv-cache-manager --model-loader-extra-config '{"enable_multithread_load":"true","num_threads":128}' --speculative-config '{"num_speculative_tokens":1,"method":"mtp","enforce_eager":true}' --api-server-count 1 --port $PORT --tensor-parallel-size 1 --data-parallel-size 16 --data-parallel-rank $RANK --data-parallel-size-local 1 --data-parallel-address 8.0.1.1 --data-parallel-rpc-port 12777 --data-parallel-external-lb &
     pids+=($!)
   done
   wait -n || true
