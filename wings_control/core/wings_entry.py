@@ -41,7 +41,13 @@ from utils.vllm_helpers import (
     build_triton_patch_preamble,
 )
 from utils.env_utils import get_local_ip, get_master_ip, validate_ip
-from utils.model_utils import ModelIdentifier, INDEXCACHE_ARCHS, is_glm_moe_dsa_glm51
+from utils.device_utils import resolve_card_token
+from utils.model_utils import (
+    ModelIdentifier,
+    INDEXCACHE_ARCHS,
+    is_glm_moe_dsa_glm51,
+    feature_allowed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +384,25 @@ def _resolve_lmcache_install_target(engine: str, merged: dict | None) -> str | N
     """
     if os.getenv("ENABLE_KV_OFFLOAD", "").strip().lower() != "true":
         return None
+
+    if merged:
+        smart_feats = merged.get("_smart_feats")
+        if smart_feats is not None:
+            offload_allowed = "offload" in smart_feats
+        else:
+            offload_allowed = feature_allowed(
+                engine,
+                merged.get("model_name"),
+                merged.get("model_path"),
+                resolve_card_token(),
+                "offload",
+            )
+        if not offload_allowed:
+            logger.info(
+                "[SmartFeature] offload suppressed by whitelist in "
+                "_resolve_lmcache_install_target — skipping LMCache patch install."
+            )
+            return None
 
     if merged and _is_deepseek_v4_cpu_offload_params(merged, engine=engine):
         logger.info(
