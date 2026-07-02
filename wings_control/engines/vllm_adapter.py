@@ -2194,8 +2194,8 @@ def _apply_deepseek_v4_flash_engine_defaults(
         return
 
     platform = _resolve_deepseek_v4_flash_platform(params)
-    if platform == "a3" and not get_lmcache_env():
-        params["enable_speculative_decode"] = True
+    # Speculative decoding is controlled only by the upstream SmartFeature
+    # switch + whitelist gate. Do not force-enable it from model defaults.
     _apply_deepseek_v4_flash_capacity_and_topology(params, engine_config, explicit_keys, platform)
     _apply_deepseek_v4_flash_runtime_defaults(engine_config, explicit_keys)
     _set_deepseek_v4_flash_additional_config(engine_config, explicit_keys, platform)
@@ -2654,7 +2654,6 @@ def _inject_glm47_w8a8_engine_config(params: Dict[str, Any], force_non_explicit:
         return
 
     engine_config = params.setdefault("engine_config", {})
-    params["enable_speculative_decode"] = True
     explicit_keys = set(params.get("_explicit_cli_keys") or [])
     stats = Glm47InjectionStats()
     for key, default_val in _GLM47_W8A8_ENGINE_DEFAULTS.items():
