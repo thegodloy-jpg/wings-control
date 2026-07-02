@@ -46,7 +46,7 @@ rm -f /shared-volume/progress.jsonl
 # 记录脚本开始时间（用于计算耗时）
 SCRIPT_START_EPOCH=$(date +%s)
 
-ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 4, "model_name": "Qwen3-30B-A3B", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_yc73ljp4", "backend_port": 17000}'
+ANALYZER_CONFIG='{"engine": "vllm_ascend", "deployment_mode": "single", "hardware": "ascend", "nnodes": 1, "node_rank": 0, "distributed_backend": "ray", "tensor_parallel_size": 4, "model_name": "Qwen3-30B-A3B", "model_path": "D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_t04jptl6", "backend_port": 17000}'
 echo "[log_analyzer] 配置信息: $ANALYZER_CONFIG"
 
 # 启动日志分析器（后台）
@@ -256,7 +256,7 @@ export HCCL_CONNECT_TIMEOUT=120
 echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
 export PD_INDEX=0
 echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
-ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $((4 - 1))) VLLM_MOONCAKE_BOOTSTRAP_PORT=23000 python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_yc73ljp4 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"30000","kv_connector_extra_config":{"prefill":{"dp_size":1,"tp_size":4},"decode":{"dp_size":1,"tp_size":4}},"kv_buffer_device":"npu","engine_id":"0"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port 17000 --tensor-parallel-size 4 &
+ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $((4 - 1))) VLLM_MOONCAKE_BOOTSTRAP_PORT=23000 python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_t04jptl6 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"30000","kv_connector_extra_config":{"prefill":{"dp_size":1,"tp_size":4},"decode":{"dp_size":1,"tp_size":4}},"kv_buffer_device":"npu","engine_id":"0"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port 17000 --tensor-parallel-size 4 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID"
 
@@ -394,7 +394,7 @@ export HCCL_CONNECT_TIMEOUT=120
 echo "[wings-env] export HCCL_CONNECT_TIMEOUT=${HCCL_CONNECT_TIMEOUT:-}"
 export PD_INDEX=0
 echo "[wings-env] export PD_INDEX=${PD_INDEX:-}"
-ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $((4 - 1))) VLLM_MOONCAKE_BOOTSTRAP_PORT=23000 python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_yc73ljp4 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"30000","kv_connector_extra_config":{"prefill":{"dp_size":1,"tp_size":4},"decode":{"dp_size":1,"tp_size":4}},"kv_buffer_device":"npu","engine_id":"0"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port 17000 --tensor-parallel-size 4 &
+ASCEND_RT_VISIBLE_DEVICES=$(seq -s, 0 $((4 - 1))) VLLM_MOONCAKE_BOOTSTRAP_PORT=23000 python3 -m vllm.entrypoints.openai.api_server --trust-remote-code --max-model-len 4096 --host 10.254.0.1 --served-model-name Qwen3-30B-A3B --model D:/project/inference/wings-control/wings-control-0730/wings-control/build/model_t04jptl6 --dtype auto --kv-cache-dtype auto --gpu-memory-utilization 0.9 --max-num-batched-tokens 8192 --block-size 16 --max-num-seqs 4 --seed 0 --enable-expert-parallel --default-chat-template-kwargs '{"enable_thinking":false}' --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_producer","kv_port":"30000","kv_connector_extra_config":{"prefill":{"dp_size":1,"tp_size":4},"decode":{"dp_size":1,"tp_size":4}},"kv_buffer_device":"npu","engine_id":"0"}' --enforce-eager --additional-config '{"enable_cpu_binding":"True"}' --port 17000 --tensor-parallel-size 4 &
 ENGINE_PID=$!
 echo "[Engine] Engine PID: $ENGINE_PID (retry mode)"
   echo "[Engine] Retry engine started, waiting for process exit..."

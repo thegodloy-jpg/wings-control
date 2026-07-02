@@ -3088,6 +3088,61 @@ def _merge_final_config(engine_config: Dict[str, Any],
     return cmd_known_params
 
 
+def _apply_pd_final_guard(engine_config: Dict[str, Any],
+                         final_engine_params: Dict[str, Any]) -> None:
+    """PD 最终守卫：无条件从 PD_* env 覆盖当前角色的 TP/DP。
+
+    无论上游哪个步骤（_set_pd_parallelism_params / _apply_pd_external_lb
+    / 模型默认注入器）是否执行，只要 PD_ROLE 已设，当前角色 TP/DP 必须
+    从 PD_* env 重新覆盖一次。这是多层防火墙的最后一道，防止 device_count
+    在任何路径泄漏到 tensor_parallel_size / data_parallel_size。
+
+    同时将覆盖值写入 _pd_engine_overrides，使 _prepare_engine_config
+    的重申也能感知，防止后续模型注入器回填。
+    """
+    pd_role = get_pd_role_env()
+    if not pd_role:
+        return
+
+    role_prefix = "PREFILL" if pd_role == "P" else "DECODE"
+    raw_tp = (
+        os.getenv("TP_SIZE")
+        or os.getenv("PD_TP_SIZE")
+        or os.getenv(f"PD_{role_prefix}_TP_SIZE")
+    )
+    raw_dp = (
+        os.getenv("DP_SIZE")
+        or os.getenv("PD_DP_SIZE")
+        or os.getenv(f"PD_{role_prefix}_DP_SIZE")
+    )
+
+    overrides: Dict[str, Any] = {}
+
+    def _check_and_override(env_name: str, raw_val: str, config_key: str) -> None:
+        if raw_val is None:
+            return
+        try:
+            val = int(raw_val)
+        except (ValueError, TypeError):
+            logger.warning("[PD final-guard] invalid %s value %r, skipped", env_name, raw_val)
+            return
+        current = engine_config.get(config_key)
+        if current != val:
+            logger.warning(
+                "[PD final-guard] %s mismatch: engine_config has %s, "
+                "%s=%s — forcing override to %d",
+                config_key, current, env_name, raw_val, val,
+            )
+            overrides[config_key] = val
+
+    _check_and_override(f"PD_{role_prefix}_TP_SIZE", raw_tp, "tensor_parallel_size")
+    _check_and_override(f"PD_{role_prefix}_DP_SIZE", raw_dp, "data_parallel_size")
+
+    for k, v in overrides.items():
+        engine_config[k] = v
+        final_engine_params.setdefault("_pd_engine_overrides", {})[k] = v
+
+
 def load_and_merge_configs(
     hardware_env: Dict[str, Any],
     known_args: argparse.Namespace
@@ -3199,7 +3254,11 @@ def load_and_merge_configs(
     _apply_pd_external_lb(final_engine_params, model_info)
 
     logger.info("Final engine_config keys: %s", list(engine_config.keys()))
-    # 打印 PD 关键拓扑值用于诊断：确认 TP/DP 来自 env 而非 device_count 兜底
+
+    # PD 最终守卫：无条件从 PD_* env 覆盖当前角色 TP/DP
+    _apply_pd_final_guard(engine_config, final_engine_params)
+
+    # 打印 PD 关键拓扑值用于诊断
     _pd_diag = {
         k: engine_config.get(k)
         for k in ("tensor_parallel_size", "data_parallel_size",
@@ -3207,8 +3266,8 @@ def load_and_merge_configs(
         if k in engine_config
     }
     if _pd_diag:
-        pd_role = get_pd_role_env()
-        logger.info("Final engine_config PD topology values (PD_ROLE=%s): %s", pd_role, _pd_diag)
+        logger.info("Final engine_config PD topology values (PD_ROLE=%s): %s",
+                     get_pd_role_env() or "<unset>", _pd_diag)
     logger.info("Config merging completed.")
     return final_engine_params
 
