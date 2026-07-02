@@ -1,9 +1,9 @@
 # 需求一 · 三特性使能改造 — 八需求点 dry-run 测试方案与验证报告
 
 > 关联：[需求一-完成度核查与遗漏清单.md](需求一-完成度核查与遗漏清单.md) · [需求一-dry-run验证报告.md](需求一-dry-run验证报告.md) · [需求一-三特性使能.md](需求一-三特性使能.md)
-> 日期：2026-06-27。分支：`feat/smart-three-feature-enablement`。
+> 日期：2026-06-27。分支：`feat/smart-three-feature-enablement`。更新：2026-07-02，补充开关关闭防回归用例与 sparse 表档位 topk 用例。
 > 落地物：驱动器 [tests/_dryrun_req_harness.py](../../tests/_dryrun_req_harness.py) + 用例集 [tests/dryrun_requirement_coverage.py](../../tests/dryrun_requirement_coverage.py)；证据产物 [tests/dryrun_requirement_coverage_output.txt](../../tests/dryrun_requirement_coverage_output.txt)（逐用例打印入参三段 + 下发通道 + 出参期望/实际）。
-> **结果：29 用例 / 60 断言，全部 PASS（exit 0）。** 运行：`python tests/dryrun_requirement_coverage.py`
+> **结果：33 用例 / 70 断言，全部 PASS（exit 0）。** 运行：`python tests/dryrun_requirement_coverage.py`
 
 ---
 
@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | 投机 SmartDecoding | `ENABLE_SPECULATIVE_DECODE=true` | `wings_start.sh:299` 读该 env → `:345` 传播进 APP_ARGS |
 | 稀疏 SmartKVSparse | `ENABLE_SPARSE=true` | `wings_start.sh:300` 读该 env → `:347` 传播 |
-| 卸载 SmartKVCache | `LMCACHE_OFFLOAD=true`（纯 env，无 CLI 标志） | `config_loader.get_lmcache_env()` 直接读 |
+| 卸载 SmartKVCache | `ENABLE_KV_OFFLOAD=true`（纯 env，无 CLI 标志） | `config_loader.get_lmcache_env()` 直接读 |
 
 **因此本方案所有用例：三特性开关一律置于 `orchestration_env`（env），`user_cli` 不含任何 `--enable-*` 特性标志。** 驱动器复刻 `wings_start.sh(299-300/345-348)` 的 env→APP_ARGS 传播，与真实链路等价。P0 节专门验证「env 下发即生效、user_cli 无 CLI 标志」。
 
@@ -28,7 +28,7 @@
 | 入参段 | 代表谁 | 内容 |
 | --- | --- | --- |
 | **user_cli** | 用户在 `wings_start.sh` 真敲的 CLI | `--model-name/--engine/--device-count/--distributed`…（**不含三特性开关**） |
-| **orchestration_env** | 编排层/K8s/MaaS 进程启动前注入的 env | **三特性开关**（`ENABLE_SPECULATIVE_DECODE/ENABLE_SPARSE/LMCACHE_OFFLOAD`）+ 拓扑/平台/`ENGINE_VERSION`/`SPARSE_LEVEL`/`LMCACHE_POD_MEMORY`/`PD_ROLE`… |
+| **orchestration_env** | 编排层/K8s/MaaS 进程启动前注入的 env | **三特性开关**（`ENABLE_SPECULATIVE_DECODE/ENABLE_SPARSE/ENABLE_KV_OFFLOAD`）+ 拓扑/平台/`ENGINE_VERSION`/`SPARSE_LEVEL`/`KV_MEM_OFFLOAD_SIZE`/`AVAILABLE_POD_MEM_SIZE`/`PD_ROLE`… |
 | **model_config** | 模型权重 `config.json` | `architecture` + `quantization_config` |
 
 链路：`reset`（每例=全新 pod）→ mock config.json → 注入编排 env → `simulate_wings_start` +（复刻 wings_start.sh）env→APP_ARGS 传播 → `parse_launch_args` → `build_launcher_plan` → `start_command.sh`。
@@ -37,7 +37,7 @@
 
 | 出参 | 来源 | 断言示例 |
 | --- | --- | --- |
-| **start_command.sh** 可执行命令行 | `plan.command`（真实 exec 行） | `--speculative-config`/`--hf-overrides`/`--swap-space 0`/`cpu_swap_space_gb`/`LMCACHE_MAX_LOCAL_CPU_SIZE=N`/`install.py --features` |
+| **start_command.sh** 可执行命令行 | `plan.command`（真实 exec 行） | `--speculative-config`/`--hf-overrides`/`--swap-space 0`/`cpu_swap_space_gb`/`KV_MEM_OFFLOAD_SIZE=N`/`install.py --features` |
 | **advanced_features.json** | 生成期写到 `settings.SHARED_VOLUME_PATH`（真相源，含 variants） | `features.{spec/sparse/offload}` bool + `variants.{...}` 字符串 |
 | **生产代码日志** | 捕获 `core.config_loader`/`engines.vllm_adapter` 的 INFO/WARNING | 收口摘要 / 卡型 miss 告警 / 抑制日志 / SPARSE_LEVEL 回落告警 |
 
@@ -85,7 +85,7 @@ SmartKVSparse 产出 ⇔  层1 开关 ENABLE_SPARSE=true（env，非 CLI）
 | --- | --- | --- | --- |
 | TC-P0-01 | user_cli=`{glm-5.1, vllm, 8}`（无 --enable-sparse）；orch=`{…, ENABLE_SPARSE: true}` | user_cli 含 CLI 标志=否；features.sparse_kv=True；variants=indexcache_topk4 | ✅ |
 | TC-P0-02 | orch=`{…, ENGINE_VERSION:0.21.0-a3, ENABLE_SPECULATIVE_DECODE: true}` | user_cli 含 CLI 标志=否；variants.speculative_decode=deepseek_mtp | ✅ |
-| TC-P0-03 | orch=`{…, LMCACHE_OFFLOAD: true, LMCACHE_POD_MEMORY:512}` | features.kv_offload=True；variants.kv_offload=lmcache_cpu+auto | ✅ |
+| TC-P0-03 | orch=`{…, ENABLE_KV_OFFLOAD: true, KV_MEM_OFFLOAD_SIZE:auto, AVAILABLE_POD_MEM_SIZE:512}` | features.kv_offload=True；variants.kv_offload=lmcache_cpu+auto | ✅ |
 
 ### P1 · 删 fp4/fp8 + 引擎路由删除
 
@@ -120,7 +120,7 @@ SmartKVSparse 产出 ⇔  层1 开关 ENABLE_SPARSE=true（env，非 CLI）
 | --- | --- | --- | --- |
 | TC-P3-01 | glm-5.1·vllm_ascend，orch `ENABLE_SPARSE:true`、**无** platform/engine-version/device-name | 日志 `card_token unresolved on Ascend`（出现）；收口摘要存在 | ✅ |
 | TC-P3-02 | Llama-3-70B·NV，orch `ENABLE_SPARSE:true, ENABLE_SPECULATIVE_DECODE:true` | 日志 `sparse requested but not in whitelist`；摘要含 `sparse True->False` | ✅ |
-| TC-P3-03 | Llama-3-70B·NV，orch `LMCACHE_OFFLOAD:true` | 日志 `offload requested but not in whitelist` | ✅ |
+| TC-P3-03 | Llama-3-70B·NV，orch `ENABLE_KV_OFFLOAD:true` | 日志 `offload requested but not in whitelist` | ✅ |
 
 ### P4 · 白名单门控 + PD + 开关基线
 
@@ -128,19 +128,28 @@ SmartKVSparse 产出 ⇔  层1 开关 ENABLE_SPARSE=true（env，非 CLI）
 | --- | --- | --- | --- |
 | TC-P4-01 | GLM-5.2·a3，`ENABLE_SPECULATIVE_DECODE:true` | variants.speculative_decode = deepseek_mtp | ✅ |
 | TC-P4-02 | glm-5.1·a2，`ENABLE_SPECULATIVE_DECODE:true + ENABLE_SPARSE:true` | spec=suffix（地板, B.4）；sparse=indexcache_topk8 | ✅ |
-| TC-P4-03 | qwen3.5-397b·NV，`ENABLE_SPARSE:true + LMCACHE_OFFLOAD:true + POD=512` | features.kv_offload=False；不导出 LMCACHE_OFFLOAD=true | ✅ |
+| TC-P4-03 | qwen3.5-397b·NV，`ENABLE_SPARSE:true + ENABLE_KV_OFFLOAD:true + AVAILABLE_POD_MEM_SIZE=512` | features.kv_offload=False；不导出 ENABLE_KV_OFFLOAD=true | ✅ |
 | TC-P4-04 | glm-4.7·NV，`ENABLE_*` 三特性全开 + `PD_ROLE=P` | 日志 PD veto；features 三特性全 False | ✅ |
 | TC-P4-05 | GLM-5.2·a3，**不设 ENABLE_SPECULATIVE_DECODE** | `--speculative-config` 不出现；features.speculative_decode=False | ✅ |
-| TC-P4-06 | glm-4.7·NV，**不设 LMCACHE_OFFLOAD** | 不导出 LMCACHE_OFFLOAD=true；features.kv_offload=False | ✅ |
+| TC-P4-05a | V4-Flash·Ascend A3，`ENABLE_SPECULATIVE_DECODE:false` | 适配层模型默认不得强制复活投机；`--speculative-config` 不出现；features.speculative_decode=False | ✅ |
+| TC-P4-05b | GLM-4.7 W8A8，`ENABLE_SPECULATIVE_DECODE:false` | W8A8 调优不得强制复活投机；`--speculative-config` 不出现；features.speculative_decode=False | ✅ |
+| TC-P4-06 | glm-4.7·NV，**不设 ENABLE_KV_OFFLOAD** | 不导出 ENABLE_KV_OFFLOAD=true；features.kv_offload=False | ✅ |
 
 ### P5 · 内存自动计算 C4（`M_offload = POD − (7×TP×DP+3) − 10%`）
 
 | TC | 入参要点（三特性=env） | 出参（期望→实际） | 判定 |
 | --- | --- | --- | --- |
-| TC-P5-01 | glm-4.7·NV，`LMCACHE_OFFLOAD:true + POD=512`，8卡(TP8/DP1) | `LMCACHE_MAX_LOCAL_CPU_SIZE=50`（=401÷8，均卡）；`--swap-space 0` | ✅ |
-| TC-P5-02 | V4-Flash·Ascend a2，`LMCACHE_OFFLOAD:true + POD=512`，8卡 | `cpu_swap_space_gb=401`（整节点，**不除卡数**） | ✅ |
-| TC-P5-03 | glm-4.7·NV，`LMCACHE_OFFLOAD:true + LMCACHE_MAX_LOCAL_CPU_SIZE=200`（custom） | `LMCACHE_MAX_LOCAL_CPU_SIZE=200`（透传不算） | ✅ |
-| TC-P5-04 | glm-4.7·NV，`LMCACHE_OFFLOAD:true + POD=100`（→31<100 熔断） | 无 auto 写回 CPU 容量；命中熔断告警日志 | ✅ |
+| TC-P5-01 | glm-4.7·NV，`ENABLE_KV_OFFLOAD:true + KV_MEM_OFFLOAD_SIZE:auto + AVAILABLE_POD_MEM_SIZE=512`，8卡(TP8/DP1) | `KV_MEM_OFFLOAD_SIZE=50`（=401÷8，均卡）；`--swap-space 0` 不出现 | ✅ |
+| TC-P5-02 | V4-Flash·Ascend a2，`ENABLE_KV_OFFLOAD:true + KV_MEM_OFFLOAD_SIZE:auto + AVAILABLE_POD_MEM_SIZE=512`，8卡 | `cpu_swap_space_gb=401`（整节点，**不除卡数**） | ✅ |
+| TC-P5-03 | glm-4.7·NV，`ENABLE_KV_OFFLOAD:true + KV_MEM_OFFLOAD_SIZE=200`（custom） | `KV_MEM_OFFLOAD_SIZE=200`（透传不算） | ✅ |
+| TC-P5-04 | glm-4.7·NV，`ENABLE_KV_OFFLOAD:true + KV_MEM_OFFLOAD_SIZE:auto + AVAILABLE_POD_MEM_SIZE=100`（→31<100 熔断） | 无 auto 写回 CPU 容量；命中熔断告警日志 | ✅ |
+
+### P5 · sparse 表档位 topk：performance_first 产出路径
+
+| TC | 入参要点（三特性=env） | 出参（期望→实际） | 判定 |
+| --- | --- | --- | --- |
+| TC-P5-01 | V4-Flash·NV，`ENABLE_SPARSE:true`，缺省 `SPARSE_LEVEL` | `--hf-overrides {"use_index_cache": true, "index_topk_freq": 4}` | ✅ |
+| TC-P5-02 | V4-Flash·NV，`ENABLE_SPARSE:true + SPARSE_LEVEL=performance_first` | `--hf-overrides {"use_index_cache": true, "index_topk_freq": 8}` | ✅ |
 
 ### P6 · 稀疏三层门控（详见 §二）
 
@@ -173,17 +182,18 @@ TC-P6-01 ~ TC-P6-06，6 例全 PASS。覆盖开关 env ON/OFF、开关门控档�
 
 ```
 python tests/dryrun_requirement_coverage.py
-→ 用例：29 个（29 PASS / 0 FAIL）  ·  断言：60 PASS / 0 FAIL   (exit 0)
+→ 用例：33 个（33 PASS / 0 FAIL）  ·  断言：70 PASS / 0 FAIL   (exit 0)
 ```
 
 | 点 | 用例数 | 结论 |
 | --- | --- | --- |
-| P0 下发通道 | 3 | 三特性**仅经 env**（ENABLE_SPECULATIVE_DECODE/ENABLE_SPARSE/LMCACHE_OFFLOAD）即生效，user_cli 无 CLI 标志 |
+| P0 下发通道 | 3 | 三特性**仅经 env**（ENABLE_SPECULATIVE_DECODE/ENABLE_SPARSE/ENABLE_KV_OFFLOAD）即生效，user_cli 无 CLI 标志 |
 | P1 删 fp8/算子加速 | 1 | 两条引擎路由 env 旁路对产物零影响、USE_KUNLUN_ATB 不导出 |
 | P2 对外接口 | 2 | advanced_features features+variants 如实透出 |
 | P3 对内日志 | 3 | 卡型 miss / req→eff 摘要 / sparse·offload 抑制日志均触发 |
-| P4 白名单+PD+开关基线 | 6 | 命中→变体、地板、收口关、PD 否决、env 开关 OFF→不产 |
+| P4 白名单+PD+开关基线 | 8 | 命中→变体、地板、收口关、PD 否决、env 开关 OFF→不产；覆盖 V4-Flash/GLM-4.7 W8A8 不得强制复活投机 |
 | P5 内存自动计算 | 4 | auto 均卡/native 整节点/custom/熔断 四态 + swap_space=0 |
+| P5 sparse 表档位 topk | 2 | V4-Flash·NV accuracy_first topk4 / performance_first topk8 |
 | P6 稀疏三层门控 | 6 | 开关 env ON/OFF、开关门控档位、白名单抑制、档位三态 |
 | P7 卡型解析 | 2 | ENGINE_VERSION(a2/a3) + WINGS_DEVICE_NAME 两条兜底链 |
 | P8 打补丁 | 2 | NV 装补丁 / Ascend day0 不装 |
@@ -203,7 +213,7 @@ python tests/dryrun_requirement_coverage.py
 
 ```bash
 cd wings-control
-python tests/dryrun_requirement_coverage.py     # 29 PASS / 0 FAIL
+python tests/dryrun_requirement_coverage.py     # 33 PASS / 0 FAIL
 #   产物（逐用例入参三段 + 下发通道 + 出参期望/实际）：tests/dryrun_requirement_coverage_output.txt
 ```
 

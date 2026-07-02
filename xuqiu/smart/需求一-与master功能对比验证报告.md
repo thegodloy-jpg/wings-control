@@ -1,89 +1,114 @@
-# 需求一 · 与 master 功能对比验证报告（防功能丢失）
+# 需求一 · 与 master 功能对比验证报告（防白名单缺失 / 功能丢失）
 
-> 方案见 [需求一-与master对比测试方案.md](需求一-与master对比测试方案.md)。
-> 对比对象：`master`（`0a8b3f9`，**经 `git merge-base` 确认为分支的干净祖先**，master 无独有提交）↔ `feat/smart-three-feature-enablement`（`8e607d4`，领先 7 个提交）。
-> 落地物：[tests/cmp_master_branch.py](../../tests/cmp_master_branch.py)；证据产物 [tests/cmp_master_branch_output.txt](../../tests/cmp_master_branch_output.txt)。
-> **运行**：`git worktree add ../wt-master master && python tests/cmp_master_branch.py`
+> 关联：[需求一-三特性使能.md](需求一-三特性使能.md) · [需求一-与master功能对比测试方案.md](需求一-与master功能对比测试方案.md) · [需求一-需求点dry-run测试方案与验证报告.md](需求一-需求点dry-run测试方案与验证报告.md)
 
----
+## 一、结论
 
-## 一、结论（先给结论）
+截至 2026-07-02，本分支相对 `master` 的功能对比结论：
 
-```
-40 / 40 场景无回归   ·   疑似回归项 = 0   ·   归类为预期变更 = 184 处
-```
+- `master`：`0a8b3f9`，为白名单生成前基线。
+- 当前分支：`08941b1` + 本地修复工作树。
+- 分叉点：`merge-base master HEAD = 0a8b3f9`。
+- 提交关系：`HEAD..master = 0`，`master..HEAD = 30`。
+- 对比结果：`43/43` 场景无回归。
+- 疑似回归项：`0`。
+- 已归类预期变更：`290`。
 
-**开发需求一后，相对 master 未丢失/未破坏任何既有功能。** master↔branch 的全部差异（184 处）100% 落在需求文档列明的预期变更白名单 **D1–D8** 内，无任何「非特性差异」（即无 TP/DP/EP、parser、chat-template、max_model_len、模型 recipe 等功能性回归）。
+结论：未发现白名单缺失导致的功能丢失。master 与当前分支的差异均可归入需求一的预期变更或白名单收口；用户显式关闭特性时，当前分支能关闭，不再被模型默认推荐或 W8A8 注入逻辑强制打开。
 
----
+## 二、本轮加强点
 
-## 二、方法与判定（要点）
+本轮在原 master 对比基础上补强了三类风险：
 
-1. **干净祖先确认**：`git merge-base master HEAD = 0a8b3f9 = master`，`HEAD..master = 0` 提交 → 所有差异均由分支 7 个提交引入（排除「master 自身演进被误判为回归」）。
-2. **双 worktree 各跑生产代码**：同一场景（三特性经 **env 下发**）在 master/branch 各自代码下生成 `start_command.sh`，subprocess 进程隔离。
-3. **归一化**：折叠临时目录 + worktree 根路径 churn；剥离 `[wings-cmd]` 截断预览；剥离「崩溃处理脚手架」尾段（fallback↔retry 模板，属 D7 下游、机制代码两侧一致）。
-4. **分类**：逐行/逐 flag 匹配 D1–D8；命令行非特性 flag（TP/parser/template/recipe…）或非特性脚手架行若变化即记「疑似回归」。**判定通过 = 疑似回归 0**。
+1. 新增 `C8:v4flash-a3-spec-off`：DeepSeek-V4-Flash Ascend A3 下发 `ENABLE_SPECULATIVE_DECODE=false`，验证当前分支不再输出 `--speculative-config`。
+2. 新增 `C9:glm47-w8a8-spec-off`：GLM-4.7 W8A8 下发 `ENABLE_SPECULATIVE_DECODE=false`，验证当前分支不再输出 `--speculative-config`。
+3. KV offload 对比同时兼容 master 旧键和当前新键：`LMCACHE_OFFLOAD/LMCACHE_*` 与 `ENABLE_KV_OFFLOAD/KV_MEM_OFFLOAD_SIZE/AVAILABLE_POD_MEM_SIZE` 同时下发，避免把环境变量改名误判成功能缺失。
 
----
+## 三、白名单完整性核查
 
-## 三、预期变更分类计数（184 处）
+### 1. Speculative Decode
 
-| 类 | 含义 | 命中数 | 说明 |
+当前 spec 白名单共 10 行，覆盖：
+
+| 引擎 | 模型/平台 | 状态 |
+| --- | --- | --- |
+| vllm | Qwen3.5-397B、GLM-4.7、MiniMax-M2.7、DeepSeek-V4-Flash | 保留 |
+| vllm_ascend | GLM-4.7 910B/910C、MiniMax-M2.5 910B/910C、DeepSeek-V3.2 910C、Qwen3.6 910C、DeepSeek-V4-Flash 910B/910C、GLM-5.2 910B/910C | 保留 |
+
+核查结论：
+
+- GLM-5.1 Ascend 不在 spec 白名单，当前分支降为 suffix 地板能力，属于预期收口。
+- V4-Flash Ascend A3 和 GLM-4.7 W8A8 显式关闭 spec 时，当前分支不再强制打开，符合“用户关闭优先”诉求。
+- 白名单内模型在开启时仍可生成对应投机配置。
+
+### 2. Sparse Attention
+
+当前 sparse 白名单共 7 行，覆盖：
+
+| 引擎 | 模型/平台 | 档位 |
+| --- | --- | --- |
+| vllm | Qwen3.5-397B、GLM-4.7、GLM-5.1、MiniMax-M2.7 | accuracy topk=4 |
+| vllm | DeepSeek-V4-Flash | accuracy topk=4；performance topk=8 |
+| vllm_ascend | DeepSeek-V4-Flash 910B/910C | 当前 sparse 白名单命中但产出口为 noop；630 后切 use_index_cache topk4/8 |
+| vllm_ascend | GLM-5.1 910B/910C | accuracy/performance topk=8 |
+
+核查结论：
+
+- GLM-4.7 Ascend、GLM-5.2 Ascend 不在 sparse 白名单，关闭为预期收口。
+- 白名单内 sparse 场景仍能生成 `--kv-cache-dtype fp8`、`--calculate-kv-scales` 或 IndexCache 相关配置。
+- DeepSeek-V4-Flash·NV 的 accuracy/performance 档位均已覆盖；DeepSeek-V4-Flash·Ascend 当前按需求文档记录为 sparse noop，白名单先保留，待 630 引擎产出口切 use_index_cache topk4/8。
+
+### 3. KV Offload
+
+当前 offload 白名单共 7 行，覆盖：
+
+| 引擎 | 模型/平台 | 状态 |
+| --- | --- | --- |
+| vllm | GLM-4.7、MiniMax-M2.7、DeepSeek-V4-Flash | 保留 |
+| vllm_ascend | GLM-4.7 910B/910C、MiniMax-M2.5 910B/910C、DeepSeek-V3.2 910C、DeepSeek-V4-Flash 910B/910C | 保留 |
+
+核查结论：
+
+- GLM-5.2 Ascend offload 被收口关闭，属于白名单预期行为。
+- GLM-5.1 NV offload 仍按现有逻辑硬关闭，未被误加入白名单。
+- 当前新 env `ENABLE_KV_OFFLOAD=true` 路径由需求 dry-run 覆盖；master 对比脚本同时下发新旧 env，证明不是改名导致的假阴性。
+
+## 四、master 差异解释
+
+以下差异已核查为预期，不属于功能丢失：
+
+| 场景 | master 行为 | 当前分支行为 | 结论 |
 | --- | --- | --- | --- |
-| D1 | 移除 `--accel-file` | 26 | 通用（每个写 advanced_features 的场景） |
-| D2 | advanced_features 路径反斜杠修复 | 26 | 通用 |
-| D3 | 投机白名单门控（mtp↔suffix） | 7 | 主要 GLM-5.1·Ascend（sparse-only→spec 地板 suffix） |
-| D4 | V4-Flash·NV forced IndexCache 去除 | 1 | v4flash-nv-h20-8 |
-| D5 | 删 Soft FP8/FP4 自动量化 | 0※ | 本批 mock 未触发（见 §五缺口），由单测覆盖 |
-| D6 | KV 卸载 auto 容量 C4（新增） | 3 | offload-auto 场景：`LMCACHE_MAX_LOCAL_CPU_SIZE` + `--swap-space 0` |
-| D7 | 白名单收窄（收口关 + 下游脚手架） | 7+※ | GLM-5.2·Ascend offload/sparse 收窄、PD 一票否决等 |
-| D8 | 删算子加速/昆仑 ATB（§6-⑤） | ※ | `USE_KUNLUN_ATB=1` 不再导出（计入 scaffold） |
-| scaffold | 特性门控的 install/LMCache/EARS/shell 控制脚手架（D6/D7/D8 伴生） | 133 | 随特性激活态确定，非独立改动 |
+| GLM-5.1 Ascend | 生成 `deepseek_mtp` | 降为 `suffix` | 不在 spec 白名单，预期收口 |
+| V4-Flash A3 默认/显式关 spec | master 仍强制 `deepseek_mtp` | 当前可关闭到无 `--speculative-config` | 满足用户关闭优先 |
+| GLM-4.7 W8A8 显式关 spec | master 仍强制 `mtp` | 当前可关闭到无 `--speculative-config` | 满足用户关闭优先 |
+| GLM-5.2 Ascend offload | master 生成 LMCache connector | 当前关闭 offload | 不在 offload 白名单，预期收口 |
+| PD role | master 可混入 LMCache/MultiConnector | 当前三特性一票否决，仅保留 PD connector | PD 隔离预期行为 |
+| V4-Flash NV sparse 未开启 | master 强制 IndexCache | 当前不强制 | 用户开关优先，预期收口 |
 
-> ※ D7/D8 的多行脚手架统计入 scaffold（133）。
+## 五、验证命令与产物
 
----
+执行命令：
 
-## 四、分组结论（逐组验证无回归）
-
-### Group A · 主 recipe 全引擎/平台/拓扑（20 场景）
-- **GLM-5.1·Ascend（4 场景）**：仅 `D3 spec deepseek_mtp→suffix`（清单 sparse-only 的地板，B.4 修复），sparse/TP/DP/EP/拓扑全保形。
-- **GLM-5.2 / V4-Flash·Ascend / V4-Pro / Qwen3.5 / Qwen3.6 / MiniMax / Kimi / sglang / mindie**：**与 master 等价（仅 D1/D2 已中和）** —— 模型 recipe、TP/DP/EP、parser、chat-template、mindie config、sglang 参数逐字保形。
-- **V4-Flash·NV**：仅 `D4 forced IndexCache removed`（§0 删 forced）。
-
-### Group B · 三特性 env 组合矩阵（14 场景）
-- glm-4.7·NV 各组合：未触发特性的字段全保形；`offload-auto` 仅 `D6 C4`（`LMCACHE_MAX_LOCAL_CPU_SIZE=50` + `swap-space 0`）。
-- GLM-5.2·Ascend 各组合：`offload`/`sparse` 被白名单收窄 → `D7`（`--kv-transfer-config`/LMCache env/install 补丁收口关）；`all` 组合 `D3 spec suffix→deepseek_mtp`（offload 被收窄→不再触发 offload×spec 降级，**branch 反而保住 mtp**）。均为预期。
-
-### Group C · 回归风险专项（6 场景）★
-| 用例 | 结论 |
-| --- | --- |
-| C1 裸布局-NV / C2 裸布局-Ascend | **与 master 等价** —— 删软 fp8 对这些架构启动命令无影响（无回归） |
-| C3 embedding-Ascend | **与 master 等价** —— `_set_task` 删 `use_kunlun_atb` **零副作用**（enforce_eager 等保留） |
-| C5 op-accel（ENABLE_OPERATOR_ACCELERATION） | 仅 `USE_KUNLUN_ATB=1` 不再导出（**D8 §6-⑤ 删昆仑 ATB**，已裁定可删） |
-| C6 soft-fp8（ENABLE_SOFT_FP8） | **与 master 等价** —— 显式 engine 下软 fp8 路由旁路删除无副作用 |
-| C7 PD 角色 | `D3 spec→none` + `D7` PD 一票否决：`--kv-transfer-config` 由 `MultiConnector{Nixl+LMCache}`→`Nixl-only`（§3.1 删不可达 MultiConnector 共存分支）、`--calculate-kv-scales`/`kv-cache-dtype=fp8` 随 sparse 收口移除 |
-
-### Group D · 平台/拓扑边界
-- a2/a3 分叉、双机 node0/node1 拓扑（含 dp_deployment/rpc-port）均在 Group A 内保形，仅叠加各自的 D1/D2/D3。
-
----
-
-## 五、覆盖与缺口
-
-- **覆盖**：4 引擎 × 12+ 架构 × 3 平台 × 单/双/PD × 7 特性组合 + 7 回归专项 = **40 对比场景**，全部无回归。
-- **D5（软 fp8 删除）未在本批触发**：mock 的 `config.json` 缺少 modelslim/特定量化布局信号，裸布局场景 master 也未注入自动量化，故无可见差异（既非回归）。软 fp8/fp4 删除的正确性由 73b177b 同步删除的单测覆盖。
-- **引擎自动选择改道**：dry-run 无法触发（C5/C6 以「显式 engine + 旁路 env」做等价回归，确认旁路 env 仅 D8 一处影响），由单测 `test_unit_engine_select.py` 覆盖。
-
----
-
-## 六、复现
-
-```bash
-cd wings-control
-git worktree add ../wt-master master      # 若已存在可跳过
-python tests/cmp_master_branch.py          # 40/40 无回归，疑似回归=0；详见 tests/cmp_master_branch_output.txt
-git worktree remove ../wt-master           # 清理
+```powershell
+# 如 ..\wt-master 不存在，先创建 master 基线 worktree
+git worktree add ..\wt-master master
+python .\tests\cmp_master_branch.py
+python .\tests\dryrun_requirement_coverage.py
 ```
 
-> 一句话：**逐场景、逐 flag、逐脚手架行核对，分支相对 master 的 184 处差异全部可归因于需求文档列明的 D1–D8 预期变更，零功能丢失。**
+关键产物：
+
+- `tests/cmp_master_branch.py`：master 对比脚本，43 场景。
+- `tests/cmp_master_branch_output.txt`：对比输出，`43/43` 无回归。
+- `tests/dryrun_requirement_coverage.py`：需求点 dry-run 覆盖脚本，包含显式关 spec、KV offload 新 env、sparse 档位等要求。
+- `tests/dryrun_requirement_coverage_output.txt`：需求 dry-run 输出。
+
+## 六、最终判断
+
+当前实现满足需求核心诉求：
+
+- 页面/编排侧可以全量下发三特性变量。
+- 后端通过白名单决定特性是否真正生效。
+- 用户显式关闭部分特性时，关闭优先级高于模型默认推荐、W8A8 注入和历史 forced 逻辑。
+- 与 master 对比未发现白名单遗漏或既有功能丢失。
