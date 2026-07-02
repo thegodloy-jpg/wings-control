@@ -860,11 +860,19 @@ def _get_pd_config(ctx, pd_role):
         # Ascend Mooncake 系列 connector 要求 kv_connector_extra_config 中包含
         # prefill 和 decode 双方的并行配置 (tp_size, dp_size, pp_size)，
         # 用于 KV cache 传输时的 TP/DP 映射计算。
+        # TP_SIZE / PD_TP_SIZE 是 per-pod 覆盖（只影响本角色），优先级：
+        #   TP_SIZE > PD_TP_SIZE > PD_{ROLE}_TP_SIZE > device_count
+        # 与 _adjust_tensor_parallelism / _get_pd_external_lb_params 保持一致。
         default_tp = int(ctx.get('device_count', 1))
-        prefill_tp = int(os.getenv("PD_PREFILL_TP_SIZE", str(default_tp)))
+        role_tp_override = os.getenv("TP_SIZE") or os.getenv("PD_TP_SIZE")
+        if pd_role == "P":
+            prefill_tp = int(role_tp_override or os.getenv("PD_PREFILL_TP_SIZE", str(default_tp)))
+            decode_tp = int(os.getenv("PD_DECODE_TP_SIZE", str(default_tp)))
+        else:
+            prefill_tp = int(os.getenv("PD_PREFILL_TP_SIZE", str(default_tp)))
+            decode_tp = int(role_tp_override or os.getenv("PD_DECODE_TP_SIZE", str(default_tp)))
         prefill_dp = int(os.getenv("PD_PREFILL_DP_SIZE", "1"))
         prefill_pp = int(os.getenv("PD_PREFILL_PP_SIZE", "1"))
-        decode_tp = int(os.getenv("PD_DECODE_TP_SIZE", str(default_tp)))
         decode_dp = int(os.getenv("PD_DECODE_DP_SIZE", "1"))
         decode_pp = int(os.getenv("PD_DECODE_PP_SIZE", "1"))
 
@@ -1798,6 +1806,33 @@ def _adjust_tensor_parallelism(
                 device_count, default_tp,
             )
         return
+
+    # PD 分离模式：使用角色对应的 TP 大小，与 kv_transfer_config 中的 prefill/decode
+    # tp_size 保持一致。PD_PREFILL_TP_SIZE / PD_DECODE_TP_SIZE 反映本角色（P/D）的全局
+    # TP 配置，可能与 device_count 不同（例如 2P2D 场景：prefill TP=2, device_count=4）。
+    pd_role = get_pd_role_env()
+    if pd_role:
+        role_prefix = "PREFILL" if pd_role == "P" else "DECODE"
+        # 优先级对齐 _get_pd_external_lb_params：TP_SIZE > PD_TP_SIZE > PD_{ROLE}_TP_SIZE
+        pd_tp = (
+            os.getenv("TP_SIZE")
+            or os.getenv("PD_TP_SIZE")
+            or os.getenv(f"PD_{role_prefix}_TP_SIZE")
+        )
+        if pd_tp:
+            try:
+                params[tp_key] = int(pd_tp)
+                logger.info(
+                    "[PD] tensor_parallel_size=%d from PD_%s_TP_SIZE (device_count=%d, role=%s)",
+                    int(pd_tp), role_prefix, device_count, pd_role,
+                )
+                return
+            except (ValueError, TypeError):
+                logger.warning(
+                    "[PD] Invalid TP_SIZE/PD_%s_TP_SIZE value, "
+                    "falling back to device_count-based TP", role_prefix,
+                )
+
     if not if_distributed:
         # 300I A2 标卡为 4 张或 8 张时，强制 TP=4（PCIe 拓扑限制）
         try:
