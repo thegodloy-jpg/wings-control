@@ -19,7 +19,6 @@ import uvicorn
 from fastapi import FastAPI, Response, Request
 from fastapi.responses import JSONResponse
 
-from core.version_util import normalize_engine_version
 from proxy.health_router import (
     _jittered_sleep_base,
     build_health_body,
@@ -186,11 +185,6 @@ async def get_startup_progress():
         return JSONResponse(status_code=200, content=response_body)
 
 
-# 高级特性的 4 个固定键，与 wings_entry._write_advanced_features_json 写出的
-# advanced_features.json 对齐（顺序即对外展示顺序）。
-_ADVANCED_FEATURE_KEYS = ("speculative_decode", "sparse_kv", "kv_offload", "rag_acc")
-
-
 def _read_advanced_features_state(file_path: str) -> tuple[str, dict, dict]:
     """读取 advanced_features.json（页面状态汇报文件，使能真相源）。
 
@@ -212,43 +206,26 @@ def _read_advanced_features_state(file_path: str) -> tuple[str, dict, dict]:
         return "", {}, {}
     if not isinstance(data, dict):
         return "", {}, {}
-    return data.get("engine", ""), data.get("features") or {}, data.get("variants") or {}
+    features = data.get("features") if isinstance(data.get("features"), dict) else {}
+    variants = data.get("variants") if isinstance(data.get("variants"), dict) else {}
+    return data.get("engine", ""), features, variants
 
 
-def _build_feature_list(features: dict, variants: dict) -> list[dict]:
-    """从使能真相源（advanced_features.json）构建对外特性列表。
-
-    每个特性输出 name/enabled/variant/errMsg：
-      - enabled / variant 来自 advanced_features.json（使能 + 走哪种变体）；
-        补丁安装失败时由 shell 层回写 enabled=false，故 enabled 即真实状态。
-      - errMsg 保留字段（恒为空串）以兼容旧响应结构。
-    """
-    return [
-        {
-            "name": key,
-            "enabled": bool(features.get(key)),
-            "variant": variants.get(key),
-            "errMsg": "",
-        }
-        for key in _ADVANCED_FEATURE_KEYS
-    ]
-
-
-def _build_accel_data(engine: str, feature_list: list[dict], version: str | None = None) -> dict:
+def _build_accel_data(engine: str, features: dict, variants: dict) -> dict:
     """构建加速特性响应数据。
 
     Args:
         engine: 引擎名（来自 advanced_features.json，缺省回退 ENGINE 环境变量）
-        feature_list: 特性列表（_build_feature_list 产出）
-        version: 引擎版本号。为 None 时从 ENGINE_VERSION 环境变量解析。
+        features: advanced_features.json 中的 features 对象
+        variants: advanced_features.json 中的 variants 对象
 
     Returns:
         dict: 加速特性数据
     """
     return {
         "engine": engine or os.getenv("ENGINE", "vllm"),
-        "version": version or normalize_engine_version(),
-        "features": feature_list
+        "features": features,
+        "variants": variants,
     }
 
 
@@ -269,53 +246,24 @@ def _build_accel_response(accel_data: dict, message: str = "") -> JSONResponse:
     })
 
 
-async def _detect_engine_version(client: httpx.AsyncClient) -> str | None:
-    """尝试从运行中的后端获取真实引擎版本号。
-
-    向后端 /version 端点发起 GET 请求（vLLM/vLLM-Ascend 标准接口）。
-    成功后将结果缓存在 app.state 中，后续调用直接返回缓存值。
-
-    Returns:
-        str | None: 引擎版本字符串（如 "0.17.0rc1"），失败时返回 None。
-    """
-    cached = getattr(app.state, "cached_engine_version", None)
-    if cached:
-        return cached
-    try:
-        url = f"http://{settings.ENGINE_HOST}:{settings.ENGINE_PORT}/version"
-        resp = await client.get(url, timeout=3.0)
-        if resp.status_code == 200:
-            data = resp.json()
-            version = data.get("version", "")
-            if version:
-                app.state.cached_engine_version = version
-                return version
-    except Exception as exc:  # noqa: BLE001
-        _logger.debug("Failed to detect engine version: %s", exc)
-    return None
-
-
 @app.get("/v1/startup/accel")
 async def get_startup_accel():
     """获取加速特性使能信息。
 
     单一真相源是 advanced_features.json（settings.ADVANCED_FEATURES_FILE）：
     由 wings_entry 在脚本生成阶段写入、shell 层在补丁失败时回写。
-    每个特性返回 name/enabled/variant/errMsg。
+    data 字段保持 advanced_features.json 的 engine/features/variants 结构。
 
     Returns:
         JSONResponse: 包含加速特性信息的响应
     """
-    # 优先从运行中的后端获取真实版本号，回退到 ENGINE_VERSION 环境变量
-    version = await _detect_engine_version(app.state.client)
     try:
         engine, features, variants = _read_advanced_features_state(settings.ADVANCED_FEATURES_FILE)
-        feature_list = _build_feature_list(features, variants)
-        accel_data = _build_accel_data(engine, feature_list, version=version)
+        accel_data = _build_accel_data(engine, features, variants)
         return _build_accel_response(accel_data)
     except Exception as e:
         _logger.error(f"Failed to get acceleration feature info: {e}")
-        accel_data = _build_accel_data("", _build_feature_list({}, {}), version=version)
+        accel_data = _build_accel_data("", {}, {})
         return _build_accel_response(accel_data, f"Failed to get acceleration feature info: {str(e)}")
 
 

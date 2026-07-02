@@ -4,9 +4,9 @@
 回归三个问题（需求一 §补充）：
   1. 路径互串：advanced_features.json（使能+变体真相源）被正确读取，
      不再误读 log_analyzer 的安装状态 JSONL。
-  2. 增强展示：每个特性透出 variant（走哪种变体），而不仅是 bool。
-  3. errMsg 仅在补丁安装失败时从安装状态 JSONL 叠加；成功/缺失不污染。
-并覆盖文件缺失 / 损坏时优雅降级为 4 个 disabled 特性、不抛异常。
+  2. /v1/startup/accel 的 data 保持 advanced_features.json 的
+     engine/features/variants 结构，不再转换成特性数组。
+并覆盖文件缺失 / 损坏时优雅降级为空 features/variants、不抛异常。
 """
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "wings_control"))
@@ -56,37 +58,53 @@ class TestReadAdvancedFeaturesState(unittest.TestCase):
             self.assertEqual(hs._read_advanced_features_state(p), ("", {}, {}))
 
 
-class TestBuildFeatureList(unittest.TestCase):
-    def test_always_four_features_in_order(self):
-        out = hs._build_feature_list({}, {})
-        self.assertEqual([f["name"] for f in out], list(hs._ADVANCED_FEATURE_KEYS))
-        self.assertTrue(all(f["enabled"] is False for f in out))
-        self.assertTrue(all(f["variant"] is None for f in out))
-        self.assertTrue(all(f["errMsg"] == "" for f in out))
-
-    def test_enabled_and_variant_from_state(self):
-        features = {"speculative_decode": True, "kv_offload": True}
-        variants = {"speculative_decode": "suffix", "kv_offload": "lmcache_cpu"}
-        out = {f["name"]: f for f in hs._build_feature_list(features, variants)}
-        self.assertTrue(out["speculative_decode"]["enabled"])
-        self.assertEqual(out["speculative_decode"]["variant"], "suffix")
-        self.assertEqual(out["kv_offload"]["variant"], "lmcache_cpu")
-        self.assertFalse(out["sparse_kv"]["enabled"])
-        # errMsg 恒为空串（单一真相源，无安装状态叠加）
-        self.assertTrue(all(f["errMsg"] == "" for f in out.values()))
-
-
 class TestBuildAccelData(unittest.TestCase):
-    def test_engine_and_version_fallback(self):
-        data = hs._build_accel_data("", [], version="0.17.0rc1")
-        self.assertEqual(data["version"], "0.17.0rc1")
+    def test_engine_fallback(self):
+        data = hs._build_accel_data("", {}, {})
         self.assertTrue(data["engine"])  # 回退到 ENGINE 环境变量默认 vllm
-        self.assertEqual(data["features"], [])
+        self.assertEqual(data["features"], {})
+        self.assertEqual(data["variants"], {})
 
-    def test_engine_from_state_preferred(self):
-        data = hs._build_accel_data("vllm_ascend", [{"name": "x"}], version="1.0")
+    def test_keeps_file_shape(self):
+        features = {"speculative_decode": True, "sparse_kv": False}
+        variants = {"speculative_decode": "suffix", "sparse_kv": None}
+        data = hs._build_accel_data("vllm_ascend", features, variants)
         self.assertEqual(data["engine"], "vllm_ascend")
-        self.assertEqual(data["features"], [{"name": "x"}])
+        self.assertEqual(data["features"], features)
+        self.assertEqual(data["variants"], variants)
+        self.assertNotIn("version", data)
+
+
+class TestStartupAccelEndpoint(unittest.TestCase):
+    def test_returns_advanced_features_json_shape(self):
+        payload = {
+            "engine": "vllm_ascend",
+            "features": {
+                "speculative_decode": True,
+                "sparse_kv": False,
+                "kv_offload": True,
+                "rag_acc": False,
+            },
+            "variants": {
+                "speculative_decode": "suffix",
+                "sparse_kv": None,
+                "kv_offload": "lmcache_cpu",
+                "rag_acc": None,
+            },
+        }
+        old_path = hs.settings.ADVANCED_FEATURES_FILE
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                p = _write(Path(d), "advanced_features.json", json.dumps(payload))
+                hs.settings.ADVANCED_FEATURES_FILE = p
+                hs.app.state.client = object()
+
+                response = TestClient(hs.app).get("/v1/startup/accel")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"code": 200, "msg": "", "data": payload})
+        finally:
+            hs.settings.ADVANCED_FEATURES_FILE = old_path
 
 
 if __name__ == "__main__":
