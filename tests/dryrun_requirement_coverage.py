@@ -244,6 +244,22 @@ def run_all():
     t.out("命令 --speculative-config", "不出现", "出现" if has(r, "--speculative-config") else "不出现", not has(r, "--speculative-config"))
     t.out("features.speculative_decode", "False", feat(r, "speculative_decode"), feat(r, "speculative_decode") is False)
     t.done()
+    t = TC("TC-P4-05a", "P4", "spec 开关 OFF（V4-Flash·Ascend A3）→ 适配层不得强制复活投机",
+           {"model-name": "DeepSeek-V4-Flash", "engine": "vllm_ascend", "device-count": 8},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", "WINGS_ASCEND_PLATFORM": "a3", SPEC: "false"},
+           {"architecture": "DeepseekV4ForCausalLM", "quantization_config": {"quant_method": "ascend"}})
+    r = t.r
+    t.out("命令 --speculative-config", "不出现", "出现" if has(r, "--speculative-config") else "不出现", not has(r, "--speculative-config"))
+    t.out("features.speculative_decode", "False", feat(r, "speculative_decode"), feat(r, "speculative_decode") is False)
+    t.done()
+    t = TC("TC-P4-05b", "P4", "spec 开关 OFF（GLM-4.7 W8A8）→ W8A8 调优不得强制复活投机",
+           {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
+           {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", SPEC: "false"},
+           {"architecture": "Glm4MoeForCausalLM", "quantization_config": {"quant_method": "w8a8"}})
+    r = t.r
+    t.out("命令 --speculative-config", "不出现", "出现" if has(r, "--speculative-config") else "不出现", not has(r, "--speculative-config"))
+    t.out("features.speculative_decode", "False", feat(r, "speculative_decode"), feat(r, "speculative_decode") is False)
+    t.done()
     t = TC("TC-P4-06", "P4", "offload 开关 OFF（不设 ENABLE_KV_OFFLOAD）→ 不产卸载",
            {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
            {"DISTRIBUTED_EXECUTOR_BACKEND": "mp"}, {"architecture": "Glm4MoeForCausalLM"})

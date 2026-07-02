@@ -1,0 +1,17 @@
+================================================================================================
+Smart feature whitelist audit
+================================================================================================
+Expected unique tuples: 12
+Expected split rows: spec=10 sparse=7 offload=7
+
+[PASS] JSON schema and exact matrix: 0 issue(s)
+
+[PASS] Resolver aliases/cards/negative cases: 0 issue(s)
+
+[PASS] Production dry-run variants: 0 issue(s)
+
+[PASS] Env bypass negative cases: 0 issue(s)
+
+================================================================================================
+RESULT: PASS  issues=0
+================================================================================================

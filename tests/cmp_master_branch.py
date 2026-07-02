@@ -53,9 +53,11 @@ scen = json.load(open(sys.argv[1], encoding="utf-8"))
 out_cmd, out_af = sys.argv[2], sys.argv[3]
 EXTRA = {"SPARSE_LEVEL","PD_ROLE","ENABLE_OPERATOR_ACCELERATION","ENABLE_SOFT_FP8",
          "ENABLE_SOFT_FP4","LMCACHE_POD_MEMORY","ENABLE_SPARSE","SPARSE_ENABLE",
-         "ENABLE_SPECULATIVE_DECODE","SD_ENABLE","LMCACHE_LOCAL_CPU","LMCACHE_LOCAL_DISK",
+         "ENABLE_SPECULATIVE_DECODE","SD_ENABLE","ENABLE_KV_OFFLOAD","LMCACHE_OFFLOAD",
+         "LMCACHE_LOCAL_CPU","LMCACHE_LOCAL_DISK",
          "LMCACHE_MAX_LOCAL_DISK_SIZE","LMCACHE_QAT","LMCACHE_COLD_START","WINGS_DEVICE_NAME",
-         "WINGS_DEVICE_MEMORY","ENABLE_RAG_ACC","LMCACHE_MAX_LOCAL_CPU_SIZE"}
+         "WINGS_DEVICE_MEMORY","ENABLE_RAG_ACC","LMCACHE_MAX_LOCAL_CPU_SIZE",
+         "KV_MEM_OFFLOAD_SIZE","AVAILABLE_POD_MEM_SIZE"}
 from core.start_args_compat import parse_launch_args
 from core.port_plan import derive_port_plan
 from core.wings_entry import build_launcher_plan
@@ -189,6 +191,7 @@ def classify_execline(m_line: str, b_line: str):
 # 不匹配者（如 TP/parser/chat-template/recipe）＝疑似回归。
 INTENDED_LINE = re.compile(
     r'LMCACHE_|PYTHONHASHSEED|swap.?space|install\.py|wings-accel|LMCache|kv.transfer|'
+    r'ENABLE_KV_OFFLOAD|ENABLE_KV_MEM_OFFLOAD|KV_MEM_OFFLOAD_SIZE|'
     r'kv_connector|VLLM_EARS|EARS_TOLERANCE|WINGS_ENGINE_PATCH_OPTIONS|advanced.feature|'
     r'AdvFeature|LMCACHE_CONFIG_FILE|index_topk|use_index_cache|cpu_swap_space|'
     r'kv_offloading|accel-volume|accel-file|USE_KUNLUN_ATB|kunlun|'
@@ -252,12 +255,23 @@ def build_matrix():
     combos = {
         "none": {}, "spec": {"ENABLE_SPECULATIVE_DECODE": "true"},
         "sparse": {"ENABLE_SPARSE": "true"},
-        "offload-auto": {"LMCACHE_OFFLOAD": "true", "LMCACHE_POD_MEMORY": "512"},
-        "offload-custom": {"LMCACHE_OFFLOAD": "true", "LMCACHE_MAX_LOCAL_CPU_SIZE": "200"},
+        "offload-auto": {
+            "ENABLE_KV_OFFLOAD": "true", "LMCACHE_OFFLOAD": "true",
+            "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "512",
+            "LMCACHE_POD_MEMORY": "512",
+        },
+        "offload-custom": {
+            "ENABLE_KV_OFFLOAD": "true", "LMCACHE_OFFLOAD": "true",
+            "KV_MEM_OFFLOAD_SIZE": "200", "LMCACHE_MAX_LOCAL_CPU_SIZE": "200",
+        },
         "all": {"ENABLE_SPECULATIVE_DECODE": "true", "ENABLE_SPARSE": "true",
-                "LMCACHE_OFFLOAD": "true", "LMCACHE_POD_MEMORY": "512"},
+                "ENABLE_KV_OFFLOAD": "true", "LMCACHE_OFFLOAD": "true",
+                "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "512",
+                "LMCACHE_POD_MEMORY": "512"},
         "all+perf": {"ENABLE_SPECULATIVE_DECODE": "true", "ENABLE_SPARSE": "true",
-                     "LMCACHE_OFFLOAD": "true", "LMCACHE_POD_MEMORY": "512", "SPARSE_LEVEL": "performance_first"},
+                     "ENABLE_KV_OFFLOAD": "true", "LMCACHE_OFFLOAD": "true",
+                     "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "512",
+                     "LMCACHE_POD_MEMORY": "512", "SPARSE_LEVEL": "performance_first"},
     }
     B_models = {
         "glm47-nv": ({"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
@@ -279,6 +293,9 @@ def build_matrix():
     cases["C3:embedding-ascend"] = {"user_cli": {"model-name": "Qwen3-Embedding", "engine": "vllm_ascend", "device-count": 1, "model-type": "embedding"},
                                     "orchestration_env": {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", "WINGS_ASCEND_PLATFORM": "a2"},
                                     "model_config": {"architecture": "Qwen3ForCausalLM"}}
+    cases["C4:rerank-ascend"] = {"user_cli": {"model-name": "bge-reranker-v2-m3", "engine": "vllm_ascend", "device-count": 1, "model-type": "rerank"},
+                                 "orchestration_env": {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", "WINGS_ASCEND_PLATFORM": "a2"},
+                                 "model_config": {"architecture": "XLMRobertaForSequenceClassification"}}
     cases["C5:op-accel"] = {"user_cli": {"model-name": "Qwen3.5-397B-A17B", "engine": "vllm_ascend", "device-count": 16},
                             "orchestration_env": {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", "WINGS_ASCEND_PLATFORM": "a3", "ENABLE_OPERATOR_ACCELERATION": "true"},
                             "model_config": {"architecture": "Qwen3_5MoeForConditionalGeneration", "quantization_config": {"quant_method": "ascend"}}}
@@ -287,8 +304,34 @@ def build_matrix():
                             "model_config": {"architecture": "Qwen3_5MoeForConditionalGeneration", "quantization_config": {"quant_method": "ascend"}}}
     cases["C7:pd-role"] = {"user_cli": {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
                            "orchestration_env": {"DISTRIBUTED_EXECUTOR_BACKEND": "mp", "PD_ROLE": "P",
-                                                 "ENABLE_SPECULATIVE_DECODE": "true", "ENABLE_SPARSE": "true", "LMCACHE_OFFLOAD": "true", "LMCACHE_POD_MEMORY": "512"},
+                                                 "ENABLE_SPECULATIVE_DECODE": "true", "ENABLE_SPARSE": "true",
+                                                 "ENABLE_KV_OFFLOAD": "true", "LMCACHE_OFFLOAD": "true",
+                                                 "KV_MEM_OFFLOAD_SIZE": "auto", "AVAILABLE_POD_MEM_SIZE": "512",
+                                                 "LMCACHE_POD_MEMORY": "512"},
                            "model_config": {"architecture": "Glm4MoeForCausalLM"}}
+    cases["C8:v4flash-a3-spec-off"] = {
+        "user_cli": {"model-name": "DeepSeek-V4-Flash", "engine": "vllm_ascend", "device-count": 8},
+        "orchestration_env": {
+            "DISTRIBUTED_EXECUTOR_BACKEND": "mp",
+            "WINGS_ASCEND_PLATFORM": "a3",
+            "ENABLE_SPECULATIVE_DECODE": "false",
+        },
+        "model_config": {
+            "architecture": "DeepseekV4ForCausalLM",
+            "quantization_config": {"quant_method": "ascend"},
+        },
+    }
+    cases["C9:glm47-w8a8-spec-off"] = {
+        "user_cli": {"model-name": "glm-4.7", "engine": "vllm", "device-count": 8},
+        "orchestration_env": {
+            "DISTRIBUTED_EXECUTOR_BACKEND": "mp",
+            "ENABLE_SPECULATIVE_DECODE": "false",
+        },
+        "model_config": {
+            "architecture": "Glm4MoeForCausalLM",
+            "quantization_config": {"quant_method": "w8a8"},
+        },
+    }
     return cases
 
 

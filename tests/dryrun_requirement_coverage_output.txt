@@ -188,6 +188,30 @@
         期望 = False
         实际 = False    [PASS]
 
+[TC-P4-05a] P4 · spec 开关 OFF（V4-Flash·Ascend A3）→ 适配层不得强制复活投机  ==> PASS
+  入参 user_cli          : {'model-name': 'DeepSeek-V4-Flash', 'engine': 'vllm_ascend', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'WINGS_ASCEND_PLATFORM': 'a3', 'ENABLE_SPECULATIVE_DECODE': 'false'}
+  入参 model_config      : {'architecture': 'DeepseekV4ForCausalLM', 'quantization_config': {'quant_method': 'ascend'}}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'false'})  user_cli含特性CLI标志=False
+  出参 命令 --speculative-config
+        期望 = 不出现
+        实际 = 不出现    [PASS]
+  出参 features.speculative_decode
+        期望 = False
+        实际 = False    [PASS]
+
+[TC-P4-05b] P4 · spec 开关 OFF（GLM-4.7 W8A8）→ W8A8 调优不得强制复活投机  ==> PASS
+  入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
+  入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp', 'ENABLE_SPECULATIVE_DECODE': 'false'}
+  入参 model_config      : {'architecture': 'Glm4MoeForCausalLM', 'quantization_config': {'quant_method': 'w8a8'}}
+  下发通道 三特性=env下发({'ENABLE_SPECULATIVE_DECODE': 'false'})  user_cli含特性CLI标志=False
+  出参 命令 --speculative-config
+        期望 = 不出现
+        实际 = 不出现    [PASS]
+  出参 features.speculative_decode
+        期望 = False
+        实际 = False    [PASS]
+
 [TC-P4-06] P4 · offload 开关 OFF（不设 ENABLE_KV_OFFLOAD）→ 不产卸载  ==> PASS
   入参 user_cli          : {'model-name': 'glm-4.7', 'engine': 'vllm', 'device-count': 8}
   入参 orchestration_env : {'DISTRIBUTED_EXECUTOR_BACKEND': 'mp'}
@@ -409,6 +433,6 @@
         实际 = 出现    [PASS]
 
 ================================================================================================
- 用例：31 个（31 PASS / 0 FAIL）  ·  断言：66 PASS / 0 FAIL
+ 用例：33 个（33 PASS / 0 FAIL）  ·  断言：70 PASS / 0 FAIL
  输出：D:\project\inference\wings-control\wings-control-0730\wings-control\tests\dryrun_requirement_coverage_output.txt
 ================================================================================================
