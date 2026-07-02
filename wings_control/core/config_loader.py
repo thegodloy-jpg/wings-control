@@ -804,8 +804,47 @@ def _set_task(params, ctx):
         return
 
 
+def _set_pd_parallelism_params(params, ctx) -> bool:
+    """PD 分离的并行度策略。
+
+    PD 场景的 TP/DP 组合由 PD_* 环境契约决定，不能复用标准推理的 Ray/global-TP
+    或 dp_deployment 兜底策略。这里仅写入当前进程的 tensor_parallel_size；DP
+    继续由 kv_transfer_config 与 PD external-lb fork 脚本按同一组 PD env 渲染。
+    """
+    pd_role = get_pd_role_env()
+    if not pd_role:
+        return False
+
+    if params.get("tensor_parallel_size") is not None:
+        return True
+
+    role_prefix = "PREFILL" if pd_role == "P" else "DECODE"
+    raw_tp = (
+        os.getenv("TP_SIZE")
+        or os.getenv("PD_TP_SIZE")
+        or os.getenv(f"PD_{role_prefix}_TP_SIZE")
+        or str(ctx.get("device_count", 1))
+    )
+    try:
+        params["tensor_parallel_size"] = int(raw_tp)
+    except (TypeError, ValueError):
+        params["tensor_parallel_size"] = int(ctx.get("device_count", 1) or 1)
+        logger.warning(
+            "[PD] Invalid TP_SIZE/PD_%s_TP_SIZE value %r; fallback tensor_parallel_size=%s",
+            role_prefix, raw_tp, params["tensor_parallel_size"],
+        )
+    logger.info(
+        "[PD] tensor_parallel_size=%s from PD role topology (role=%s, device_count=%s)",
+        params["tensor_parallel_size"], pd_role, ctx.get("device_count", 1),
+    )
+    return True
+
+
 def _set_parallelism_params(params, ctx):
     """根据设备数和分布式模式设置张量并行度（tensor_parallel_size）。"""
+    if _set_pd_parallelism_params(params, ctx):
+        return
+
     # Ascend DeepSeek dp_deployment 后端 TP 语义是「节点内」，由 vllm_adapter 的
     # _default_deepseek_ascend_dp_tensor_parallel_size 按架构兜底；
     # 此处不能套用 Ray 全局 TP 公式 (device_count × nnodes)，否则
@@ -1195,6 +1234,10 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
     # 默认注入器就地深合并 —— 必须 deepcopy 后再写入，否则会污染缓存并跨次调用泄漏。
     # ec 与 _pd_engine_overrides 各持一份独立 deepcopy：注入器只会改动 ec 那份，重申用的这份保持原值。
     merged_engine = {**entry.get("common", {}), **entry.get(role_key, {}).get("engine", {})}
+    # 当前进程的 TP 必须与 kv_transfer_config 中本角色拓扑一致。否则 vLLM 会在
+    # VllmConfig 校验阶段报 "KV transfer '<role>' config has a conflicting tensor parallel size"。
+    if "tensor_parallel_size" not in explicit:
+        merged_engine["tensor_parallel_size"] = ext["tp_size"]
     for k, v in merged_engine.items():
         if k not in explicit:
             ec[k] = copy.deepcopy(v)
@@ -1806,32 +1849,6 @@ def _adjust_tensor_parallelism(
                 device_count, default_tp,
             )
         return
-
-    # PD 分离模式：使用角色对应的 TP 大小，与 kv_transfer_config 中的 prefill/decode
-    # tp_size 保持一致。PD_PREFILL_TP_SIZE / PD_DECODE_TP_SIZE 反映本角色（P/D）的全局
-    # TP 配置，可能与 device_count 不同（例如 2P2D 场景：prefill TP=2, device_count=4）。
-    pd_role = get_pd_role_env()
-    if pd_role:
-        role_prefix = "PREFILL" if pd_role == "P" else "DECODE"
-        # 优先级对齐 _get_pd_external_lb_params：TP_SIZE > PD_TP_SIZE > PD_{ROLE}_TP_SIZE
-        pd_tp = (
-            os.getenv("TP_SIZE")
-            or os.getenv("PD_TP_SIZE")
-            or os.getenv(f"PD_{role_prefix}_TP_SIZE")
-        )
-        if pd_tp:
-            try:
-                params[tp_key] = int(pd_tp)
-                logger.info(
-                    "[PD] tensor_parallel_size=%d from PD_%s_TP_SIZE (device_count=%d, role=%s)",
-                    int(pd_tp), role_prefix, device_count, pd_role,
-                )
-                return
-            except (ValueError, TypeError):
-                logger.warning(
-                    "[PD] Invalid TP_SIZE/PD_%s_TP_SIZE value, "
-                    "falling back to device_count-based TP", role_prefix,
-                )
 
     if not if_distributed:
         # 300I A2 标卡为 4 张或 8 张时，强制 TP=4（PCIe 拓扑限制）

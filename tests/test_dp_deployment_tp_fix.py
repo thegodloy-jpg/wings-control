@@ -62,6 +62,28 @@ class TestDpDeploymentTpFix(unittest.TestCase):
         _set_parallelism_params(params, ctx)
         self.assertNotIn("tensor_parallel_size", params)
 
+    def test_ascend_pd_uses_role_tp_before_dp_deployment_short_circuit(self):
+        """PD 分离有独立 TP 策略:按本角色 PD_*_TP_SIZE,不走标准 dp_deployment 早返回。"""
+        params = {}
+        ctx = {
+            "engine": "vllm_ascend",
+            "distributed": False,
+            "nnodes": 1,
+            "node_ips": "",
+            "device_count": 4,
+            "distributed_executor_backend": "dp_deployment",
+        }
+        with patch.dict(os.environ, {
+            "PD_ROLE": "P",
+            "PD_PREFILL_TP_SIZE": "2",
+            "PD_PREFILL_DP_SIZE": "2",
+            "PD_DECODE_TP_SIZE": "1",
+            "PD_DECODE_DP_SIZE": "4",
+        }, clear=True):
+            _set_parallelism_params(params, ctx)
+
+        self.assertEqual(params.get("tensor_parallel_size"), 2)
+
     # --- 回归保护:NVIDIA PD 不被误伤 ---
     def test_nvidia_pd_dp_deployment_keeps_tp_device_count(self):
         """NVIDIA PD 同样写 dp_deployment,但不能被早返回短路。"""

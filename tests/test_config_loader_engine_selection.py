@@ -1176,6 +1176,84 @@ class TestConfigLoaderEngineSelection(unittest.TestCase):
         self.assertIn("max_num_seqs", merged["_explicit_cli_keys"])
         self.assertNotIn("enable_prefix_caching", merged["_explicit_cli_keys"])
 
+    def test_pd_external_lb_role_tp_is_written_to_engine_config(self):
+        """PD external-lb must keep process TP aligned with kv transfer topology."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_dir = Path(tmpdir)
+            (model_dir / "config.json").write_text(
+                json.dumps({"architectures": ["Qwen3MoeForCausalLM"]}),
+                encoding="utf-8",
+            )
+            known_args = SimpleNamespace(
+                config_file="",
+                _explicit_cli_keys=[],
+                engine_config=None,
+                host="10.254.124.188",
+                port=17000,
+                model_name="Qwen3-30B-A3B",
+                model_path=str(model_dir),
+                engine="vllm_ascend",
+                input_length=2048,
+                output_length=2048,
+                gpu_usage_mode="full",
+                device_count=4,
+                model_type="auto",
+                save_path="/tmp",
+                trust_remote_code=True,
+                dtype="auto",
+                kv_cache_dtype="auto",
+                quantization="",
+                quantization_param_path="",
+                gpu_memory_utilization=0.8,
+                enable_chunked_prefill=True,
+                block_size=16,
+                max_num_seqs=256,
+                seed=42,
+                enable_expert_parallel=False,
+                max_num_batched_tokens=4096,
+                enable_prefix_caching=True,
+                enable_speculative_decode=False,
+                speculative_decode_model_path="",
+                enable_rag_acc=False,
+                enable_auto_tool_choice=False,
+                enable_sparse=False,
+                distributed=False,
+                nnodes=1,
+                node_rank=0,
+                head_node_addr="",
+                distributed_executor_backend="dp_deployment",
+                node_ips="",
+                nodes="",
+                master_ip="",
+                ray_head_ip="",
+            )
+
+            env = {
+                "ENGINE": "vllm_ascend",
+                "WINGS_ASCEND_PLATFORM": "a3",
+                "DEVICE_COUNT": "4",
+                "PD_ROLE": "P",
+                "PD_INDEX": "0",
+                "DP_SIZE_LOCAL": "2",
+                "PD_PREFILL_DP_SIZE": "2",
+                "PD_PREFILL_TP_SIZE": "2",
+                "PD_DECODE_DP_SIZE": "4",
+                "PD_DECODE_TP_SIZE": "1",
+                "POD_IP": "10.254.124.188",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                with patch.object(sys, "argv", ["wings_start"]):
+                    with patch("wings_control.core.config_loader._check_vram_requirements", return_value=None):
+                        merged = load_and_merge_configs(
+                            {"device": "ascend", "count": 4, "details": []},
+                            known_args,
+                        )
+
+        engine_config = merged["engine_config"]
+        self.assertEqual(engine_config.get("tensor_parallel_size"), 2)
+        kv_config = json.loads(engine_config["kv_transfer_config"])
+        self.assertEqual(kv_config["kv_connector_extra_config"]["prefill"]["tp_size"], 2)
+
     def test_generic_deepseek_fp8_still_forces_enforce_eager(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             model_dir = Path(tmpdir)
