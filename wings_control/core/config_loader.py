@@ -808,15 +808,11 @@ def _set_pd_parallelism_params(params, ctx) -> bool:
     """PD 分离的并行度策略。
 
     PD 场景的 TP/DP 组合由 PD_* 环境契约决定，不能复用标准推理的 Ray/global-TP
-    或 dp_deployment 兜底策略。这里仅写入当前进程的 tensor_parallel_size；DP
-    继续由 kv_transfer_config 与 PD external-lb fork 脚本按同一组 PD env 渲染。
+    或 dp_deployment 兜底策略。
     """
     pd_role = get_pd_role_env()
     if not pd_role:
         return False
-
-    if params.get("tensor_parallel_size") is not None:
-        return True
 
     role_prefix = "PREFILL" if pd_role == "P" else "DECODE"
     raw_tp = (
@@ -824,6 +820,12 @@ def _set_pd_parallelism_params(params, ctx) -> bool:
         or os.getenv("PD_TP_SIZE")
         or os.getenv(f"PD_{role_prefix}_TP_SIZE")
         or str(ctx.get("device_count", 1))
+    )
+    raw_dp = (
+        os.getenv("DP_SIZE")
+        or os.getenv("PD_DP_SIZE")
+        or os.getenv(f"PD_{role_prefix}_DP_SIZE")
+        or "1"
     )
     try:
         params["tensor_parallel_size"] = int(raw_tp)
@@ -833,9 +835,19 @@ def _set_pd_parallelism_params(params, ctx) -> bool:
             "[PD] Invalid TP_SIZE/PD_%s_TP_SIZE value %r; fallback tensor_parallel_size=%s",
             role_prefix, raw_tp, params["tensor_parallel_size"],
         )
+    try:
+        params["data_parallel_size"] = int(raw_dp)
+    except (TypeError, ValueError):
+        params["data_parallel_size"] = 1
+        logger.warning(
+            "[PD] Invalid DP_SIZE/PD_%s_DP_SIZE value %r; fallback data_parallel_size=1",
+            role_prefix, raw_dp,
+        )
     logger.info(
-        "[PD] tensor_parallel_size=%s from PD role topology (role=%s, device_count=%s)",
-        params["tensor_parallel_size"], pd_role, ctx.get("device_count", 1),
+        "[PD] parallel topology from role env: tensor_parallel_size=%s, "
+        "data_parallel_size=%s (role=%s, device_count=%s)",
+        params["tensor_parallel_size"], params["data_parallel_size"],
+        pd_role, ctx.get("device_count", 1),
     )
     return True
 
@@ -1234,12 +1246,13 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
     # 默认注入器就地深合并 —— 必须 deepcopy 后再写入，否则会污染缓存并跨次调用泄漏。
     # ec 与 _pd_engine_overrides 各持一份独立 deepcopy：注入器只会改动 ec 那份，重申用的这份保持原值。
     merged_engine = {**entry.get("common", {}), **entry.get(role_key, {}).get("engine", {})}
-    # 当前进程的 TP 必须与 kv_transfer_config 中本角色拓扑一致。否则 vLLM 会在
-    # VllmConfig 校验阶段报 "KV transfer '<role>' config has a conflicting tensor parallel size"。
-    if "tensor_parallel_size" not in explicit:
-        merged_engine["tensor_parallel_size"] = ext["tp_size"]
+    # PD 拓扑是本场景权威来源：即使上游把标准推理的 TENSOR/DATA_PARALLEL_SIZE
+    # 设成 device-count，也必须被当前 PD 角色的 TP/DP 覆盖。
+    pd_topology_keys = {"tensor_parallel_size", "data_parallel_size"}
+    merged_engine["tensor_parallel_size"] = ext["tp_size"]
+    merged_engine["data_parallel_size"] = ext["dp_size"]
     for k, v in merged_engine.items():
-        if k not in explicit:
+        if k not in explicit or k in pd_topology_keys:
             ec[k] = copy.deepcopy(v)
 
     # 暂存注册表已应用的 engine 覆盖：模型默认注入器（vllm_adapter._prepare_engine_config
@@ -1248,7 +1261,8 @@ def _apply_pd_external_lb(cmd_known_params, model_info):
     # 注册表值。故把注册表覆盖透传给 vllm_adapter，在所有注入器之后重申，使 pd_config 成为 PD
     # external-lb 引擎参数的唯一真相源。None 值表示「该角色应删除该 base 键」。
     cmd_known_params["_pd_engine_overrides"] = {
-        k: copy.deepcopy(v) for k, v in merged_engine.items() if k not in explicit
+        k: copy.deepcopy(v) for k, v in merged_engine.items()
+        if k not in explicit or k in pd_topology_keys
     }
 
     if "kv_transfer_config" not in explicit:

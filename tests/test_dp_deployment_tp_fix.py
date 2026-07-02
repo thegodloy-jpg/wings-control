@@ -84,6 +84,29 @@ class TestDpDeploymentTpFix(unittest.TestCase):
 
         self.assertEqual(params.get("tensor_parallel_size"), 2)
 
+    def test_ascend_pd_role_topology_overrides_standard_parallel_values(self):
+        """PD 分离下标准 TP/DP 字段不能压过 PD_* 拓扑。"""
+        params = {"tensor_parallel_size": 4, "data_parallel_size": 4}
+        ctx = {
+            "engine": "vllm_ascend",
+            "distributed": False,
+            "nnodes": 1,
+            "node_ips": "",
+            "device_count": 4,
+            "distributed_executor_backend": "dp_deployment",
+        }
+        with patch.dict(os.environ, {
+            "PD_ROLE": "P",
+            "PD_PREFILL_TP_SIZE": "2",
+            "PD_PREFILL_DP_SIZE": "2",
+            "PD_DECODE_TP_SIZE": "1",
+            "PD_DECODE_DP_SIZE": "4",
+        }, clear=True):
+            _set_parallelism_params(params, ctx)
+
+        self.assertEqual(params.get("tensor_parallel_size"), 2)
+        self.assertEqual(params.get("data_parallel_size"), 2)
+
     # --- 回归保护:NVIDIA PD 不被误伤 ---
     def test_nvidia_pd_dp_deployment_keeps_tp_device_count(self):
         """NVIDIA PD 同样写 dp_deployment,但不能被早返回短路。"""

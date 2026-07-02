@@ -1912,8 +1912,9 @@ def _prepare_engine_config(params: Dict[str, Any]) -> Dict[str, Any]:
     # value=None 表示该角色应删除该 base 键（如 Prefill 删除 base 注入的 compilation_config）。
     pd_overrides = params.get("_pd_engine_overrides")
     if pd_overrides:
+        pd_topology_keys = {"tensor_parallel_size", "data_parallel_size"}
         for k, v in pd_overrides.items():
-            if k in explicit_keys:
+            if k in explicit_keys and k not in pd_topology_keys:
                 continue
             if v is None:
                 engine_config.pop(k, None)
